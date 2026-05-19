@@ -932,7 +932,11 @@ def _emit_component_art(
         f"// Synthetic TIPC address allocated by fusée; the real runtime uses DDS topics."
     )
     lines.append("")
-    lines.append(f"package vendor.tornado.system.components.{comp.name}")
+    # The package mirrors the on-disk subdir under app/. For a 3-deep
+    # `<domain>/<subdomain>/<comp>` path the package becomes
+    # `vendor.tornado.system.components.<domain>.<subdomain>.<comp>`.
+    pkg_path = source_subdir.replace("/", ".")
+    lines.append(f"package vendor.tornado.system.components.{pkg_path}")
     lines.append("")
 
     for cat in cats_used:
@@ -1006,25 +1010,28 @@ def _emit_component_art(
 
 
 def _candidate_component_dirs(app_root: Path) -> list[tuple[Path, str]]:
-    """Yield (component_dir, source_subdir) pairs across both layouts:
+    """Yield (component_dir, source_subdir) pairs across the supported layouts:
 
-      - `app_root/onboard/<comp>/BUILD`  → subdir `onboard/<comp>`
-      - `app_root/<comp>/BUILD`          → subdir `<comp>` (for top-level
-        apps like `vehicle_registration` that don't live under onboard/)
+      - `app_root/<domain>/<subdomain>/<comp>/BUILD` (current Tornado layout)
+        → subdir `<domain>/<subdomain>/<comp>`
+      - `app_root/onboard/<comp>/BUILD` (legacy)
+        → subdir `onboard/<comp>`
+      - `app_root/<comp>/BUILD` (legacy top-level apps like
+        `vehicle_registration`) → subdir `<comp>`
 
-    A BUILD must exist in the directory to qualify.
+    A BUILD must exist in the leaf directory to qualify. The subdir string
+    is what later flows into the emitted `.art`'s package name and on-disk
+    location, so we preserve the full domain hierarchy when present.
     """
     pairs: list[tuple[Path, str]] = []
-    onboard = app_root / "onboard"
-    if onboard.is_dir():
-        for d in sorted(onboard.iterdir()):
-            if d.is_dir() and (d / "BUILD").exists():
-                pairs.append((d, f"onboard/{d.name}"))
-    for d in sorted(app_root.iterdir()):
-        if not d.is_dir() or d.name == "onboard":
+    if not app_root.is_dir():
+        return pairs
+    for build in sorted(app_root.rglob("BUILD")):
+        if not build.is_file():
             continue
-        if (d / "BUILD").exists():
-            pairs.append((d, d.name))
+        comp_dir = build.parent
+        rel = comp_dir.relative_to(app_root)
+        pairs.append((comp_dir, rel.as_posix()))
     return pairs
 
 
@@ -1061,7 +1068,12 @@ def import_components(
             platform_message_index=platform_message_index or {},
             source_subdir=subdir,
         )
-        out_path = components_root / f"{comp.name}.art"
+        # Mirror the source_subdir on disk: `<domain>/<subdomain>/<comp>.art`
+        # for the 3-deep layout, flat `<comp>.art` for legacy single-level.
+        rel_parent = Path(subdir).parent
+        out_dir = components_root / rel_parent if rel_parent != Path(".") else components_root
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{comp.name}.art"
         out_path.write_text(art_text)
         out_paths.append(out_path)
     return out_paths, comps
