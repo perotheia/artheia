@@ -1,0 +1,172 @@
+// Generated from up/tornado/signals/chassis/ — DO NOT EDIT BY HAND.
+// Lossy proto2 → Artheia transcription. See artheia/importers/fusee.py.
+// Each `vehicle_os_signal(...)` in the original BUILD is a DDS topic
+// (many-to-many pub/sub). Captured here as a senderReceiver interface;
+// the system.art composition wires every (publisher, subscriber) pair.
+
+package vendor.tornado.system.signals.chassis
+
+import vendor.tornado.system.signals.common_types.*
+
+// ---- enums (flattened to uint32 at use sites) ----
+// enum BrakeIntentType: BRAKE_INTENT_TYPE_RELEASED=0, BRAKE_INTENT_TYPE_PRESSED=1, BRAKE_INTENT_TYPE_UNDEFINED=255
+// enum ChassisLift: CHASSIS_LIFT_NONE=0, CHASSIS_LIFT_LIFTED=1
+// enum GearIntentState: GEAR_INTENT_STATE_PARK=0, GEAR_INTENT_STATE_REVERSE=1, GEAR_INTENT_STATE_NEUTRAL=2, GEAR_INTENT_STATE_DRIVE=3, GEAR_INTENT_STATE_NONE=100
+// enum GearStateEnum: GEAR_STATE_ENUM_PARK=0, GEAR_STATE_ENUM_REVERSE=1, GEAR_STATE_ENUM_NEUTRAL=2, GEAR_STATE_ENUM_DRIVE=3
+// enum SteeringMode: STEERING_MODE_IDLE=0, STEERING_MODE_SINE_ANGLE=1, STEERING_MODE_STEP_ANGLE=2, STEERING_MODE_ADAS=3, STEERING_MODE_DRIVING=4
+// enum SteeringFaultStatusWarning: STEERING_FAULT_STATUS_WARNING_NO_ERROR=0, STEERING_FAULT_STATUS_WARNING_YELLOW_LIGHT_ON=1, STEERING_FAULT_STATUS_WARNING_RED_LIGHT_ON=2
+
+// ---- forward-decl stubs for cross-category / missing refs ----
+// (textX cross-references are single-file; real defs live elsewhere)
+// origin: vendor.tornado.system.signals.common_types
+message AngleDegree { }
+// origin: vendor.tornado.system.signals.common_types
+message Bar { }
+// origin: vendor.tornado.system.signals.common_types
+message Newton { }
+// origin: vendor.tornado.system.signals.common_types
+message NewtonMeter { }
+// origin: vendor.tornado.system.signals.common_types
+message Percent { }
+
+message BrakeRequest {
+    float brake_request = 1  // required
+}
+
+message BrakeSystemCommand {
+    NewtonMeter regen_torque_command = 1  // required
+    Newton mech_brake_command = 2  // required
+}
+
+message BrakeSystemStatus {
+    uint32 brake_intent = 1  // required, originally enum BrakeIntentType
+    float brake_pedal_position = 2  // required
+    NewtonMeter intended_brake_torque = 3  // required
+}
+
+message ChassisLiftRequest {
+    uint32 lift_request = 1  // required, originally enum ChassisLift
+}
+
+message ChassisLiftStatus {
+    uint32 lift_status = 1  // required, originally enum ChassisLift
+}
+
+message GearIntent {
+    uint32 gear_state = 1  // required, originally enum GearIntentState
+}
+
+message GearIntentResponse {
+    uint32 new_gear = 1  // required
+    bool approved = 2  // required
+}
+
+message GearState {
+    uint32 gear_state = 1  // required, originally enum GearStateEnum
+}
+
+message RearSteeringCommand {
+    uint32 rear_angle_command_10bit = 1  // required
+}
+
+message SteeringByWire {
+    AngleDegree polaris_angle_deg = 1  // required
+    float front_steering_coeff = 2  // required
+    uint32 steering_mode = 3  // required, originally enum SteeringMode
+}
+
+message SteeringFaultStatus {
+    uint32 warning = 1  // required, originally enum SteeringFaultStatusWarning
+}
+
+message SteeringTestMode {
+    uint32 polaris_test_mode = 1  // required
+    uint32 front_rack_test_mode = 2  // required
+    uint32 rear_rack_test_mode = 3  // required
+}
+
+message TirePressure {
+    Bar tire_pressure = 1  // required
+}
+
+message TrunkState {
+    bool trunk_lid_status = 1  // required
+    Percent trunk_lid_open_percent = 2  // required
+}
+
+message VehicleAcceleration {
+    float acceleration = 1  // required
+}
+
+// ---- DDS topics (vehicle_os_signal in original BUILD) ----
+interface senderReceiver brake_request {
+    data BrakeRequest payload
+}
+
+interface senderReceiver trunk_measured_state {
+    data TrunkState payload
+}
+
+interface senderReceiver gear_intent {
+    data GearIntent payload
+}
+
+interface senderReceiver gear_intent_response {
+    data GearIntentResponse payload
+}
+
+interface senderReceiver gear_state {
+    data GearState payload
+}
+
+interface senderReceiver vehicle_acceleration {
+    data VehicleAcceleration payload
+}
+
+interface senderReceiver rear_steering_command {
+    data RearSteeringCommand payload
+}
+
+interface senderReceiver steering_test_mode {
+    data SteeringTestMode payload
+}
+
+interface senderReceiver steering_fault_status {
+    data SteeringFaultStatus payload
+}
+
+interface senderReceiver brake_system_command {
+    data BrakeSystemCommand payload
+}
+
+interface senderReceiver steering_by_wire {
+    data SteeringByWire payload
+}
+
+interface senderReceiver brake_system_status {
+    data BrakeSystemStatus payload
+}
+
+interface senderReceiver front_left_tire_pressure {
+    data TirePressure payload
+}
+
+interface senderReceiver front_right_tire_pressure {
+    data TirePressure payload
+}
+
+interface senderReceiver rear_left_tire_pressure {
+    data TirePressure payload
+}
+
+interface senderReceiver rear_right_tire_pressure {
+    data TirePressure payload
+}
+
+interface senderReceiver chassis_lift_status {
+    data ChassisLiftStatus payload
+}
+
+interface senderReceiver chassis_lift_request {
+    data ChassisLiftRequest payload
+}

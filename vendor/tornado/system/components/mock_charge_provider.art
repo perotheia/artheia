@@ -1,0 +1,22 @@
+// Generated from up/tornado/app/onboard/mock_charge_provider/BUILD — DO NOT EDIT BY HAND.
+// Translates the vehicle_os_signal_junction into an Artheia node.
+// Synthetic TIPC address allocated by fusée; the real runtime uses DDS topics.
+
+package vendor.tornado.system.components.mock_charge_provider
+
+import vendor.tornado.system.signals.vehicle.*
+
+// ---- forward-decl stubs for senderReceiver interfaces ----
+// (real declarations live in vendor.tornado.system.signals.<cat>)
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver charge_info { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver vehicle_range { }
+
+node atomic MockChargeProvider {
+    tipc type=0x90000005 instance=0
+    ports {
+        sender   out_charge_info provides charge_info reliable
+        sender   out_vehicle_range provides vehicle_range reliable
+    }
+}

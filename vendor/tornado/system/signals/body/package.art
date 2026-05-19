@@ -1,0 +1,711 @@
+// Generated from up/tornado/signals/body/ — DO NOT EDIT BY HAND.
+// Lossy proto2 → Artheia transcription. See artheia/importers/fusee.py.
+// Each `vehicle_os_signal(...)` in the original BUILD is a DDS topic
+// (many-to-many pub/sub). Captured here as a senderReceiver interface;
+// the system.art composition wires every (publisher, subscriber) pair.
+
+package vendor.tornado.system.signals.body
+
+import vendor.tornado.system.signals.adas.*
+import vendor.tornado.system.signals.common_types.*
+
+// ---- enums (flattened to uint32 at use sites) ----
+// enum BlinkerStateEnum: BLINKER_STATE_ENUM_BLINKER_NONE=0, BLINKER_STATE_ENUM_BLINKER_LEFT_INTERIM=1, BLINKER_STATE_ENUM_BLINKER_LEFT=2, BLINKER_STATE_ENUM_BLINKER_RIGHT_INTERIM=3, BLINKER_STATE_ENUM_BLINKER_RIGHT=4
+// enum DoorLockCommandedState: DOOR_LOCK_COMMANDED_STATE_UNSPECIFIED=0, DOOR_LOCK_COMMANDED_STATE_UNLOCKED=1, DOOR_LOCK_COMMANDED_STATE_LOCKED=2, DOOR_LOCK_COMMANDED_STATE_UNLOCK_COMMANDED_NOT_CONFIRMED=3, DOOR_LOCK_COMMANDED_STATE_LOCK_COMMANDED_NOT_CONFIRMED=4
+// enum LockState: LOCK_STATE_UNKNOWN=0, LOCK_STATE_UNLOCKED=1, LOCK_STATE_LOCKED=2, LOCK_STATE_NON_EXISTENT=3
+// enum OpenCloseState: OPEN_CLOSE_STATE_UNKNOWN=0, OPEN_CLOSE_STATE_OPEN=1, OPEN_CLOSE_STATE_CLOSED=2, OPEN_CLOSE_STATE_NON_EXISTENT=3
+// enum FogLightStateEnum: FOG_LIGHT_STATE_ENUM_UNSET=0, FOG_LIGHT_STATE_ENUM_OFF=1, FOG_LIGHT_STATE_ENUM_ON=2
+// enum FrunkReqState: FRUNK_REQ_STATE_UNSET=0, FRUNK_REQ_STATE_OPEN=1
+// enum FuelState: FUEL_STATE_INIT=0, FUEL_STATE_ERROR=1, FUEL_STATE_MIA=2, FUEL_STATE_EMPTY=3, FUEL_STATE_CRITICAL=4, FUEL_STATE_LOW=5, FUEL_STATE_OK=6, FUEL_STATE_FULL=7
+// enum HeadlightCommand: HEADLIGHT_COMMAND_UNKNOWN=0, HEADLIGHT_COMMAND_OFF=1, HEADLIGHT_COMMAND_ILLUMINATE_OBJECT=2
+// enum MatrixHeadlightsEnabledState: MATRIX_HEADLIGHTS_ENABLED_STATE_UNSET=0, MATRIX_HEADLIGHTS_ENABLED_STATE_OFF=1, MATRIX_HEADLIGHTS_ENABLED_STATE_ON=2
+// enum MirrorPosition: MIRROR_POSITION_UNKNOWN=0, MIRROR_POSITION_FOLD=1, MIRROR_POSITION_UNFOLD=2, MIRROR_POSITION_MOVING=3
+// enum SeatMoveDirection: SEAT_MOVE_DIRECTION_NONE=0, SEAT_MOVE_DIRECTION_FORWARD=1, SEAT_MOVE_DIRECTION_BACKWARD=2
+// enum TrunkReqState: TRUNK_REQ_STATE_UNSET=0, TRUNK_REQ_STATE_OPEN=1, TRUNK_REQ_STATE_CLOSE=2
+// enum BlinkerStalkPosition: BLINKER_STALK_POSITION_NEUTRAL=0, BLINKER_STALK_POSITION_LEFT_INTERIM=1, BLINKER_STALK_POSITION_LEFT=2, BLINKER_STALK_POSITION_RIGHT_INTERIM=3, BLINKER_STALK_POSITION_RIGHT=4
+// enum TurnSignalState: TURN_SIGNAL_STATE_INACTIVE=0, TURN_SIGNAL_STATE_SIGNALLING_LEFT=1, TURN_SIGNAL_STATE_SIGNALLING_RIGHT=2
+// enum DoorLockRequestedState: DOOR_LOCK_REQUESTED_STATE_UNLOCK=0, DOOR_LOCK_REQUESTED_STATE_LOCK=1
+// enum VehicleProtectedEnvironment: VEHICLE_PROTECTED_ENVIRONMENT_NOT_READY=0, VEHICLE_PROTECTED_ENVIRONMENT_READY=1
+
+// ---- forward-decl stubs for cross-category / missing refs ----
+// (textX cross-references are single-file; real defs live elsewhere)
+// origin: unresolved — referenced by BUILD or proto but not declared
+message AlertType { }
+// origin: vendor.tornado.system.signals.common_types
+message AngleDegree { }
+// origin: unresolved — referenced by BUILD or proto but not declared
+message BoundingBox2D { }
+// origin: vendor.tornado.system.signals.common_types
+message ButtonState { }
+// origin: vendor.tornado.system.signals.common_types
+message DoorOpeningAttempted { }
+// origin: vendor.tornado.system.signals.common_types
+message LightSchedule { }
+// origin: vendor.tornado.system.signals.common_types
+message LightState { }
+// origin: vendor.tornado.system.signals.common_types
+message Milliseconds { }
+// origin: vendor.tornado.system.signals.common_types
+message Percent { }
+// origin: vendor.tornado.system.signals.common_types
+message VehicleTimestamp { }
+
+message SetAdvancedFrontLights {
+    bool advanced_front_lights_toggle = 1  // required
+}
+
+message SetAdvancedHighBeam {
+    bool advanced_high_beam_toggle = 1  // required
+}
+
+message BlinkerDance {
+    bool run_blinker_dance = 1  // required
+    bool from_unreal = 2  // required
+    uint64 message_id = 3  // required
+}
+
+message BlinkerRun {
+    bool run_blinker_run = 1  // required
+}
+
+message BlinkerState {
+    uint32 turn_signal_state = 1  // required, originally enum BlinkerStateEnum
+}
+
+message BlinkerFrequencyReport {
+    Milliseconds frequency = 1  // required
+}
+
+message BlinkerFrequencyRequest {
+    Milliseconds frequency = 1  // required
+}
+
+message DoorLockCommand {
+    uint32 door_lock_commanded_state = 1  // required, originally enum DoorLockCommandedState
+    bytes command_uuid = 2  // required
+}
+
+message DoorLockMeasuredState {
+    uint32 lock_state = 1  // required, originally enum LockState
+}
+
+message DoorOpenCloseState {
+    uint32 open_close_state = 1  // required, originally enum OpenCloseState
+}
+
+message ExternLightAppAck {
+    uint64 message_id = 1  // required
+}
+
+message FlashSequence {
+    repeated FlashSequenceFlash flashes = 1
+    VehicleTimestamp start_time = 2  // required
+    string uuid = 3  // required
+}
+
+// hoisted from FlashSequence.Flash
+message FlashSequenceFlash {
+    int32 duration_ms = 1  // required
+    int32 wait_time_ms = 2  // required
+}
+
+message FogLightState {
+    uint32 light_state = 1  // required, originally enum FogLightStateEnum
+}
+
+message FogLightSwitchRequest {
+    bool noop = 2  // optional
+}
+
+message FrunkOpenReq {
+    uint32 frunk_req_state = 1  // required, originally enum FrunkReqState
+}
+
+message FuelStatus {
+    uint32 raw_value1 = 1  // required
+    uint32 raw_value2 = 2  // required
+    uint32 raw_value3 = 3  // required
+    uint32 raw_value4 = 4  // required
+    uint32 state = 5  // required, originally enum FuelState
+    Percent percentage = 6  // required
+}
+
+message HeadlightAngle {
+    AngleDegree headlight_heading = 1  // required
+}
+
+message SetHeadlightsOffDelay {
+    int64 headlights_off_delay = 1  // required
+}
+
+message HelixFrontLightCommand {
+    bool front_right_blinker = 1  // required
+    bool front_right_highbeam = 2  // required
+    bool front_right_drl_lsg1 = 3  // required
+    bool front_right_drl_lsg2_inner = 4  // required
+    bool front_right_drl_lsg2_outer = 5  // required
+    bool front_left_blinker = 6  // required
+    bool front_left_highbeam = 7  // required
+    bool front_left_drl_lsg1 = 8  // required
+    bool front_left_drl_lsg2_inner = 9  // required
+    bool front_left_drl_lsg2_outer = 10  // required
+    bool hazard = 11  // required
+    bool debug = 12  // required
+}
+
+message HonkFlashSequence {
+    repeated HonkFlashSequenceHonkOrFlash honks_and_flashes = 1
+    int32 repeat_times = 2  // required
+    bool stop_sequence = 3  // required
+    string uuid = 4  // required
+}
+
+// hoisted from HonkFlashSequence.HonkOrFlash
+message HonkFlashSequenceHonkOrFlash {
+    AlertType type = 1  // required
+    int32 duration_ms = 3  // required
+    int32 wait_time_ms = 2  // required
+}
+
+message InteriorLightReq {
+    uint32 interior_color_r = 1  // required
+    uint32 interior_color_g = 2  // required
+    uint32 interior_color_b = 3  // required
+}
+
+message LTMIndicators {
+    bool auto_light_led = 1  // required
+    bool driving_light_led = 2  // required
+    bool rear_fog_light_led = 3  // required
+    uint32 brightness = 4  // required
+}
+
+message LTMButtonInputs {
+    bool auto_light_input = 1  // required
+    bool contact_active = 2  // required
+    bool rear_fog_light_input = 3  // required
+}
+
+message MatrixHeadlightCommand {
+    uint32 command = 1  // required, originally enum HeadlightCommand
+    BoundingBox2D bbox = 2  // optional
+}
+
+message DetectedObject {
+    double center_x = 1  // required
+    double center_y = 2  // required
+    double size_x = 3  // required
+    double size_y = 4  // required
+}
+
+message MatrixHeadlightsEnable {
+    uint32 matrix_headlights_enabled_state = 1  // required, originally enum MatrixHeadlightsEnabledState
+}
+
+message MeasuredMirrorPosition {
+    uint32 mirror_state = 1  // required, originally enum MirrorPosition
+}
+
+message MirrorPositionReq {
+    bool mirror_open = 1  // required
+}
+
+message SeatMoveReq {
+    uint32 direction = 1  // required, originally enum SeatMoveDirection
+}
+
+message SpoilerPosition {
+    Percent position = 1  // required
+}
+
+message StalkButtonState {
+    uint32 stalk_button_state = 1  // required
+}
+
+message TrunkOpenCloseReq {
+    uint32 trunk_req_state = 1  // required, originally enum TrunkReqState
+}
+
+message BlinkerStalk {
+    uint32 blinker_stalk_position = 1  // required, originally enum BlinkerStalkPosition
+}
+
+message TurnIndicator {
+    uint32 turn_signal_state = 1  // required, originally enum TurnSignalState
+}
+
+message UserDoorLockUnlockReq {
+    uint32 requested_lock_state = 1  // required, originally enum DoorLockRequestedState
+    bytes command_uuid = 2  // required
+}
+
+message VehicleProtectedEnvironmentState {
+    uint32 vehicle_protected_environment_state = 1  // required, originally enum VehicleProtectedEnvironment
+}
+
+message WindowMeasuredPosition {
+    bool window_open_status = 1  // required
+    Percent window_open_percent = 2  // required
+}
+
+message WindowPositionReq {
+    Percent window_position = 1  // required
+}
+
+message PowerChannelState {
+    string zone = 1  // required
+    uint32 channel_id = 2  // required
+    float output_current = 3  // required
+    float output_voltage = 4  // required
+}
+
+message PowerChannelCommand {
+    string zone = 1  // required
+    uint32 channel_id = 2  // required
+    bool on = 3  // required
+}
+
+// ---- DDS topics (vehicle_os_signal in original BUILD) ----
+interface senderReceiver front_left_blinker {
+    data LightSchedule payload
+}
+
+interface senderReceiver ltm_button_input {
+    data LTMButtonInputs payload
+}
+
+interface senderReceiver ltm_led_indicators {
+    data LTMIndicators payload
+}
+
+interface senderReceiver front_right_blinker {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_left_blinker_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_right_blinker_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_fog {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_fog_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_reverse {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_reverse_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_left_brake {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_left_brake_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_right_blinker {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_right_blinker_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_right_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_right_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_left_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_left_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_left_blinker {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_left_blinker_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_right_brake {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_right_brake_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_right_brake {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_right_brake_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_right_high_light {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_right_high_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_left_high_light {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_left_high_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver blinker_state {
+    data BlinkerState payload
+}
+
+interface senderReceiver blinker_frequency_report {
+    data BlinkerFrequencyReport payload
+}
+
+interface senderReceiver blinker_frequency_request {
+    data BlinkerFrequencyRequest payload
+}
+
+interface senderReceiver adas_blinker_state {
+    data BlinkerState payload
+}
+
+interface senderReceiver driver_door_opening_attempt {
+    data DoorOpeningAttempted payload
+}
+
+interface senderReceiver stalk_button_state {
+    data StalkButtonState payload
+}
+
+interface senderReceiver front_left_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_left_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_right_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_right_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_right_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_right_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_left_drl {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_left_drl_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver back_center_left_brake {
+    data LightSchedule payload
+}
+
+interface senderReceiver back_center_left_brake_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver turn_indicator {
+    data TurnIndicator payload
+}
+
+interface senderReceiver front_left_low_light {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_right_low_light {
+    data LightSchedule payload
+}
+
+interface senderReceiver front_left_low_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_right_low_light_measured_state {
+    data LightState payload
+}
+
+interface senderReceiver front_fog_light_state {
+    data FogLightState payload
+}
+
+interface senderReceiver rear_fog_light_state {
+    data FogLightState payload
+}
+
+interface senderReceiver front_fog_light_switch_request {
+    data FogLightSwitchRequest payload
+}
+
+interface senderReceiver rear_fog_light_switch_request {
+    data FogLightSwitchRequest payload
+}
+
+interface senderReceiver set_headlights_off_delay {
+    data SetHeadlightsOffDelay payload
+}
+
+interface senderReceiver set_advanced_front_lights {
+    data SetAdvancedFrontLights payload
+}
+
+interface senderReceiver set_advanced_high_beam {
+    data SetAdvancedHighBeam payload
+}
+
+interface senderReceiver zonal_breakout_power_channel {
+    data PowerChannelState payload
+}
+
+interface senderReceiver zonal_breakout_power_control {
+    data PowerChannelCommand payload
+}
+
+interface senderReceiver blinker_dance {
+    data BlinkerDance payload
+}
+
+interface senderReceiver blinker_run {
+    data BlinkerRun payload
+}
+
+interface senderReceiver extern_light_app_ack {
+    data ExternLightAppAck payload
+}
+
+interface senderReceiver front_left_door_open_close {
+    data DoorOpenCloseState payload
+}
+
+interface senderReceiver front_left_door_lock_measured_state {
+    data DoorLockMeasuredState payload
+}
+
+interface senderReceiver front_right_door_open_close {
+    data DoorOpenCloseState payload
+}
+
+interface senderReceiver front_right_door_lock_measured_state {
+    data DoorLockMeasuredState payload
+}
+
+interface senderReceiver rear_left_door_open_close {
+    data DoorOpenCloseState payload
+}
+
+interface senderReceiver rear_left_door_lock_measured_state {
+    data DoorLockMeasuredState payload
+}
+
+interface senderReceiver rear_right_door_open_close {
+    data DoorOpenCloseState payload
+}
+
+interface senderReceiver rear_right_door_lock_measured_state {
+    data DoorLockMeasuredState payload
+}
+
+interface senderReceiver user_door_lock_unlock_req {
+    data UserDoorLockUnlockReq payload
+}
+
+interface senderReceiver door_lock_command {
+    data DoorLockCommand payload
+}
+
+interface senderReceiver front_left_door_mirror_measured_state {
+    data MeasuredMirrorPosition payload
+}
+
+interface senderReceiver front_right_door_mirror_measured_state {
+    data MeasuredMirrorPosition payload
+}
+
+interface senderReceiver window_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_front_windshield_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_rear_windshield_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_1_left_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_1_right_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_2_left_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_2_right_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_3_left_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_row_3_right_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_roof_top_1_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver window_roof_top_2_position_req {
+    data WindowPositionReq payload
+}
+
+interface senderReceiver front_left_window_measured_position {
+    data WindowMeasuredPosition payload
+}
+
+interface senderReceiver rear_left_window_measured_position {
+    data WindowMeasuredPosition payload
+}
+
+interface senderReceiver front_right_window_measured_position {
+    data WindowMeasuredPosition payload
+}
+
+interface senderReceiver rear_right_window_measured_position {
+    data WindowMeasuredPosition payload
+}
+
+interface senderReceiver interior_light_req {
+    data InteriorLightReq payload
+}
+
+interface senderReceiver mirror_position_req {
+    data MirrorPositionReq payload
+}
+
+interface senderReceiver matrix_headlight_command {
+    data MatrixHeadlightCommand payload
+}
+
+interface senderReceiver lock_button_physical_state {
+    data ButtonState payload
+}
+
+interface senderReceiver matrix_headlights_enable {
+    data MatrixHeadlightsEnable payload
+}
+
+interface senderReceiver spoiler_position {
+    data SpoilerPosition payload
+}
+
+interface senderReceiver honk_flash_sequence {
+    data HonkFlashSequence payload
+}
+
+interface senderReceiver flash_sequence {
+    data FlashSequence payload
+}
+
+interface senderReceiver helix_front_light_command {
+    data HelixFrontLightCommand payload
+}
+
+interface senderReceiver headlight_angle {
+    data HeadlightAngle payload
+}
+
+interface senderReceiver trunk_open_close_req {
+    data TrunkOpenCloseReq payload
+}
+
+interface senderReceiver frunk_open_req {
+    data FrunkOpenReq payload
+}
+
+interface senderReceiver seat_row_1_left_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_1_center_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_1_right_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_2_left_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_2_center_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_2_right_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_3_left_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_3_center_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver seat_row_3_right_move_req {
+    data SeatMoveReq payload
+}
+
+interface senderReceiver fuel_status {
+    data FuelStatus payload
+}
+
+interface senderReceiver vehicle_protected_environment {
+    data VehicleProtectedEnvironmentState payload
+}

@@ -1,0 +1,51 @@
+// Generated from up/tornado/app/onboard/torque_path_manager/BUILD — DO NOT EDIT BY HAND.
+// Translates the vehicle_os_signal_junction into an Artheia node.
+// Synthetic TIPC address allocated by fusée; the real runtime uses DDS topics.
+
+package vendor.tornado.system.components.torque_path_manager
+
+import vendor.tornado.system.signals.chassis.*
+import vendor.tornado.system.signals.powertrain.*
+import vendor.tornado.system.signals.vehicle.*
+
+// ---- forward-decl stubs for senderReceiver interfaces ----
+// (real declarations live in vendor.tornado.system.signals.<cat>)
+// origin: vendor.tornado.system.signals.chassis
+interface senderReceiver brake_request { }
+// origin: vendor.tornado.system.signals.chassis
+interface senderReceiver brake_system_command { }
+// origin: vendor.tornado.system.signals.chassis
+interface senderReceiver gear_state { }
+// origin: vendor.tornado.system.signals.powertrain
+interface senderReceiver electric_motor_torque { }
+// origin: vendor.tornado.system.signals.powertrain
+interface senderReceiver torque_path_command { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver acc_pedal_mode_state { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver recuperation_intensity_state { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver set_acc_pedal_mode_request { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver set_recuperation_request { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver vehicle_acceleration_command { }
+// origin: vendor.tornado.system.signals.vehicle
+interface senderReceiver vehicle_speed { }
+
+node atomic TorquePathManager {
+    tipc type=0x90000006 instance=0
+    ports {
+        receiver in_brake_request requires brake_request best_effort
+        receiver in_brake_system_command requires brake_system_command best_effort
+        receiver in_gear_state requires gear_state best_effort
+        receiver in_electric_motor_torque requires electric_motor_torque best_effort
+        receiver in_set_acc_pedal_mode_request requires set_acc_pedal_mode_request best_effort
+        receiver in_set_recuperation_request requires set_recuperation_request best_effort
+        receiver in_vehicle_acceleration_command requires vehicle_acceleration_command best_effort
+        receiver in_vehicle_speed requires vehicle_speed best_effort
+        sender   out_torque_path_command provides torque_path_command best_effort
+        sender   out_acc_pedal_mode_state provides acc_pedal_mode_state best_effort
+        sender   out_recuperation_intensity_state provides recuperation_intensity_state best_effort
+    }
+}

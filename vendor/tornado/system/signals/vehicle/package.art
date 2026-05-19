@@ -1,0 +1,286 @@
+// Generated from up/tornado/signals/vehicle/ — DO NOT EDIT BY HAND.
+// Lossy proto2 → Artheia transcription. See artheia/importers/fusee.py.
+// Each `vehicle_os_signal(...)` in the original BUILD is a DDS topic
+// (many-to-many pub/sub). Captured here as a senderReceiver interface;
+// the system.art composition wires every (publisher, subscriber) pair.
+
+package vendor.tornado.system.signals.vehicle
+
+import vendor.tornado.system.signals.common_types.*
+
+// ---- enums (flattened to uint32 at use sites) ----
+// enum AccelPedalStatusType: ACCEL_PEDAL_STATUS_TYPE_UNKNOWN=0, ACCEL_PEDAL_STATUS_TYPE_VALID=1, ACCEL_PEDAL_STATUS_TYPE_INVALID=2
+// enum BrakeIntentType: BRAKE_INTENT_TYPE_RELEASED=0, BRAKE_INTENT_TYPE_PRESSED=1, BRAKE_INTENT_TYPE_UNDEFINED=255
+// enum ChargingCommandAction: ACTION_START_CHARGING=0, ACTION_STOP_CHARGING=1
+// enum RecuperationIntensity: RECUPERATION_INTENSITY_OFF=0, RECUPERATION_INTENSITY_LEVEL_1=1, RECUPERATION_INTENSITY_LEVEL_2=2, RECUPERATION_INTENSITY_LEVEL_3=3, RECUPERATION_INTENSITY_LEVEL_4=4, RECUPERATION_INTENSITY_LEVEL_5=5
+// enum GPSFixEnum: GPS_FIX_ENUM_UNKNOWN=0, GPS_FIX_ENUM_NO_FIX=1, GPS_FIX_ENUM_2D_FIX=2, GPS_FIX_ENUM_3D_FIX=3
+// enum IntelligentSpeedAssistMode: INTELLIGENT_SPEED_ASSIST_MODE_OFF=0, INTELLIGENT_SPEED_ASSIST_MODE_MANUAL=1, INTELLIGENT_SPEED_ASSIST_MODE_AUTO=2
+// enum PowerModeEnum: POWER_MODE_ENUM_OFF=0, POWER_MODE_ENUM_ACC=1, POWER_MODE_ENUM_DRIVE_DEADY=2, POWER_MODE_ENUM_POST_DRIVE=3, POWER_MODE_ENUM_POST_UNKNOWN=7
+// enum Kl15CommandEnum: KL15_COMMAND_ENUM_OFF=0, KL15_COMMAND_ENUM_ON=1
+// enum PowerStateEnum: POWER_STATE_ENUM_OFF=0, POWER_STATE_ENUM_ON=1
+// enum RndButtonStatusType: RND_BUTTON_STATUS_TYPE_NOT_PRESSED=0, RND_BUTTON_STATUS_TYPE_UP_ONE=1, RND_BUTTON_STATUS_TYPE_UP_TWO=2, RND_BUTTON_STATUS_TYPE_DOWN_ONE=3, RND_BUTTON_STATUS_TYPE_DOWN_TWO=4
+// enum SteerFeelMode: STEER_FEEL_MODE_COMFORT=0, STEER_FEEL_MODE_STANDARD=1, STEER_FEEL_MODE_SPORT=2
+// enum AccPedalMode: ACC_PEDAL_MODE_COMFORT=0, ACC_PEDAL_MODE_STANDARD=1, ACC_PEDAL_MODE_SPORT=2
+
+// ---- forward-decl stubs for cross-category / missing refs ----
+// (textX cross-references are single-file; real defs live elsewhere)
+// origin: vendor.tornado.system.signals.common_types
+message Meter { }
+// origin: vendor.tornado.system.signals.common_types
+message MeterPerSecond { }
+// origin: vendor.tornado.system.signals.common_types
+message RevolutionsPerMinute { }
+// origin: vendor.tornado.system.signals.common_types
+message Seconds { }
+// origin: vendor.tornado.system.signals.common_types
+message Watt { }
+
+message AccelGyro {
+    uint32 crc = 1  // required
+    uint32 counter_bz = 2  // required
+    float accel_x = 3  // required
+    float accel_y = 4  // required
+    float omega_z = 5  // required
+    uint32 accel_x_cf = 6  // required
+    uint32 accel_y_cf = 7  // required
+    uint32 omega_z_cf = 8  // required
+}
+
+message AccelPedalStatus {
+    float accel_pedal_position_1 = 1  // required
+    uint32 accel_pedal_position_1_stat = 2  // required, originally enum AccelPedalStatusType
+    float accel_pedal_position_2 = 3  // required
+    uint32 accel_pedal_position_2_stat = 4  // required, originally enum AccelPedalStatusType
+}
+
+message BrakeIntent {
+    uint32 brake_intent = 1  // required, originally enum BrakeIntentType
+}
+
+message BrakeTorque {
+    uint32 fl_brake_torque = 1  // required
+    uint32 fr_brake_torque = 2  // required
+    uint32 rl_brake_torque = 3  // required
+    uint32 rr_brake_torque = 4  // required
+    double oversteer = 5  // required
+    double understeer = 6  // required
+    double brake_pressure = 7  // optional
+}
+
+message ChargeInfo {
+    float charge_percentage = 2  // required
+    Watt charging_rate = 3  // required
+    Seconds charging_duration_estimate = 4  // required
+}
+
+message ChargingStatus {
+    bool is_charging = 1  // required
+}
+
+message ChargingCommand {
+    uint32 action = 1  // required, originally enum ChargingCommandAction
+}
+
+message SetRecuperationRequest {
+    uint32 intensity_level = 1  // required, originally enum RecuperationIntensity
+}
+
+message RecuperationIntensityState {
+    uint32 intensity_level = 1  // required, originally enum RecuperationIntensity
+}
+
+message GPSPosition {
+    double gps_lat = 1  // required
+    double gps_long = 2  // required
+    uint32 gps_fix = 5  // required, originally enum GPSFixEnum
+    double gps_yaw = 6  // required
+    double gps_alt = 7  // required
+}
+
+message IntelligentSpeedAssist {
+    uint32 mode = 1  // required, originally enum IntelligentSpeedAssistMode
+}
+
+message OdometerDistance {
+    Meter odometer_distance = 1  // required
+}
+
+message PedalPosition {
+    float accel_pedal_pos = 1  // required
+}
+
+message PowerModeStatus {
+    uint32 power_mode = 1  // required, originally enum PowerModeEnum
+    uint32 power_mode_intent = 2  // required, originally enum PowerModeEnum
+    uint32 kl15_command = 3  // required, originally enum Kl15CommandEnum
+}
+
+message VehiclePowerState {
+    uint32 power_state = 1  // required, originally enum PowerStateEnum
+}
+
+message RndButtonStatus {
+    uint32 rnd_button_status = 1  // required, originally enum RndButtonStatusType
+}
+
+message SteeringAngle {
+    float road_wheel_angle = 1  // required
+    float steering_wheel_angle = 2  // required
+}
+
+message VehicleAccelerationCommand {
+    float acceleration = 1  // required
+}
+
+message VehicleRange {
+    Meter range = 1  // required
+}
+
+message VehicleRotation {
+    float omega_x = 1  // required
+    float omega_y = 2  // required
+    float accel_z = 3  // required
+    uint32 omega_x_cf = 4  // required
+    uint32 omega_y_cf = 5  // required
+    uint32 accel_z_cf = 6  // required
+}
+
+message SetSteerFeelModeRequest {
+    uint32 steer_feel_mode_req = 1  // required, originally enum SteerFeelMode
+}
+
+message SteerFeelModeState {
+    uint32 steer_feel_mode_stat = 1  // required, originally enum SteerFeelMode
+}
+
+message SetAccPedalModeRequest {
+    uint32 acc_pedal_mode_req = 1  // required, originally enum AccPedalMode
+}
+
+message AccPedalModeState {
+    uint32 acc_pedal_mode_stat = 1  // required, originally enum AccPedalMode
+}
+
+message VehicleSpeed {
+    MeterPerSecond vehicle_velocity = 1  // required
+}
+
+message WheelInfo {
+    int32 wheel_ticks_front_right = 1  // required
+    int32 wheel_ticks_front_left = 2  // required
+    int32 wheel_ticks_back_right = 3  // required
+    int32 wheel_ticks_back_left = 4  // required
+    RevolutionsPerMinute wheel_speed_front_left = 5  // required
+    RevolutionsPerMinute wheel_speed_front_right = 6  // required
+    RevolutionsPerMinute wheel_speed_back_left = 7  // required
+    RevolutionsPerMinute wheel_speed_back_right = 8  // required
+}
+
+// ---- DDS topics (vehicle_os_signal in original BUILD) ----
+interface senderReceiver vehicle_speed {
+    data VehicleSpeed payload
+}
+
+interface senderReceiver vehicle_acceleration_command {
+    data VehicleAccelerationCommand payload
+}
+
+interface senderReceiver brake_intent {
+    data BrakeIntent payload
+}
+
+interface senderReceiver vehicle_range {
+    data VehicleRange payload
+}
+
+interface senderReceiver odometer_distance {
+    data OdometerDistance payload
+}
+
+interface senderReceiver brake_torque {
+    data BrakeTorque payload
+}
+
+interface senderReceiver vehicle_power_state {
+    data VehiclePowerState payload
+}
+
+interface senderReceiver charge_info {
+    data ChargeInfo payload
+}
+
+interface senderReceiver charging_command {
+    data ChargingCommand payload
+}
+
+interface senderReceiver charging_status {
+    data ChargingStatus payload
+}
+
+interface senderReceiver gps_position {
+    data GPSPosition payload
+}
+
+interface senderReceiver set_recuperation_request {
+    data SetRecuperationRequest payload
+}
+
+interface senderReceiver recuperation_intensity_state {
+    data RecuperationIntensityState payload
+}
+
+interface senderReceiver set_steer_feel_mode_request {
+    data SetSteerFeelModeRequest payload
+}
+
+interface senderReceiver steer_feel_mode_state {
+    data SteerFeelModeState payload
+}
+
+interface senderReceiver set_acc_pedal_mode_request {
+    data SetAccPedalModeRequest payload
+}
+
+interface senderReceiver acc_pedal_mode_state {
+    data AccPedalModeState payload
+}
+
+interface senderReceiver accel_gyro {
+    data AccelGyro payload
+}
+
+interface senderReceiver vehicle_rotation {
+    data VehicleRotation payload
+}
+
+interface senderReceiver pedal_position {
+    data PedalPosition payload
+}
+
+interface senderReceiver steering_angle {
+    data SteeringAngle payload
+}
+
+interface senderReceiver wheel_info {
+    data WheelInfo payload
+}
+
+interface senderReceiver rnd_button_status {
+    data RndButtonStatus payload
+}
+
+interface senderReceiver accel_pedal_status {
+    data AccelPedalStatus payload
+}
+
+interface senderReceiver power_mode_status {
+    data PowerModeStatus payload
+}
+
+interface senderReceiver intelligent_speed_assist_mode {
+    data IntelligentSpeedAssist payload
+}
+
+interface senderReceiver set_intelligent_speed_assist_mode {
+    data IntelligentSpeedAssist payload
+}

@@ -121,10 +121,16 @@ PortDecl:
 
 SenderPort:
     'sender'   name=ID 'provides' iface=[SenderReceiverInterface|FQN]
+    (reliability=Reliability)?
 ;
 
 ReceiverPort:
     'receiver' name=ID 'requires' iface=[SenderReceiverInterface|FQN]
+    (reliability=Reliability)?
+;
+
+Reliability:
+    'reliable' | 'best_effort'
 ;
 
 ServerPort:

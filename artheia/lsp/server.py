@@ -163,12 +163,36 @@ def _model_iter(model, cls_name: str) -> Iterable:
             yield el
 
 
+def _is_stub(el) -> bool:
+    """A declaration is a 'stub' if its body has no children — the kind
+    fusée emits for cross-file forward declarations. Prefer non-stubs when
+    multiple files declare the same name."""
+    for attr in ("fields", "data", "operations", "ports", "elements"):
+        children = getattr(el, attr, None)
+        if children is not None:
+            return len(children) == 0
+    return False
+
+
 def _find_definition(model, name: str):
-    """Return the first declaration object whose `name` matches."""
+    """Return the first declaration whose `name` matches, or None.
+
+    Per-file lookup. Cross-file resolution lives in `_definition` below.
+    """
+    if model is None:
+        return None
     for el in model.elements:
         if getattr(el, "name", None) == name:
             return el
     return None
+
+
+def _find_definition_in_model(model, name: str):
+    """Return (target, is_stub) or None — used by the cross-file resolver."""
+    target = _find_definition(model, name)
+    if target is None:
+        return None
+    return target, _is_stub(target)
 
 
 # ---- server factory -------------------------------------------------------
@@ -209,10 +233,30 @@ def create_server() -> LanguageServer:
             folders = ls.workspace.folders  # type: ignore[attr-defined]
         except Exception:
             folders = {}
+        loaded = 0
         for folder in folders.values():
             root = _uri_to_path(folder.uri)
             ws.catalog_messages.update(_scan_workspace_catalogs(root))
-        logger.info("artheia-lsp ready (%d catalog messages)", len(ws.catalog_messages))
+            # Eagerly parse every .art in the workspace so goto-definition
+            # works across unopened files. We skip .venv / node_modules
+            # directories to avoid stalling on vendor trees we don't own.
+            for art in root.rglob("*.art"):
+                if any(p in {".venv", "node_modules", ".git"} for p in art.parts):
+                    continue
+                uri = art.as_uri()
+                if uri in ws.docs:
+                    continue
+                try:
+                    text = art.read_text()
+                except OSError:
+                    continue
+                model, err = _parse(text)
+                ws.docs[uri] = _DocState(text=text, model=model, error=err)
+                loaded += 1
+        logger.info(
+            "artheia-lsp ready (%d catalog messages, %d .art files preloaded)",
+            len(ws.catalog_messages), loaded,
+        )
 
     @ls.feature(lsp.TEXT_DOCUMENT_DID_OPEN)
     def _did_open(params: lsp.DidOpenTextDocumentParams):
@@ -233,20 +277,32 @@ def create_server() -> LanguageServer:
     @ls.feature(lsp.TEXT_DOCUMENT_DEFINITION)
     def _definition(params: lsp.DefinitionParams):
         state = ws.docs.get(params.text_document.uri)
-        if state is None or state.model is None:
+        if state is None:
             return None
         doc = ls.workspace.get_text_document(params.text_document.uri)
         offset = doc.offset_at_position(params.position)
         name, _, _ = _identifier_at(state.text, offset)
         if not name:
             return None
-        target = _find_definition(state.model, name)
-        if target is None:
+        # Search every loaded doc; prefer non-stub declarations so a jump
+        # from a forward-decl `interface X { }` lands on the real body
+        # somewhere else in the workspace.
+        best: tuple[str, _DocState, object] | None = None
+        best_is_stub = True
+        for uri, s in ws.docs.items():
+            hit = _find_definition_in_model(s.model, name)
+            if hit is None:
+                continue
+            target, is_stub = hit
+            if best is None or (best_is_stub and not is_stub):
+                best = (uri, s, target)
+                best_is_stub = is_stub
+                if not is_stub:
+                    break
+        if best is None:
             return None
-        return lsp.Location(
-            uri=params.text_document.uri,
-            range=_range_from_obj(state.text, target),
-        )
+        uri, s, target = best
+        return lsp.Location(uri=uri, range=_range_from_obj(s.text, target))
 
     # ---- completion ------------------------------------------------------
 

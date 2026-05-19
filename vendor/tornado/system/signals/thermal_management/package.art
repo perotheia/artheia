@@ -1,0 +1,227 @@
+// Generated from up/tornado/signals/thermal_management/ — DO NOT EDIT BY HAND.
+// Lossy proto2 → Artheia transcription. See artheia/importers/fusee.py.
+// Each `vehicle_os_signal(...)` in the original BUILD is a DDS topic
+// (many-to-many pub/sub). Captured here as a senderReceiver interface;
+// the system.art composition wires every (publisher, subscriber) pair.
+
+package vendor.tornado.system.signals.thermal_management
+
+import vendor.tornado.system.signals.common_types.*
+
+// ---- forward-decl stubs for cross-category / missing refs ----
+// (textX cross-references are single-file; real defs live elsewhere)
+// origin: vendor.tornado.system.signals.common_types
+message Ampere { }
+// origin: vendor.tornado.system.signals.common_types
+message Bar { }
+// origin: vendor.tornado.system.signals.common_types
+message DegreesCelsius { }
+// origin: vendor.tornado.system.signals.common_types
+message KilogramPerHour { }
+// origin: vendor.tornado.system.signals.common_types
+message Percent { }
+// origin: vendor.tornado.system.signals.common_types
+message RevolutionsPerMinute { }
+// origin: vendor.tornado.system.signals.common_types
+message Volt { }
+// origin: vendor.tornado.system.signals.common_types
+message Watt { }
+
+message FanCurrentState {
+    RevolutionsPerMinute current_rpm = 1  // required
+}
+
+message FanInfo {
+    bool fan_state = 1  // required
+    RevolutionsPerMinute fan_rpm = 2  // required
+    uint32 fan_error = 3  // required
+}
+
+message TmeFanInfo {
+    FanInfo ntk_condenser_fan = 1  // required
+}
+
+message ShutterInfo {
+    bool shutter_state = 1  // required
+    Percent shutter_position = 2  // required
+    uint32 shutter_error = 3  // required
+}
+
+message TmeShutterInfo {
+    ShutterInfo shutter1 = 1  // required
+    ShutterInfo shutter2 = 2  // required
+}
+
+message TmeThermalInfo {
+    DegreesCelsius hv_battery_temp = 1  // required
+    DegreesCelsius hv_battery_temp_highest = 2  // required
+    DegreesCelsius hv_battery_temp_lowest = 3  // required
+    DegreesCelsius hv_battery_inlet_temp = 4  // required
+    DegreesCelsius hv_battery_outlet_temp = 5  // required
+}
+
+message PumpInfo {
+    bool pump_state = 1  // required
+    RevolutionsPerMinute pump_rpm = 2  // required
+    uint32 pump_error = 3  // required
+}
+
+message TmePumpInfo {
+    PumpInfo pump1 = 1  // required
+    PumpInfo pump2 = 2  // required
+}
+
+message ValveInfo {
+    bool valve_state = 1  // required
+    int32 valve_position = 2  // required
+    uint32 valve_error = 3  // required
+    uint32 valve_command = 4  // required
+}
+
+message TmeValveInfo {
+    ValveInfo battery_valve = 1  // required
+    ValveInfo ntk_valve = 2  // required
+    repeated ValveInfo exv = 3
+    repeated ValveInfo avk = 4
+}
+
+message RefrigerantSensorInfo {
+    bool sensor_state = 1  // required
+    uint32 sensor_error = 2  // required
+    Bar refrigerant_pressure = 3  // required
+    DegreesCelsius refrigerant_temp = 4  // required
+}
+
+message TmeRefrigerantInfo {
+    repeated RefrigerantSensorInfo sensor_pt = 1
+    DegreesCelsius evap_superheat = 2  // required
+    DegreesCelsius cond_subcooling = 3  // required
+}
+
+message AnalogTempSensorInfo {
+    bool sensor_state = 1  // required
+    uint32 sensor_error = 2  // required
+    DegreesCelsius temp = 3  // required
+}
+
+message TmeAnalogTempSensorInfo {
+    AnalogTempSensorInfo ambient_air = 1  // required
+    AnalogTempSensorInfo evap_air_out = 2  // required
+}
+
+message AirHeaterInfo {
+    bool heater_state = 1  // required
+    uint32 heater_error = 2  // required
+    Ampere heater_current = 3  // required
+    Volt heater_voltage = 4  // required
+    DegreesCelsius air_out_temp = 5  // required
+    Percent heater_command = 6  // required
+    KilogramPerHour heater_massflow = 7  // required
+}
+
+message TmeAirHeaterInfo {
+    AirHeaterInfo air_heater = 1  // required
+}
+
+message CompressorInfo {
+    bool compressor_state = 1  // required
+    uint32 compressor_error = 2  // required
+    Ampere compressor_current = 3  // required
+    Volt compressor_voltage = 4  // required
+    RevolutionsPerMinute compressor_rpm = 5  // required
+    RevolutionsPerMinute compressor_command_rpm = 6  // required
+}
+
+message TmeCompressorInfo {
+    CompressorInfo compressor = 1  // required
+}
+
+message TmeStatusInfo {
+    bool hv_on = 1  // required
+    bool climate_request_active = 2  // required
+    bool drivetrain_cooling_active = 3  // required
+    bool tme_fim_ccc_fid_enabled = 4  // required
+    bool tme_fim_rcc_fid_enabled = 5  // required
+    bool tme_fim_cabin_heating_fid_enabled = 6  // required
+    Watt hvem_power_allocation = 7  // required
+}
+
+message TmeSetpointsInfo {
+    DegreesCelsius heater_air_out_temp_setpoint = 1  // required
+    DegreesCelsius evap_air_out_temp_setpoint = 2  // required
+    DegreesCelsius cond_subcooling_setpoint = 3  // required
+}
+
+message TmeControl {
+    uint32 active_cooling_request = 1  // required
+}
+
+message TmeComponentControl {
+    Percent pwm_pump_pct = 1  // required
+    Percent pwm_fan_pct = 2  // required
+}
+
+message TmeSensorReadings {
+    DegreesCelsius temperature = 1  // required
+}
+
+// ---- DDS topics (vehicle_os_signal in original BUILD) ----
+interface senderReceiver tme_component_control {
+    data TmeComponentControl payload
+}
+
+interface senderReceiver tme_sensor_readings {
+    data TmeSensorReadings payload
+}
+
+interface senderReceiver fan_state {
+    data FanCurrentState payload
+}
+
+interface senderReceiver tme_fan_info {
+    data TmeFanInfo payload
+}
+
+interface senderReceiver tme_shutter_info {
+    data TmeShutterInfo payload
+}
+
+interface senderReceiver tme_thermal_info {
+    data TmeThermalInfo payload
+}
+
+interface senderReceiver tme_pump_info {
+    data TmePumpInfo payload
+}
+
+interface senderReceiver tme_valve_info {
+    data TmeValveInfo payload
+}
+
+interface senderReceiver tme_refrigerant_info {
+    data TmeRefrigerantInfo payload
+}
+
+interface senderReceiver tme_air_heater_info {
+    data TmeAirHeaterInfo payload
+}
+
+interface senderReceiver tme_analog_temp_sensor_info {
+    data TmeAnalogTempSensorInfo payload
+}
+
+interface senderReceiver tme_compressor_info {
+    data TmeCompressorInfo payload
+}
+
+interface senderReceiver tme_status_info {
+    data TmeStatusInfo payload
+}
+
+interface senderReceiver tme_setpoints_info {
+    data TmeSetpointsInfo payload
+}
+
+interface senderReceiver tme_control {
+    data TmeControl payload
+}
