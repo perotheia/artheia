@@ -1,0 +1,33 @@
+/* AUTO-GENERATED — DO NOT EDIT — PSP CAN bus registry */
+#include "psp_can_registry.h"
+#include <stddef.h>
+
+{% for ns in can_namespaces %}
+extern const cmp_can_dispatch_entry_t* cmp_can_{{ ns }}_get_table(void);
+extern size_t                           cmp_can_{{ ns }}_get_count(void);
+extern const char*                      cmp_can_{{ ns }}_get_ns(void);
+{% endfor %}
+
+static const psp_can_bus_t _buses[] = {
+{% for ns in can_namespaces %}
+    { "{{ ns }}", &cmp_can_{{ ns }}_get_table, &cmp_can_{{ ns }}_get_count },
+{% endfor %}
+};
+
+const psp_can_bus_t* psp_can_get_buses(void)      { return _buses; }
+size_t               psp_can_get_bus_count(void)   { return sizeof(_buses)/sizeof(_buses[0]); }
+
+const cmp_can_dispatch_entry_t* psp_can_lookup(uint32_t can_id) {
+    size_t b, i;
+    for (b = 0; b < sizeof(_buses)/sizeof(_buses[0]); b++) {
+        const cmp_can_dispatch_entry_t* t = _buses[b].get_table();
+        size_t n = _buses[b].get_count();
+        for (i = 0; i < n; i++)
+            if (t[i].can_id == can_id) return &t[i];
+    }
+    return (const cmp_can_dispatch_entry_t*)0;
+}
+
+const cmp_can_dispatch_entry_t* psp_can_decode_lookup(uint32_t can_id) {
+    return psp_can_lookup(can_id);
+}

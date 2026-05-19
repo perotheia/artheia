@@ -1,0 +1,19 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+#pragma once
+#include "cmp_plugin.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Accessor functions — resolved via PLT, keeps .so in NEEDED at link time.
+ * Build-time: link against libcmp_{{ namespace }}; include this header. */
+const cmp_dispatch_entry_t* cmp_get_dispatch_table(void);
+size_t                       cmp_get_dispatch_count(void);
+const char*                  cmp_get_fibex_version(void);
+
+/* cmp_lookup() is provided by cmp_plugin.h — no redefinition here */
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,0 +1,21 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+#include "dispatch_table.h"
+#include <stddef.h>
+
+{% for pdu_name in pdu_names %}
+extern size_t cmp_encode_{{ namespace }}_{{ pdu_name }}(const uint8_t*, size_t, uint8_t*, size_t);
+{% endfor %}
+{% for pdu_name in pdu_names %}
+extern size_t cmp_decode_{{ namespace }}_{{ pdu_name }}(const uint8_t*, size_t, uint8_t*, size_t);
+{% endfor %}
+
+static const cmp_dispatch_entry_t _table[] = {
+{% for e in entries %}
+    { {{ e.slot_id }}u, {{ e.channel_idx }}u, "{{ e.pdu_name }}", "{{ namespace }}.{{ e.pdu_name }}",
+      cmp_encode_{{ namespace }}_{{ e.pdu_name }}, cmp_decode_{{ namespace }}_{{ e.pdu_name }}, {{ e.pdu_byte_offset }}u, {{ e.pdu_byte_length }}u, {{ e.proto_buf_max }}u },
+{% endfor %}
+};
+
+const cmp_dispatch_entry_t* cmp_get_dispatch_table(void) { return _table; }
+size_t                       cmp_get_dispatch_count(void) { return sizeof(_table)/sizeof(_table[0]); }
+const char*                  cmp_get_fibex_version(void)  { return "{{ fibex_version }}"; }

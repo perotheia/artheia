@@ -1,0 +1,45 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+/* Encodes CAN message '{{ msg.name }}' (ID=0x{{ '%X' % msg.can_id }}) into proto3 wire */
+/* DBC: {{ dbc_source }}  namespace: {{ namespace }} */
+
+#include <string.h>
+#include <stdint.h>
+#include "cmp_proto_wire.h"
+#include "cmp_extract.h"
+
+size_t cmp_can_encode_{{ namespace }}_{{ msg.name }}(const uint8_t* data, size_t data_len,
+                                      uint8_t* out, size_t out_size) {
+    if (!data || data_len < {{ msg.dlc }}u) return 0;
+    cmp_wire_t w;
+    cmp_wire_init(&w, out, out_size);
+
+{% for fn, sig, proto_type in fields %}
+    /* field {{ fn }}: {{ sig.name }} — bit={{ sig.start_bit }}, len={{ sig.bit_length }}, {{ 'Motorola' if sig.motorola_byte_order else 'Intel' }} */
+    {
+{% if sig.motorola_byte_order %}
+        uint64_t _raw = cmp_extract_motorola(data, {{ sig.start_bit }}u, {{ sig.bit_length }}u);
+{% else %}
+        uint64_t _raw = cmp_extract_intel(data, {{ sig.start_bit }}u, {{ sig.bit_length }}u);
+{% endif %}
+{% if proto_type == 'float' %}
+{% if sig.is_signed %}
+        int32_t _si = cmp_sign_extend(_raw, {{ sig.bit_length }}u);
+        float _phys = (float)_si * {{ sig.factor }}f + {{ sig.offset }}f;
+{% else %}
+        float _phys = (float)(uint32_t)_raw * {{ sig.factor }}f + {{ sig.offset }}f;
+{% endif %}
+        cmp_write_float(&w, {{ fn }}u, _phys);
+{% elif proto_type == 'bool' %}
+        cmp_write_bool(&w, {{ fn }}u, _raw != 0);
+{% elif proto_type == 'int32' %}
+        cmp_write_int32(&w, {{ fn }}u, cmp_sign_extend(_raw, {{ sig.bit_length }}u));
+{% elif proto_type == 'uint64' %}
+        cmp_write_uint64(&w, {{ fn }}u, _raw);
+{% else %}
+        cmp_write_uint32(&w, {{ fn }}u, (uint32_t)_raw);
+{% endif %}
+    }
+{% endfor %}
+
+    return w.overflow ? 0 : w.pos;
+}

@@ -1,0 +1,53 @@
+# AUTO-GENERATED — DO NOT EDIT
+cmake_minimum_required(VERSION 3.16)
+project(cmp_{{ namespace }} C CXX)
+set(CMAKE_C_STANDARD 11)
+
+# nanopb location — set NANOPB_SRC_ROOT_FOLDER or install via apt
+if(NOT DEFINED NANOPB_DIR)
+    set(NANOPB_DIR /usr/local/lib/python3/dist-packages/nanopb OR /usr/share/nanopb)
+endif()
+
+find_path(NANOPB_INCLUDE_DIR pb.h HINTS ${NANOPB_DIR} /usr/include)
+find_library(NANOPB_LIB nanopb HINTS ${NANOPB_DIR})
+
+# Generate .pb.c/.pb.h from .proto files using nanopb's generator
+# Run: python -m grpc_tools.protoc --nanopb_out=. *.proto
+# OR: protoc --plugin=protoc-gen-nanopb=`which protoc-gen-nanopb` --nanopb_out=. *.proto
+# Pre-generated pb files are expected in this directory.
+
+# Plugin shared library
+add_library(cmp_{{ namespace }} SHARED
+    dispatch_table.c
+{% for pdu_name in pdu_names %}
+    encode_{{ pdu_name }}.c
+{% endfor %}
+{% for pdu_name in pdu_names %}
+    decode_{{ pdu_name }}.c
+{% endfor %}
+{% for pdu_name in pdu_names %}
+    {{ pdu_name }}.pb.c
+{% endfor %}
+)
+
+target_include_directories(cmp_{{ namespace }}
+    PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
+            {{ plugin_include_dir }}    # path to cmp_plugin.h, cmp_proto_wire.h, cmp_extract.h
+    PRIVATE ${NANOPB_INCLUDE_DIR}
+)
+target_compile_options(cmp_{{ namespace }} PRIVATE -fPIC)
+
+# Test executable (optional)
+if(TARGET nanopb OR NANOPB_INCLUDE_DIR)
+add_executable(test_{{ namespace }}
+    {{ test_src_dir }}/test_plugin.cpp
+)
+target_link_libraries(test_{{ namespace }}
+    PRIVATE cmp_{{ namespace }} cmpdecoder
+)
+target_include_directories(test_{{ namespace }}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+            {{ plugin_include_dir }}
+            ${NANOPB_INCLUDE_DIR}
+)
+endif()

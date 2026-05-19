@@ -1,0 +1,22 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+#include "can_dispatch_table.h"
+#include <stddef.h>
+
+{% for msg_name in msg_names %}
+extern size_t cmp_can_encode_{{ namespace }}_{{ msg_name }}(const uint8_t*, size_t, uint8_t*, size_t);
+{% endfor %}
+{% for msg_name in msg_names %}
+extern size_t cmp_decode_{{ namespace }}_{{ msg_name }}(const uint8_t*, size_t, uint8_t*, size_t);
+{% endfor %}
+
+static const cmp_can_dispatch_entry_t _can_table[] = {
+{% for e in entries %}
+    { 0x{{ '%Xu' % e.can_id }}, {{ 1 if e.is_extended else 0 }}u, "{{ e.message_name }}", "{{ namespace }}.{{ e.message_name }}",
+      cmp_can_encode_{{ namespace }}_{{ e.message_name }}, cmp_decode_{{ namespace }}_{{ e.message_name }}, {{ e.dlc }}u, {{ e.proto_buf_max }}u },
+{% endfor %}
+};
+
+/* Namespace-prefixed: allows multiple buses in one libpsp.so */
+const cmp_can_dispatch_entry_t* cmp_can_{{ namespace }}_get_table(void) { return _can_table; }
+size_t                           cmp_can_{{ namespace }}_get_count(void) { return sizeof(_can_table)/sizeof(_can_table[0]); }
+const char*                      cmp_can_{{ namespace }}_get_ns(void)    { return "{{ namespace }}"; }

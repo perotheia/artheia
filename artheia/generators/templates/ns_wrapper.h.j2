@@ -1,0 +1,12 @@
+// AUTO-GENERATED — DO NOT EDIT
+// C++ namespace wrappers for {{ namespace }} nanopb POD types
+#pragma once
+{% for pdu_name in pdu_names %}
+#include "{{ pdu_name }}.pb.h"
+{% endfor %}
+
+namespace {{ namespace }} {
+{% for pdu_name in pdu_names %}
+    using {{ pdu_name }} = ::{{ namespace }}_{{ pdu_name }};
+{% endfor %}
+} // namespace {{ namespace }}

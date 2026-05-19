@@ -1,0 +1,26 @@
+# AUTO-GENERATED — DO NOT EDIT
+cmake_minimum_required(VERSION 3.16)
+project(cmp_can_{{ namespace }} C CXX)
+set(CMAKE_C_STANDARD 11)
+
+find_path(NANOPB_INCLUDE_DIR pb.h HINTS /usr/include/nanopb)
+
+add_library(cmp_can_{{ namespace }} SHARED
+    can_dispatch_table.c
+{% for msg_name in msg_names %}
+    can_encode_{{ msg_name }}.c
+{% endfor %}
+{% for msg_name in msg_names %}
+    can_decode_{{ msg_name }}.c
+{% endfor %}
+{% for msg_name in msg_names %}
+    {{ msg_name }}.pb.c
+{% endfor %}
+)
+
+target_include_directories(cmp_can_{{ namespace }}
+    PUBLIC  ${CMAKE_CURRENT_SOURCE_DIR}
+            {{ plugin_include_dir }}
+    PRIVATE ${NANOPB_INCLUDE_DIR}
+)
+target_compile_options(cmp_can_{{ namespace }} PRIVATE -fPIC)

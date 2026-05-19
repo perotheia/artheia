@@ -1,0 +1,17 @@
+// AUTO-GENERATED — DO NOT EDIT
+// Send this filter to Hercules to limit FlexRay capture to used slots.
+#pragma once
+#include <stdint.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+namespace {{ namespace }} {
+#endif
+
+static const uint16_t kHerculesFilterSlots[] = { {% for s in slots %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %} };
+static const size_t   kHerculesFilterSlotCount = {{ slots|length }};
+static const char*    kFibexVersion = "{{ fibex_version }}";
+
+#ifdef __cplusplus
+} // namespace {{ namespace }}
+#endif

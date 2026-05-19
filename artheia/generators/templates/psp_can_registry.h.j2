@@ -1,0 +1,24 @@
+/* AUTO-GENERATED — DO NOT EDIT — PSP CAN bus registry */
+#pragma once
+#include "cmp_plugin.h"
+
+typedef struct {
+    const char*  bus_ns;
+    const cmp_can_dispatch_entry_t* (*get_table)(void);
+    size_t                           (*get_count)(void);
+} psp_can_bus_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+const psp_can_bus_t*             psp_can_get_buses(void);
+size_t                           psp_can_get_bus_count(void);
+const cmp_can_dispatch_entry_t*  psp_can_lookup(uint32_t can_id);
+
+/* Decode lookup — same as psp_can_lookup, exists for TX-path code clarity */
+const cmp_can_dispatch_entry_t* psp_can_decode_lookup(uint32_t can_id);
+
+#ifdef __cplusplus
+}
+#endif

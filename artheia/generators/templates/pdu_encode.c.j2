@@ -1,0 +1,46 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+/* Encodes FlexRay PDU '{{ pdu.name }}' into proto3 wire format */
+/* FIBEX: {{ fibex_version }}  namespace: {{ namespace }} */
+
+#include <string.h>
+#include <stdint.h>
+#include "cmp_proto_wire.h"
+#include "cmp_extract.h"
+
+size_t cmp_encode_{{ namespace }}_{{ pdu.name }}(const uint8_t* pdu, size_t pdu_len,
+                                   uint8_t* out, size_t out_size) {
+    if (!pdu || pdu_len < {{ pdu.byte_length }}u) return 0;
+    cmp_wire_t w;
+    cmp_wire_init(&w, out, out_size);
+
+{% for fn, sig_inst, signal, coding, proto_type in fields %}
+    /* field {{ fn }}: {{ signal.name }} — bit={{ sig_inst.bit_position }}, len={{ coding.bit_length }}, {{ 'Motorola' if sig_inst.motorola_byte_order else 'Intel' }} */
+    {
+{% if sig_inst.motorola_byte_order %}
+        uint64_t _raw = cmp_extract_motorola(pdu, {{ sig_inst.bit_position }}u, {{ coding.bit_length }}u);
+{% else %}
+        uint64_t _raw = cmp_extract_intel(pdu, {{ sig_inst.bit_position }}u, {{ coding.bit_length }}u);
+{% endif %}
+{% if proto_type == 'float' %}
+{% if coding.encoding == 'SIGNED' %}
+        int32_t _signed = cmp_sign_extend(_raw, {{ coding.bit_length }}u);
+        float _phys = (float)_signed * {{ coding.scale }}f + {{ coding.offset }}f;
+{% else %}
+        float _phys = (float)(uint32_t)_raw * {{ coding.scale }}f + {{ coding.offset }}f;
+{% endif %}
+        cmp_write_float(&w, {{ fn }}u, _phys);
+{% elif proto_type == 'bool' %}
+        cmp_write_bool(&w, {{ fn }}u, _raw != 0);
+{% elif proto_type == 'int32' %}
+        int32_t _signed = cmp_sign_extend(_raw, {{ coding.bit_length }}u);
+        cmp_write_int32(&w, {{ fn }}u, _signed);
+{% elif proto_type == 'uint64' %}
+        cmp_write_uint64(&w, {{ fn }}u, _raw);
+{% else %}
+        cmp_write_uint32(&w, {{ fn }}u, (uint32_t)_raw);
+{% endif %}
+    }
+{% endfor %}
+
+    return w.overflow ? 0 : w.pos;
+}

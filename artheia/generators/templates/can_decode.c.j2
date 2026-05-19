@@ -1,0 +1,51 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+/* Decodes proto3 wire for CAN '{{ msg.name }}' (ID=0x{{ '%X' % msg.can_id }}) → raw PDU bytes */
+/* DBC: {{ dbc_source }}  namespace: {{ namespace }} */
+
+#include <string.h>
+#include <stdint.h>
+#include <math.h>
+#include "cmp_wire_reader.h"
+#include "cmp_write_bits.h"
+
+size_t cmp_decode_{{ namespace }}_{{ msg.name }}(
+    const uint8_t* proto_buf, size_t proto_len,
+    uint8_t* pdu_out, size_t pdu_size)
+{
+    if (!proto_buf || !pdu_out || pdu_size < {{ msg.dlc }}u) return 0u;
+    memset(pdu_out, 0, {{ msg.dlc }}u);
+
+    cmp_reader_t r;
+    cmp_reader_init(&r, proto_buf, proto_len);
+
+    uint32_t fn, wt;
+    uint64_t val_u64 = 0u;
+    float    val_f32 = 0.0f;
+
+    while (cmp_read_field(&r, &fn, &wt, &val_u64, &val_f32)) {
+        switch (fn) {
+{% for fn, sig, proto_type in fields %}
+        case {{ fn }}u: { /* {{ sig.name }} bit={{ sig.start_bit }} len={{ sig.bit_length }} */
+{% if proto_type == 'float' %}
+{% if sig.is_signed %}
+            int32_t _raws = (int32_t)roundf((val_f32 - {{ sig.offset }}f) / {{ sig.factor }}f);
+            uint64_t _raw = (uint64_t)(uint32_t)_raws;
+{% else %}
+            uint64_t _raw = (uint64_t)(uint32_t)roundf((val_f32 - {{ sig.offset }}f) / {{ sig.factor }}f);
+{% endif %}
+{% else %}
+            uint64_t _raw = val_u64;
+{% endif %}
+{% if sig.motorola_byte_order %}
+            cmp_write_bits_motorola(pdu_out, {{ sig.start_bit }}u, {{ sig.bit_length }}u, _raw);
+{% else %}
+            cmp_write_bits_intel(pdu_out, {{ sig.start_bit }}u, {{ sig.bit_length }}u, _raw);
+{% endif %}
+            break;
+        }
+{% endfor %}
+        default: break;
+        }
+    }
+    return r.error ? 0u : {{ msg.dlc }}u;
+}

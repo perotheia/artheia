@@ -1,0 +1,51 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+/* Decodes proto3 wire for FlexRay PDU '{{ pdu.name }}' → raw PDU bytes */
+/* FIBEX: {{ fibex_version }}  namespace: {{ namespace }} */
+
+#include <string.h>
+#include <stdint.h>
+#include <math.h>
+#include "cmp_wire_reader.h"
+#include "cmp_write_bits.h"
+
+size_t cmp_decode_{{ namespace }}_{{ pdu.name }}(
+    const uint8_t* proto_buf, size_t proto_len,
+    uint8_t* pdu_out, size_t pdu_size)
+{
+    if (!proto_buf || !pdu_out || pdu_size < {{ pdu.byte_length }}u) return 0u;
+    memset(pdu_out, 0, {{ pdu.byte_length }}u);
+
+    cmp_reader_t r;
+    cmp_reader_init(&r, proto_buf, proto_len);
+
+    uint32_t fn, wt;
+    uint64_t val_u64 = 0u;
+    float    val_f32 = 0.0f;
+
+    while (cmp_read_field(&r, &fn, &wt, &val_u64, &val_f32)) {
+        switch (fn) {
+{% for fn, si, signal, coding, proto_type in fields %}
+        case {{ fn }}u: { /* {{ signal.name }} bit={{ si.bit_position }} len={{ coding.bit_length }} */
+{% if proto_type == 'float' %}
+{% if coding.encoding == 'SIGNED' %}
+            int32_t _raws = (int32_t)roundf((val_f32 - {{ coding.offset }}f) / {{ coding.scale }}f);
+            uint64_t _raw = (uint64_t)(uint32_t)_raws;
+{% else %}
+            uint64_t _raw = (uint64_t)(uint32_t)roundf((val_f32 - {{ coding.offset }}f) / {{ coding.scale }}f);
+{% endif %}
+{% else %}
+            uint64_t _raw = val_u64;
+{% endif %}
+{% if si.motorola_byte_order %}
+            cmp_write_bits_motorola(pdu_out, {{ si.bit_position }}u, {{ coding.bit_length }}u, _raw);
+{% else %}
+            cmp_write_bits_intel(pdu_out, {{ si.bit_position }}u, {{ coding.bit_length }}u, _raw);
+{% endif %}
+            break;
+        }
+{% endfor %}
+        default: break;
+        }
+    }
+    return r.error ? 0u : {{ pdu.byte_length }}u;
+}

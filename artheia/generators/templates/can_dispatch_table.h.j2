@@ -1,0 +1,25 @@
+/* AUTO-GENERATED — DO NOT EDIT */
+#pragma once
+#include "cmp_plugin.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Namespace-prefixed accessors for bus '{{ namespace }}' */
+const cmp_can_dispatch_entry_t* cmp_can_{{ namespace }}_get_table(void);
+size_t                           cmp_can_{{ namespace }}_get_count(void);
+const char*                      cmp_can_{{ namespace }}_get_ns(void);
+
+static inline const cmp_can_dispatch_entry_t*
+cmp_can_{{ namespace }}_lookup(uint32_t can_id) {
+    const cmp_can_dispatch_entry_t* t = cmp_can_{{ namespace }}_get_table();
+    size_t n = cmp_can_{{ namespace }}_get_count();
+    for (size_t i = 0; i < n; i++)
+        if (t[i].can_id == can_id) return &t[i];
+    return (const cmp_can_dispatch_entry_t*)0;
+}
+
+#ifdef __cplusplus
+}
+#endif

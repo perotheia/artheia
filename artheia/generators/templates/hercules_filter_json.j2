@@ -1,0 +1,11 @@
+{
+  "fibex_version": "{{ fibex_version }}",
+  "namespace": "{{ namespace }}",
+  "slots": [{% for s in slots %}{{ s }}{% if not loop.last %}, {% endif %}{% endfor %}],
+  "pdus": [
+{% for e in entries %}
+    {"slot_id": {{ e.slot_id }}, "channel": {{ e.channel_idx }}, "pdu": "{{ e.pdu_name }}", "byte_offset": {{ e.pdu_byte_offset }}, "byte_length": {{ e.pdu_byte_length }}}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+  ]
+}
