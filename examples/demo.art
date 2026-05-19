@@ -9,18 +9,18 @@ package theia.demo
 // ---- 1. messages ------------------------------------------------------------
 
 message SpeedSignal {
-    uint32 speed_kph = 1
-    uint64 ts_ns     = 2
+    uint32 speed_kph
+    uint64 ts_ns
 }
 
 message TorqueRequest {
-    sint32 torque_nm = 1
-    uint64 ts_ns     = 2
+    sint32 torque_nm
+    uint64 ts_ns
 }
 
 message StatusReport {
-    bool   healthy = 1
-    string note    = 2
+    bool   healthy
+    string note
 }
 
 // ---- 2. interfaces ----------------------------------------------------------

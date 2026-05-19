@@ -77,9 +77,10 @@ class FieldDecl:
     type_name: str  # primitive or proto identifier (may be enum)
     name: str
     number: int
-    # Optional source annotations the importer wants to surface in the .art
-    # comment line attached to the field.
-    notes: list[str] = field(default_factory=list)
+    # Raw text of any `[ ... ]` field-options block, with the brackets
+    # stripped. Empty when the proto had no options. Pass-through: fusée
+    # does not parse the contents — nanopb does.
+    options: str = ""
 
 
 @dataclass
@@ -122,11 +123,24 @@ def _strip_comments(src: str) -> str:
     return _COMMENT_RE.sub("", src)
 
 
+_TOKEN_RE = re.compile(
+    r"""
+    (?P<bracket>\[[^\]]*\])      # entire [ ... ] field-options block, kept whole
+    | (?P<punct>[{}();=,])       # structural punctuation
+    | (?P<word>[^\s{}();=,\[\]]+) # everything else (idents, types, numbers, strings)
+    """,
+    re.VERBOSE,
+)
+
+
 def _tokenize(src: str) -> list[str]:
-    """Split on whitespace and on `{`, `}`, `;`, `=`, `,` punctuation."""
-    src = _FIELD_OPTS_RE.sub("", src)
-    src = re.sub(r"([{}();=,])", r" \1 ", src)
-    return src.split()
+    """Split into tokens. Each `[ ... ]` block is preserved as a single
+    token so the field parser can attach it to the right field.
+    """
+    out: list[str] = []
+    for m in _TOKEN_RE.finditer(src):
+        out.append(m.group(0))
+    return out
 
 
 def parse_proto_file(path: Path) -> ProtoFile:
@@ -247,10 +261,36 @@ def _parse_field(
     i += 1
     number = int(tokens[i])
     i += 1
-    # eat optional ';'
+    # Optional `[ ... ]` field-options block, kept as one token by the
+    # tokenizer. We strip a `default = ...` clause (proto2 default values
+    # have no equivalent in Artheia) and pass everything else through.
+    options = ""
+    if i < len(tokens) and tokens[i].startswith("["):
+        raw = tokens[i][1:-1]  # drop surrounding brackets
+        options = _filter_field_options(raw)
+        i += 1
     if i < len(tokens) and tokens[i] == ";":
         i += 1
-    return FieldDecl(label=label, type_name=type_name, name=fname, number=number), i
+    return FieldDecl(
+        label=label, type_name=type_name, name=fname, number=number, options=options,
+    ), i
+
+
+_DEFAULT_OPT_RE = re.compile(r"\s*default\s*=\s*[^,]+\s*,?")
+
+
+def _filter_field_options(raw: str) -> str:
+    """Drop the `default = ...` clause from a proto2 field-options block.
+
+    proto2 defaults don't survive the round-trip — Artheia messages are
+    proto3-equivalent and don't have explicit defaults. Everything else
+    (notably `(nanopb).max_length`, `(nanopb).max_count`, `(nanopb).max_size`,
+    `(nanopb).fixed_length`, `(nanopb).fixed_count`) is preserved verbatim
+    so the proto generator can re-inject it.
+    """
+    cleaned = _DEFAULT_OPT_RE.sub("", raw)
+    cleaned = cleaned.strip(" ,")
+    return cleaned
 
 
 def _parse_enum(tokens: list[str], i: int) -> tuple[EnumDecl, int]:
@@ -318,8 +358,17 @@ def parse_build(path: Path) -> list[SignalDecl]:
 
 
 def _proto_msg_to_art(name: str) -> str:
-    """`moz_msg_VehicleState` -> `VehicleState`."""
-    return name.removeprefix("moz_msg_")
+    """Strip the nanopb C-name prefix from a tornado proto message name.
+
+    Examples:
+      `moz_msg_VehicleState` -> `VehicleState`  (signal-shaped messages)
+      `moz_cfg_VehicleRegistrationConfig` -> `VehicleRegistrationConfig`
+        (app-config messages declared by mosaic_cc_application)
+    """
+    for prefix in ("moz_msg_", "moz_cfg_"):
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return name
 
 
 def _signal_iface_name(signal_name: str) -> str:
@@ -332,7 +381,11 @@ def _is_primitive(t: str) -> bool:
 
 
 def _normalize_type(t: str, enum_names: set[str], nested_rename: dict[str, str]) -> tuple[str, list[str]]:
-    """Map a proto field type to an Artheia primitive or message name.
+    """Map a proto field type to an Artheia primitive, message, or enum name.
+
+    Enums are first-class in Artheia v0.2; we keep the enum name as the
+    field type and let the grammar's `MessageOrEnum` cross-reference resolve
+    it. (Prior to enum support this returned `uint32` with a note.)
 
     Returns (artheia_type, extra_field_notes).
     """
@@ -341,13 +394,56 @@ def _normalize_type(t: str, enum_names: set[str], nested_rename: dict[str, str])
         return PROTO2_TO_ART[t], notes
     bare = t.lstrip(".")
     # Apply hoist renames first — a nested enum like `ChargingCommand.Action`
-    # (or just `Action`) is renamed to `ChargingCommandAction`, and only
-    # after renaming can the enum-set lookup succeed.
+    # (or just `Action`) is renamed to `ChargingCommandAction`.
     resolved = nested_rename.get(bare, bare)
-    if resolved in enum_names:
-        notes.append(f"originally enum {resolved}")
-        return "uint32", notes
     return resolved, notes
+
+
+_CAMEL_BOUNDARY_RE_A = re.compile(r"([a-z])([A-Z])")
+_CAMEL_BOUNDARY_RE_B = re.compile(r"([A-Z]+)([A-Z][a-z])")
+
+
+def _enum_value_prefix(enum_name: str) -> str:
+    """`VehicleStateMode` -> `VEHICLE_STATE_MODE_` (the prefix proto2 enum
+    values typically share with their enum's CamelCase name)."""
+    s = _CAMEL_BOUNDARY_RE_A.sub(r"\1_\2", enum_name)
+    s = _CAMEL_BOUNDARY_RE_B.sub(r"\1_\2", s)
+    return s.upper() + "_"
+
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _strip_enum_value_prefix(value_name: str, enum_name: str) -> str:
+    """If a proto2 enum value carries the redundant `<ENUM_NAME>_` prefix
+    (the convention recommended by Google's proto style guide), strip it.
+    Otherwise return the value name verbatim. If stripping would produce
+    an invalid Artheia identifier (e.g. starts with a digit like
+    `GPS_FIX_ENUM_2D_FIX` → `2D_FIX`), the original name is kept."""
+    prefix = _enum_value_prefix(enum_name)
+    if value_name.startswith(prefix) and len(value_name) > len(prefix):
+        candidate = value_name[len(prefix):]
+        if _IDENT_RE.match(candidate):
+            return candidate
+    return value_name
+
+
+def _format_field_line(
+    f: FieldDecl,
+    enum_names: set[str],
+    rename_map: dict[str, str],
+) -> str:
+    """Render a single MessageField line in Artheia syntax.
+
+    Drops the proto-only label (`required`/`optional`), the field number
+    (assigned at proto-gen time), and proto2 defaults. Keeps `repeated`
+    and the verbatim nanopb options block, which is what the proto
+    generator pastes back into `[ ... ]` for nanopb's static sizing.
+    """
+    ftype, _notes = _normalize_type(f.type_name, enum_names, rename_map)
+    repeated = "repeated " if f.label == "repeated" else ""
+    opts = f" [{f.options}]" if f.options else ""
+    return f"    {repeated}{ftype} {f.name}{opts}"
 
 
 def _enum_comment(en: EnumDecl) -> str:
@@ -413,13 +509,14 @@ def emit_package_art(
     signals: list[SignalDecl],
     *,
     external_message_origins: dict[str, str] | None = None,
+    external_enum_origins: dict[str, str] | None = None,
 ) -> str:
     """Return the textual contents of a `package.art` file.
 
-    `external_message_origins`: optional map of message-name → category where
-    that message is declared. Used to emit forward-declaration stubs for
-    messages referenced across categories — textX's name resolution is
-    single-file, so a referenced type must exist locally.
+    `external_message_origins` / `external_enum_origins`: maps of name → other
+    category. Used to emit forward-declaration stubs for symbols referenced
+    across categories — textX's name resolution is single-file, so any
+    referenced declaration must exist locally.
     """
     lines: list[str] = []
     lines.append(
@@ -475,23 +572,33 @@ def emit_package_art(
         flat_enums.extend(pf.enums)
 
     enum_names = {e.name for e in flat_enums}
-    # Emit enums first as // comments — Artheia has no enum decl.
+    # ---- emit enum declarations -------------------------------------------
+    # Enums are first-class in Artheia v0.2. We strip the redundant
+    # `<ENUM_NAME>_` prefix from each value to keep the .art readable —
+    # `VEHICLE_STATE_MODE_DRIVE` becomes `DRIVE`. The original proto names
+    # are still derivable from the enum identifier.
     if flat_enums:
-        lines.append("// ---- enums (flattened to uint32 at use sites) ----")
+        lines.append("// ---- enums ----")
         for en in flat_enums:
-            lines.append(_enum_comment(en))
-        lines.append("")
+            lines.append(f"enum {en.name} {{")
+            for vname, vnum in en.values:
+                lines.append(f"    {_strip_enum_value_prefix(vname, en.name)} = {vnum}")
+            lines.append("}")
+            lines.append("")
 
     # ---- emit forward-declaration stubs for cross-category / missing refs --
-    # textX cross-references are single-file, so any message referenced by a
-    # field (or by a senderReceiver interface) but declared in another
-    # category — or not declared anywhere — needs a local empty stub.
+    # textX cross-references are single-file, so any declaration referenced
+    # by a field, an interface, or a BUILD entry — but declared in another
+    # category, or not anywhere — needs a local empty stub. Stubs preserve
+    # the kind (message vs enum) where we can determine it from the
+    # cross-category origin index.
     local_names = {m.name for m in flat_messages} | enum_names
     refs = _collect_referenced_types(flat_messages)
-    # interface refs (signals declared in BUILD)
     for sig in signals:
         refs.add(_proto_msg_to_art(sig.proto_message_name))
-    externals: list[tuple[str, str]] = []
+    msg_origins = external_message_origins or {}
+    enum_origins = external_enum_origins or {}
+    externals: list[tuple[str, str, str]] = []  # (name, kind, origin-or-'unknown')
     for ref in sorted(refs):
         if _is_primitive(ref):
             continue
@@ -499,45 +606,31 @@ def emit_package_art(
             continue
         if ref in rename_map:
             continue
-        origin = (external_message_origins or {}).get(ref, "unknown")
-        externals.append((ref, origin))
+        if ref in enum_origins:
+            externals.append((ref, "enum", enum_origins[ref]))
+        elif ref in msg_origins:
+            externals.append((ref, "message", msg_origins[ref]))
+        else:
+            externals.append((ref, "message", "unknown"))
     if externals:
         lines.append("// ---- forward-decl stubs for cross-category / missing refs ----")
         lines.append("// (textX cross-references are single-file; real defs live elsewhere)")
-        for name, origin in externals:
+        for name, kind, origin in externals:
             if origin == "unknown":
-                lines.append(f"// origin: unresolved — referenced by BUILD or proto but not declared")
+                lines.append("// origin: unresolved — referenced by BUILD or proto but not declared")
             else:
                 lines.append(f"// origin: vendor.tornado.system.signals.{origin}")
-            lines.append(f"message {name} {{ }}")
+            lines.append(f"{kind} {name} {{ }}")
         lines.append("")
 
     # ---- emit messages -----------------------------------------------------
     for msg in flat_messages:
-        if msg.leading_comment:
-            lines.append(f"// {msg.leading_comment}")
         lines.append(f"message {msg.name} {{")
         for f in msg.fields:
-            ftype, notes = _normalize_type(f.type_name, enum_names, rename_map)
-            repeated = "repeated " if f.label == "repeated" else ""
-            prefix_notes: list[str] = []
-            if f.label and f.label not in ("repeated", ""):
-                prefix_notes.append(f.label)
-            prefix_notes.extend(notes)
-            tail = f"  // {', '.join(prefix_notes)}" if prefix_notes else ""
-            lines.append(
-                f"    {repeated}{ftype} {f.name} = {f.number}{tail}"
-            )
+            lines.append(_format_field_line(f, enum_names, rename_map))
         for of in msg.oneofs:
-            lines.append(f"    // oneof {of.name} (proto2 oneof flattened — at most one set)")
             for f in of.fields:
-                ftype, notes = _normalize_type(f.type_name, enum_names, rename_map)
-                prefix_notes = [f"oneof {of.name}"]
-                prefix_notes.extend(notes)
-                tail = f"  // {', '.join(prefix_notes)}"
-                lines.append(
-                    f"    {ftype} {f.name} = {f.number}{tail}"
-                )
+                lines.append(_format_field_line(f, enum_names, rename_map))
         lines.append("}")
         lines.append("")
 
@@ -586,6 +679,32 @@ def _index_message_origins(
     return origin
 
 
+def _index_enum_origins(
+    categories: dict[str, list[ProtoFile]],
+) -> dict[str, str]:
+    """Map every declared enum (including hoisted nested) to its category.
+
+    Nested enums are hoisted using the same `<Outer><Inner>` rename as
+    nested messages, so a proto2 `message ChargingCommand { enum Action {...} }`
+    becomes Artheia `ChargingCommandAction` in the local namespace.
+    """
+    origin: dict[str, str] = {}
+    for cat, pfs in categories.items():
+        for pf in pfs:
+            for en in pf.enums:
+                origin[en.name] = cat
+            for top in pf.messages:
+                stack = [(top, "")]
+                while stack:
+                    msg, prefix = stack.pop()
+                    new_prefix = f"{prefix}{msg.name}"
+                    for sub_en in msg.nested_enums:
+                        origin[f"{new_prefix}{sub_en.name}"] = cat
+                    for sub_msg in msg.nested_messages:
+                        stack.append((sub_msg, new_prefix))
+    return origin
+
+
 def import_platform(
     signals_root: Path,
     platform_root: Path,
@@ -602,7 +721,8 @@ def import_platform(
     parsed: dict[str, list[ProtoFile]] = {
         d.name: _category_proto_files(d) for d in cat_dirs
     }
-    origins = _index_message_origins(parsed)
+    msg_origins = _index_message_origins(parsed)
+    enum_origins = _index_enum_origins(parsed)
 
     out: list[Path] = []
     for d in cat_dirs:
@@ -614,7 +734,8 @@ def import_platform(
             category,
             parsed[category],
             signals,
-            external_message_origins=origins,
+            external_message_origins=msg_origins,
+            external_enum_origins=enum_origins,
         )
         out_path = dst / "package.art"
         out_path.write_text(art_text)
@@ -681,6 +802,13 @@ class JunctionPort:
 class ComponentDecl:
     name: str  # snake_case directory name
     ports: list[JunctionPort] = field(default_factory=list)
+    # Optional runtime configuration: when the component's BUILD declares
+    # `mosaic_cc_application(..., app_config_proto=":foo_proto",
+    # app_config_proto_name="moz_cfg_Foo")`, fusée parses the matching
+    # .proto in the component dir and emits a `config Foo` line on the node.
+    config_messages: list[MessageDecl] = field(default_factory=list)
+    config_enums: list[EnumDecl] = field(default_factory=list)
+    config_root_message: str | None = None  # Artheia name of the root config message
 
     @property
     def camel_name(self) -> str:
@@ -728,7 +856,48 @@ def parse_component_build(build_path: Path) -> ComponentDecl | None:
                     qos=entry.group("qos"),
                 )
             )
-    return ComponentDecl(name=comp_name, ports=ports)
+
+    comp = ComponentDecl(name=comp_name, ports=ports)
+
+    # Look for `mosaic_cc_application(..., app_config_proto=":NAME_proto",
+    # app_config_proto_name="moz_cfg_X")`. If present, parse the matching
+    # .proto in the same directory and pull its messages + enums into the
+    # component so the emitter can write them inline.
+    app_m = re.search(
+        r"mosaic_cc_application\s*\((?P<body>.*?)\)\s*(?=\Z|\w+\s*\()",
+        raw_nc, re.DOTALL,
+    )
+    if app_m:
+        app_body = app_m.group("body")
+        cfg_proto_m = re.search(
+            r'app_config_proto\s*=\s*"(?::)?([^"]+?)(?:_proto)?"',
+            app_body,
+        )
+        cfg_msg_m = re.search(r'app_config_proto_name\s*=\s*"([^"]+)"', app_body)
+        if cfg_proto_m and cfg_msg_m:
+            proto_stem = cfg_proto_m.group(1)
+            # The proto filename is the stem + `.proto` in the same dir.
+            proto_path = build_path.parent / f"{proto_stem}.proto"
+            if proto_path.exists():
+                pf = parse_proto_file(proto_path)
+                # Hoist nested decls so the emitted .art is flat — same path
+                # used by the platform/signals importer.
+                flat_msgs: list[MessageDecl] = []
+                flat_enums: list[EnumDecl] = list(pf.enums)
+                for top in pf.messages:
+                    nm, ne, _ = _hoist_nested(top, prefix="")
+                    flat_msgs.append(MessageDecl(
+                        name=top.name,
+                        fields=top.fields,
+                        oneofs=top.oneofs,
+                        leading_comment=top.leading_comment,
+                    ))
+                    flat_msgs.extend(nm)
+                    flat_enums.extend(ne)
+                comp.config_messages = flat_msgs
+                comp.config_enums = flat_enums
+                comp.config_root_message = _proto_msg_to_art(cfg_msg_m.group(1))
+    return comp
 
 
 def _port_local_name(p: JunctionPort) -> str:
@@ -747,12 +916,18 @@ def _emit_component_art(
     tipc_type: int,
     *,
     platform_message_index: dict[str, str],
+    source_subdir: str,
 ) -> str:
-    """Render a single component as a .art file."""
+    """Render a single component as a .art file.
+
+    `source_subdir` is the path under `up/tornado/app/` where the component
+    lives — usually `onboard/<name>` but new components (like
+    `vehicle_registration`) sit directly under `app/`.
+    """
     cats_used = sorted({p.category for p in comp.ports})
     lines: list[str] = []
     lines.append(
-        f"// Generated from up/tornado/app/onboard/{comp.name}/BUILD — DO NOT EDIT BY HAND.\n"
+        f"// Generated from up/tornado/app/{source_subdir}/BUILD — DO NOT EDIT BY HAND.\n"
         f"// Translates the vehicle_os_signal_junction into an Artheia node.\n"
         f"// Synthetic TIPC address allocated by fusée; the real runtime uses DDS topics."
     )
@@ -779,8 +954,35 @@ def _emit_component_art(
             lines.append(f"interface senderReceiver {iface} {{ }}")
         lines.append("")
 
+    # ---- emit config schema, if any --------------------------------------
+    if comp.config_root_message and comp.config_messages:
+        lines.append("// ---- runtime configuration schema (app_config_proto in BUILD) ----")
+        enum_names = {e.name for e in comp.config_enums}
+        # Build a rename map from the hoisted nested messages so field type
+        # refs to nested types resolve. Hoisting was already done at parse
+        # time; we recompute the rename map here for cross-ref correctness.
+        rename_map: dict[str, str] = {}
+        # Enum declarations first.
+        for en in comp.config_enums:
+            lines.append(f"enum {en.name} {{")
+            for vname, vnum in en.values:
+                lines.append(f"    {_strip_enum_value_prefix(vname, en.name)} = {vnum}")
+            lines.append("}")
+            lines.append("")
+        for msg in comp.config_messages:
+            lines.append(f"message {msg.name} {{")
+            for f in msg.fields:
+                lines.append(_format_field_line(f, enum_names, rename_map))
+            for of in msg.oneofs:
+                for f in of.fields:
+                    lines.append(_format_field_line(f, enum_names, rename_map))
+            lines.append("}")
+            lines.append("")
+
     lines.append(f"node atomic {comp.camel_name} {{")
     lines.append(f"    tipc type=0x{tipc_type:08x} instance=0")
+    if comp.config_root_message:
+        lines.append(f"    config {comp.config_root_message}")
     if comp.ports:
         lines.append("    ports {")
         # inputs first
@@ -803,6 +1005,29 @@ def _emit_component_art(
     return "\n".join(lines) + "\n"
 
 
+def _candidate_component_dirs(app_root: Path) -> list[tuple[Path, str]]:
+    """Yield (component_dir, source_subdir) pairs across both layouts:
+
+      - `app_root/onboard/<comp>/BUILD`  → subdir `onboard/<comp>`
+      - `app_root/<comp>/BUILD`          → subdir `<comp>` (for top-level
+        apps like `vehicle_registration` that don't live under onboard/)
+
+    A BUILD must exist in the directory to qualify.
+    """
+    pairs: list[tuple[Path, str]] = []
+    onboard = app_root / "onboard"
+    if onboard.is_dir():
+        for d in sorted(onboard.iterdir()):
+            if d.is_dir() and (d / "BUILD").exists():
+                pairs.append((d, f"onboard/{d.name}"))
+    for d in sorted(app_root.iterdir()):
+        if not d.is_dir() or d.name == "onboard":
+            continue
+        if (d / "BUILD").exists():
+            pairs.append((d, d.name))
+    return pairs
+
+
 def import_components(
     app_root: Path,
     components_root: Path,
@@ -811,7 +1036,8 @@ def import_components(
     tipc_type_base: int = 0x90000000,
 ) -> tuple[list[Path], list[ComponentDecl]]:
     """Generate `<components_root>/<comp>.art` for every component under
-    `app_root` whose BUILD declares a vehicle_os_signal_junction.
+    `app_root` whose BUILD declares a vehicle_os_signal_junction or a
+    mosaic_cc_application with an app_config_proto.
 
     Returns (emitted_paths, parsed_components). The component list feeds the
     system-composition emitter.
@@ -819,11 +1045,13 @@ def import_components(
     components_root.mkdir(parents=True, exist_ok=True)
     out_paths: list[Path] = []
     comps: list[ComponentDecl] = []
-    # Only scan one level deep — skip generated nested dirs like Gear_ert_rtw.
-    comp_dirs = [d for d in sorted(app_root.iterdir()) if d.is_dir()]
-    for offset, d in enumerate(comp_dirs):
+    for offset, (d, subdir) in enumerate(_candidate_component_dirs(app_root)):
         comp = parse_component_build(d / "BUILD")
         if comp is None:
+            continue
+        # Skip a component with neither ports nor a config schema — nothing
+        # to translate.
+        if not comp.ports and comp.config_root_message is None:
             continue
         comps.append(comp)
         tipc_type = tipc_type_base + offset
@@ -831,6 +1059,7 @@ def import_components(
             comp,
             tipc_type,
             platform_message_index=platform_message_index or {},
+            source_subdir=subdir,
         )
         out_path = components_root / f"{comp.name}.art"
         out_path.write_text(art_text)
@@ -968,7 +1197,7 @@ def import_all(
     msg_index = _index_message_origins(parsed_signals)
 
     component_paths, comps = import_components(
-        tornado_root / "app" / "onboard",
+        tornado_root / "app",
         system_root / "components",
         platform_message_index=msg_index,
     )

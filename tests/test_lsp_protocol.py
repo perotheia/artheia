@@ -166,7 +166,7 @@ def lsp_client():
 
 _GOOD_SRC = """\
 package p
-message M { uint32 a = 1 }
+message M { uint32 a }
 interface senderReceiver If { data M m }
 node atomic N {
     tipc type=0x80010001 instance=0

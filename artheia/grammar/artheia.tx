@@ -19,11 +19,19 @@ Import:
 
 TopLevelElement:
       MessageDecl
+    | EnumDecl
     | InterfaceDecl
     | NodeDecl
     | CompositionDecl
     | BusDecl
     | GatewayRouteDecl
+;
+
+// `MessageOrEnum` lets a single cross-reference resolve to either a
+// `MessageDecl` or an `EnumDecl`. textX treats this as an abstract rule:
+// any field declared `[MessageOrEnum|FQN]` will resolve through it.
+MessageOrEnum:
+    MessageDecl | EnumDecl
 ;
 
 // ---- 1. Message layout (proto3-equivalent) ---------------------------------
@@ -37,12 +45,26 @@ MessageDecl:
 MessageField:
     repeated?='repeated'?
     type=FieldType
-    name=ID '=' number=INT
+    name=ID
+    ('[' options=/[^\]]*/ ']')?
 ;
 
 FieldType:
       kind=PrimitiveType
-    | ref=[MessageDecl|FQN]
+    | ref=[MessageOrEnum|FQN]
+;
+
+// Enums are proto3-style: each value has a unique integer; the first
+// value should be 0 (matches the proto3 default convention but is not
+// enforced — the importer keeps original numbers).
+EnumDecl:
+    'enum' name=ID '{'
+        values*=EnumValue
+    '}'
+;
+
+EnumValue:
+    name=ID '=' number=INT
 ;
 
 PrimitiveType:
@@ -68,7 +90,7 @@ SenderReceiverInterface:
 ;
 
 DataElement:
-    'data' type=[MessageDecl|FQN] name=ID
+    'data' type=[MessageOrEnum|FQN] name=ID
 ;
 
 ClientServerInterface:
@@ -79,11 +101,11 @@ ClientServerInterface:
 
 OperationDecl:
     'operation' name=ID '(' (params*=OperationParam[','])? ')'
-    ('returns' returns=[MessageDecl|FQN])?
+    ('returns' returns=[MessageOrEnum|FQN])?
 ;
 
 OperationParam:
-    direction=ParamDirection name=ID ':' type=[MessageDecl|FQN]
+    direction=ParamDirection name=ID ':' type=[MessageOrEnum|FQN]
 ;
 
 ParamDirection:
@@ -95,6 +117,7 @@ ParamDirection:
 NodeDecl:
     'node' kind=NodeKind name=ID '{'
         tipc=TipcAddress
+        ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?
     '}'

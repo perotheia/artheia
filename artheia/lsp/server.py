@@ -51,7 +51,7 @@ class _Workspace:
 
 _KEYWORDS = [
     "package", "import",
-    "message", "interface", "senderReceiver", "clientServer",
+    "message", "enum", "interface", "senderReceiver", "clientServer",
     "data", "operation", "returns", "in", "out", "inout",
     "node", "atomic", "tipc", "type", "instance",
     "ports", "sender", "receiver", "client", "server",
@@ -166,8 +166,10 @@ def _model_iter(model, cls_name: str) -> Iterable:
 def _is_stub(el) -> bool:
     """A declaration is a 'stub' if its body has no children — the kind
     fusée emits for cross-file forward declarations. Prefer non-stubs when
-    multiple files declare the same name."""
-    for attr in ("fields", "data", "operations", "ports", "elements"):
+    multiple files declare the same name. The attribute set covers every
+    body-bearing top-level rule in the grammar (messages, enums,
+    interfaces, nodes, compositions)."""
+    for attr in ("fields", "values", "data", "operations", "ports", "elements"):
         children = getattr(el, attr, None)
         if children is not None:
             return len(children) == 0

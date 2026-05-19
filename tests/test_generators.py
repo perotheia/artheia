@@ -22,10 +22,10 @@ def test_proto_basic_shape(tmp_path):
     model = parse_string(
         """
         package theia.test
-        message Inner { uint32 a = 1 }
+        message Inner { uint32 a }
         message Outer {
-            Inner       inner = 1
-            repeated string tags = 2
+            Inner       inner
+            repeated string tags
         }
         """
     )
@@ -110,7 +110,7 @@ def test_netgraph_signal_ref_resolves_via_catalog(tmp_path):
     model = parse_string(
         """
         package p
-        message ACC_07 { uint32 speed = 1 }
+        message ACC_07 { uint32 speed }
         node atomic N { tipc type=0x1 instance=0 }
         gateway_route N {
             signal=ACC_07
@@ -143,7 +143,7 @@ def test_netgraph_signal_ref_unresolved_without_catalog(tmp_path):
     model = parse_string(
         """
         package p
-        message ACC_07 { uint32 speed = 1 }
+        message ACC_07 { uint32 speed }
         node atomic N { tipc type=0x1 instance=0 }
         gateway_route N { signal=ACC_07 direction=in }
         """

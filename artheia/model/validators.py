@@ -36,19 +36,39 @@ def _parse_hex_or_int(s: str) -> int:
 # ---- messages --------------------------------------------------------------
 
 def _validate_messages(model):
+    """Field numbers are assigned by the proto generator from declaration
+    order — they are not part of the Artheia AST. We only validate that
+    field *names* are unique within a message."""
     for msg in _iter(model, "MessageDecl"):
-        seen: dict[int, str] = {}
+        seen: set[str] = set()
         for f in msg.fields:
-            if f.number <= 0:
+            if f.name in seen:
                 raise TextXSemanticError(
-                    f"message {msg.name}: field {f.name} has non-positive number {f.number}",
+                    f"message {msg.name}: field name '{f.name}' declared twice",
                 )
-            if f.number in seen:
+            seen.add(f.name)
+
+
+# ---- enums ----------------------------------------------------------------
+
+def _validate_enums(model):
+    """Each enum's value names and numbers are unique. Negative numbers
+    are accepted (proto3 allows them); 0 is fine (idiomatic default)."""
+    for en in _iter(model, "EnumDecl"):
+        seen_num: dict[int, str] = {}
+        seen_name: set[str] = set()
+        for v in en.values:
+            if v.name in seen_name:
                 raise TextXSemanticError(
-                    f"message {msg.name}: field number {f.number} used by "
-                    f"both '{seen[f.number]}' and '{f.name}'",
+                    f"enum {en.name}: value name '{v.name}' declared twice",
                 )
-            seen[f.number] = f.name
+            seen_name.add(v.name)
+            if v.number in seen_num:
+                raise TextXSemanticError(
+                    f"enum {en.name}: value number {v.number} used by "
+                    f"both '{seen_num[v.number]}' and '{v.name}'",
+                )
+            seen_num[v.number] = v.name
 
 
 # ---- TIPC uniqueness -------------------------------------------------------
@@ -278,6 +298,7 @@ def _validate_gateway_routes(model):
 
 def _on_model(model, metamodel):
     _validate_messages(model)
+    _validate_enums(model)
     _validate_tipc_unique(model)
     _validate_connections(model)
     _validate_params(model)

@@ -354,7 +354,7 @@ def _emit_art(messages: list[Message], package: str, source: str) -> str:
         else:
             for i, f in enumerate(msg.fields):
                 out.append(
-                    f"    {f.proto_type} {_sanitize(f.name)} = {f.proto_number(i)}"
+                    f"    {f.proto_type} {_sanitize(f.name)}"
                     f"  // bit={f.bit_position} len={f.bit_length}\n"
                 )
         out.append("}\n\n")

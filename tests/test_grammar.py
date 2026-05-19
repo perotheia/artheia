@@ -31,9 +31,9 @@ def test_message_only():
         """
         package p
         message M {
-            uint32 a = 1
-            string b = 2
-            repeated bytes c = 3
+            uint32 a
+            string b
+            repeated bytes c
         }
         """
     )
@@ -43,29 +43,111 @@ def test_message_only():
     assert msg.fields[0].repeated is False
 
 
-def test_duplicate_field_number_rejected():
-    with pytest.raises(TextXSemanticError, match="field number 1"):
+def test_enum_decl_and_field_cross_ref():
+    """Enums are top-level declarations; a message field can reference an
+    enum exactly like another message — via the MessageOrEnum rule."""
+    m = parse_string(
+        """
+        package p
+        enum Color {
+            RED = 0
+            GREEN = 1
+            BLUE = 2
+        }
+        message Light {
+            Color hue
+            uint32 brightness
+        }
+        """
+    )
+    color = m.elements[0]
+    light = m.elements[1]
+    assert color.__class__.__name__ == "EnumDecl"
+    assert [(v.name, v.number) for v in color.values] == [
+        ("RED", 0), ("GREEN", 1), ("BLUE", 2),
+    ]
+    # The field's type cross-reference resolves to the EnumDecl.
+    assert light.fields[0].type.ref is color
+
+
+def test_node_config_cross_ref():
+    """A `node atomic` may declare `config <MessageDecl>` to bind a
+    structured runtime configuration. The cross-reference must resolve to
+    a MessageDecl in the same model."""
+    m = parse_string(
+        """
+        package p
+        message Cfg {
+            string vin
+            uint32 retries
+        }
+        node atomic Reg {
+            tipc type=0x1 instance=0
+            config Cfg
+        }
+        """
+    )
+    cfg = m.elements[0]
+    node = m.elements[1]
+    assert node.config is cfg
+
+
+def test_enum_duplicate_value_name_rejected():
+    with pytest.raises(TextXSemanticError, match="value name 'A' declared twice"):
+        parse_string(
+            """
+            package p
+            enum E { A = 0  A = 1 }
+            """
+        )
+
+
+def test_enum_duplicate_value_number_rejected():
+    with pytest.raises(TextXSemanticError, match="value number 0"):
+        parse_string(
+            """
+            package p
+            enum E { A = 0  B = 0 }
+            """
+        )
+
+
+def test_duplicate_field_name_rejected():
+    """Field numbers are assigned by the generator from declaration order
+    and don't appear in the AST. Field *names*, however, must be unique
+    within a message."""
+    with pytest.raises(TextXSemanticError, match="field name 'a' declared twice"):
         parse_string(
             """
             package p
             message M {
-                uint32 a = 1
-                uint32 b = 1
+                uint32 a
+                uint32 a
             }
             """
         )
 
 
-def test_zero_field_number_rejected():
-    with pytest.raises(TextXSemanticError, match="non-positive"):
-        parse_string(
-            """
-            package p
-            message M {
-                uint32 a = 0
-            }
-            """
-        )
+def test_field_options_passthrough():
+    """A trailing `[ ... ]` options block is captured verbatim — the proto
+    generator re-injects it next to the field number for nanopb."""
+    m = parse_string(
+        """
+        package p
+        message M {
+            string vin [(nanopb).max_length = 20]
+            bytes data [(nanopb).max_size = 65000]
+            repeated bool days [(nanopb).max_count = 7]
+            string unconstrained
+        }
+        """
+    )
+    fields = m.elements[0].fields
+    assert fields[0].options == "(nanopb).max_length = 20"
+    assert fields[1].options == "(nanopb).max_size = 65000"
+    assert fields[2].options == "(nanopb).max_count = 7"
+    # No options block on the last field — string is empty, not None.
+    assert fields[3].options == ""
 
 
 def test_tipc_collision_rejected():
@@ -85,7 +167,7 @@ def test_connect_direction_mismatch_rejected():
         parse_string(
             """
             package p
-            message M { uint32 a = 1 }
+            message M { uint32 a }
             interface senderReceiver If { data M m }
             node atomic A {
                 tipc type=0x1 instance=0
@@ -109,7 +191,7 @@ def test_connect_family_mismatch_rejected():
         parse_string(
             """
             package p
-            message M { uint32 a = 1 }
+            message M { uint32 a }
             interface senderReceiver SR { data M m }
             interface clientServer CS { operation Op() returns M }
             node atomic A {
@@ -134,7 +216,7 @@ def test_connect_interface_mismatch_rejected():
         parse_string(
             """
             package p
-            message M { uint32 a = 1 }
+            message M { uint32 a }
             interface senderReceiver IfA { data M m }
             interface senderReceiver IfB { data M m }
             node atomic A {
