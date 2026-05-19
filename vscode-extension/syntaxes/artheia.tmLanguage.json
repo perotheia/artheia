@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Artheia",
+  "scopeName": "source.artheia",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#keywords"},
+    {"include": "#types"},
+    {"include": "#literals"},
+    {"include": "#strings"}
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {"name": "comment.line.double-slash.artheia", "match": "//.*$"},
+        {"name": "comment.block.artheia", "begin": "/\\*", "end": "\\*/"}
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.artheia",
+          "match": "\\b(package|import|message|interface|senderReceiver|clientServer|data|operation|returns|node|atomic|tipc|type|instance|ports|sender|receiver|client|server|provides|requires|composition|prototype|connect|to|params|bus|kind|channels|gateway_route|can|flexray|id|slot|channel|channel_idx|dlc|extended_id|rtr|cycle|pdu_offset|signal|direction|in|out|inout|repeated)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.artheia",
+          "match": "\\b(int32|int64|uint32|uint64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64|float|double|bool|string|bytes)\\b"
+        }
+      ]
+    },
+    "literals": {
+      "patterns": [
+        {"name": "constant.language.boolean.artheia", "match": "\\b(true|false)\\b"},
+        {"name": "constant.numeric.hex.artheia", "match": "\\b0x[0-9a-fA-F]+\\b"},
+        {"name": "constant.numeric.decimal.artheia", "match": "\\b[0-9]+(\\.[0-9]+)?\\b"}
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.artheia",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {"name": "constant.character.escape.artheia", "match": "\\\\."}
+      ]
+    }
+  }
+}

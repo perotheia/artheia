@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/
+generated/
+
+# Vendored upstream source — not ours to commit. autosar-data is pinned
+# in pyproject.toml [importers] and installed from PyPI.
+up/

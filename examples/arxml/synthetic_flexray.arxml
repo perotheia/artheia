@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Synthetic AUTOSAR 4.x FlexRay sample for testing artheia's importer.
+  Built by hand (validated against AUTOSAR 00046 schema via autosar-data).
+
+  Contains:
+    - 1 FLEXRAY-CLUSTER (MlbFR)
+    - 2 FLEXRAY-PHYSICAL-CHANNELs (ChannelA / ChannelB)
+    - 2 FLEXRAY-FRAME-TRIGGERINGs on ChannelA (slot 15 + slot 16)
+    - 1 FLEXRAY-FRAME-TRIGGERING on ChannelB (slot 15, same slot, B side)
+    - I-SIGNAL-I-PDUs with signal-to-PDU mappings so field extraction works
+-->
+<AUTOSAR xsi:schemaLocation="http://autosar.org/schema/r4.0 AUTOSAR_00046.xsd"
+         xmlns="http://autosar.org/schema/r4.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <AR-PACKAGES>
+    <AR-PACKAGE>
+      <SHORT-NAME>FrTest</SHORT-NAME>
+      <ELEMENTS>
+        <I-SIGNAL>
+          <SHORT-NAME>speed_kph</SHORT-NAME>
+          <LENGTH>16</LENGTH>
+        </I-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>torque_nm</SHORT-NAME>
+          <LENGTH>16</LENGTH>
+        </I-SIGNAL>
+        <I-SIGNAL>
+          <SHORT-NAME>status_flag</SHORT-NAME>
+          <LENGTH>1</LENGTH>
+        </I-SIGNAL>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>SpeedPDU</SHORT-NAME>
+          <LENGTH>4</LENGTH>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>SpeedMap</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/FrTest/speed_kph</I-SIGNAL-REF>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>StatusMap</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/FrTest/status_flag</I-SIGNAL-REF>
+              <START-POSITION>16</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <I-SIGNAL-I-PDU>
+          <SHORT-NAME>TorquePDU</SHORT-NAME>
+          <LENGTH>2</LENGTH>
+          <I-SIGNAL-TO-PDU-MAPPINGS>
+            <I-SIGNAL-TO-I-PDU-MAPPING>
+              <SHORT-NAME>TorqueMap</SHORT-NAME>
+              <I-SIGNAL-REF DEST="I-SIGNAL">/FrTest/torque_nm</I-SIGNAL-REF>
+              <START-POSITION>0</START-POSITION>
+            </I-SIGNAL-TO-I-PDU-MAPPING>
+          </I-SIGNAL-TO-PDU-MAPPINGS>
+        </I-SIGNAL-I-PDU>
+        <FLEXRAY-FRAME>
+          <SHORT-NAME>SpeedFrame</SHORT-NAME>
+          <FRAME-LENGTH>16</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>SpeedFM</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/FrTest/SpeedPDU</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </FLEXRAY-FRAME>
+        <FLEXRAY-FRAME>
+          <SHORT-NAME>TorqueFrame</SHORT-NAME>
+          <FRAME-LENGTH>8</FRAME-LENGTH>
+          <PDU-TO-FRAME-MAPPINGS>
+            <PDU-TO-FRAME-MAPPING>
+              <SHORT-NAME>TorqueFM</SHORT-NAME>
+              <PDU-REF DEST="I-SIGNAL-I-PDU">/FrTest/TorquePDU</PDU-REF>
+            </PDU-TO-FRAME-MAPPING>
+          </PDU-TO-FRAME-MAPPINGS>
+        </FLEXRAY-FRAME>
+        <FLEXRAY-CLUSTER>
+          <SHORT-NAME>MlbFR</SHORT-NAME>
+          <FLEXRAY-CLUSTER-VARIANTS>
+            <FLEXRAY-CLUSTER-CONDITIONAL>
+              <PHYSICAL-CHANNELS>
+                <FLEXRAY-PHYSICAL-CHANNEL>
+                  <SHORT-NAME>ChannelA</SHORT-NAME>
+                  <FRAME-TRIGGERINGS>
+                    <FLEXRAY-FRAME-TRIGGERING>
+                      <SHORT-NAME>SpeedFT_A</SHORT-NAME>
+                      <FRAME-REF DEST="FLEXRAY-FRAME">/FrTest/SpeedFrame</FRAME-REF>
+                      <ABSOLUTELY-SCHEDULED-TIMINGS>
+                        <FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                          <SLOT-ID>15</SLOT-ID>
+                        </FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                      </ABSOLUTELY-SCHEDULED-TIMINGS>
+                    </FLEXRAY-FRAME-TRIGGERING>
+                    <FLEXRAY-FRAME-TRIGGERING>
+                      <SHORT-NAME>TorqueFT_A</SHORT-NAME>
+                      <FRAME-REF DEST="FLEXRAY-FRAME">/FrTest/TorqueFrame</FRAME-REF>
+                      <ABSOLUTELY-SCHEDULED-TIMINGS>
+                        <FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                          <SLOT-ID>16</SLOT-ID>
+                        </FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                      </ABSOLUTELY-SCHEDULED-TIMINGS>
+                    </FLEXRAY-FRAME-TRIGGERING>
+                  </FRAME-TRIGGERINGS>
+                  <CHANNEL-NAME>CHANNEL-A</CHANNEL-NAME>
+                </FLEXRAY-PHYSICAL-CHANNEL>
+                <FLEXRAY-PHYSICAL-CHANNEL>
+                  <SHORT-NAME>ChannelB</SHORT-NAME>
+                  <FRAME-TRIGGERINGS>
+                    <FLEXRAY-FRAME-TRIGGERING>
+                      <SHORT-NAME>SpeedFT_B</SHORT-NAME>
+                      <FRAME-REF DEST="FLEXRAY-FRAME">/FrTest/SpeedFrame</FRAME-REF>
+                      <ABSOLUTELY-SCHEDULED-TIMINGS>
+                        <FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                          <SLOT-ID>15</SLOT-ID>
+                        </FLEXRAY-ABSOLUTELY-SCHEDULED-TIMING>
+                      </ABSOLUTELY-SCHEDULED-TIMINGS>
+                    </FLEXRAY-FRAME-TRIGGERING>
+                  </FRAME-TRIGGERINGS>
+                  <CHANNEL-NAME>CHANNEL-B</CHANNEL-NAME>
+                </FLEXRAY-PHYSICAL-CHANNEL>
+              </PHYSICAL-CHANNELS>
+            </FLEXRAY-CLUSTER-CONDITIONAL>
+          </FLEXRAY-CLUSTER-VARIANTS>
+        </FLEXRAY-CLUSTER>
+      </ELEMENTS>
+    </AR-PACKAGE>
+  </AR-PACKAGES>
+</AUTOSAR>

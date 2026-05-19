@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artheia"
+version = "0.0.1"
+description = "Host-side DSL for Adaptive-AUTOSAR-style nodes that talk to Classical AUTOSAR via the Theia CAN/FR gateway. Inspired by ARText."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Artheia" }]
+license = { text = "MIT" }
+dependencies = [
+    "textX>=4.0",
+    "Jinja2>=3.1",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-snapshot>=0.9",
+]
+lsp = [
+    "pygls>=1.3",
+]
+importers = [
+    "autosar-data>=0.12",
+]
+
+[project.scripts]
+artheia = "artheia.cli:main"
+artheia-lsp = "artheia.lsp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["artheia*"]
+
+[tool.setuptools.package-data]
+artheia = ["grammar/*.tx", "generators/templates/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

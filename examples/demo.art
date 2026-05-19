@@ -1,0 +1,100 @@
+// End-to-end demo covering every v0 construct.
+//
+// Two parts in one file:
+//   1. message + interface declarations  (drives proto generation)
+//   2. nodes + composition               (drives netgraph generation)
+
+package theia.demo
+
+// ---- 1. messages ------------------------------------------------------------
+
+message SpeedSignal {
+    uint32 speed_kph = 1
+    uint64 ts_ns     = 2
+}
+
+message TorqueRequest {
+    sint32 torque_nm = 1
+    uint64 ts_ns     = 2
+}
+
+message StatusReport {
+    bool   healthy = 1
+    string note    = 2
+}
+
+// ---- 2. interfaces ----------------------------------------------------------
+
+interface senderReceiver SpeedIf {
+    data SpeedSignal speed
+}
+
+interface senderReceiver TorqueIf {
+    data TorqueRequest torque
+}
+
+interface clientServer StatusIf {
+    operation GetStatus() returns StatusReport
+}
+
+// ---- 3. nodes ---------------------------------------------------------------
+
+node atomic SpeedPublisher {
+    tipc type=0x80010001 instance=0
+    ports {
+        sender out provides SpeedIf
+        server status provides StatusIf
+    }
+    params {
+        publish_period_ms : uint32 = 10
+        enabled           : bool   = true
+        source_name       : string = "front-axle"
+    }
+}
+
+node atomic TorqueController {
+    tipc type=0x80010002 instance=0
+    ports {
+        receiver speed_in requires SpeedIf
+        sender   torque_out provides TorqueIf
+        client   status_query requires StatusIf
+    }
+    params {
+        gain        : float  = 1.25
+        max_torque  : uint32 = 250
+    }
+}
+
+node atomic Actuator {
+    tipc type=0x80010003 instance=0
+    ports {
+        receiver torque_in requires TorqueIf
+    }
+}
+
+// ---- 4. composition (netgraph source) --------------------------------------
+
+composition VehicleSystem {
+    prototype SpeedPublisher    speed_pub
+    prototype TorqueController  torque_ctrl
+    prototype Actuator          actuator
+
+    connect speed_pub.out         to torque_ctrl.speed_in
+    connect torque_ctrl.torque_out to actuator.torque_in
+    connect torque_ctrl.status_query to speed_pub.status
+}
+
+// ---- 5. gateway routes -----------------------------------------------------
+//
+// SpeedPublisher is fed by KCAN message id 0x42; TorqueController publishes
+// torque onto KCAN at id=0x101. Bus identifiers match gw_bus_types.h.
+
+gateway_route SpeedPublisher {
+    can id=0x42 bus=kcan dlc=8
+    direction=in
+}
+
+gateway_route TorqueController {
+    can id=0x101 bus=kcan dlc=8 extended_id=false
+    direction=out
+}

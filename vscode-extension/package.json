@@ -1,0 +1,64 @@
+{
+  "name": "artheia",
+  "displayName": "Artheia DSL",
+  "description": "Language support for Artheia — host-side DSL for Adaptive-AUTOSAR-style components.",
+  "version": "0.0.1",
+  "publisher": "artheia",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:artheia"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "artheia",
+        "aliases": ["Artheia", "artheia"],
+        "extensions": [".art"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "artheia",
+        "scopeName": "source.artheia",
+        "path": "./syntaxes/artheia.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Artheia",
+      "properties": {
+        "artheia.serverCommand": {
+          "type": "string",
+          "default": "artheia-lsp",
+          "description": "Command to launch the Artheia language server. Must be on PATH or an absolute path."
+        },
+        "artheia.serverArgs": {
+          "type": "array",
+          "items": {"type": "string"},
+          "default": [],
+          "description": "Extra arguments passed to the language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch":   "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}

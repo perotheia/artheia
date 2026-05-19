@@ -1,0 +1,270 @@
+// Artheia v0.1 grammar.
+//
+// Faithful to public ARText fragments where present (package / node atomic /
+// ports / composition / prototype / connect). Added in v0.1:
+//   - params {} blocks on nodes (ROS2-style, etcd-backed; no migrations)
+//   - bus declarations and top-level gateway_route blocks (CAN/FlexRay)
+//
+// Out of scope FOREVER: migrations, ARXML emission, AUTOSAR-tool compatibility.
+
+Model:
+    ('package' name=QualifiedName)?
+    imports*=Import
+    elements*=TopLevelElement
+;
+
+Import:
+    'import' name=QualifiedNameWithWildcard
+;
+
+TopLevelElement:
+      MessageDecl
+    | InterfaceDecl
+    | NodeDecl
+    | CompositionDecl
+    | BusDecl
+    | GatewayRouteDecl
+;
+
+// ---- 1. Message layout (proto3-equivalent) ---------------------------------
+
+MessageDecl:
+    'message' name=ID '{'
+        fields*=MessageField
+    '}'
+;
+
+MessageField:
+    repeated?='repeated'?
+    type=FieldType
+    name=ID '=' number=INT
+;
+
+FieldType:
+      kind=PrimitiveType
+    | ref=[MessageDecl|FQN]
+;
+
+PrimitiveType:
+      'int32'  | 'int64'
+    | 'uint32' | 'uint64'
+    | 'sint32' | 'sint64'
+    | 'fixed32'| 'fixed64'
+    | 'sfixed32'|'sfixed64'
+    | 'float'  | 'double'
+    | 'bool'   | 'string' | 'bytes'
+;
+
+// ---- 2. Interfaces ---------------------------------------------------------
+
+InterfaceDecl:
+    SenderReceiverInterface | ClientServerInterface
+;
+
+SenderReceiverInterface:
+    'interface' 'senderReceiver' name=ID '{'
+        data*=DataElement
+    '}'
+;
+
+DataElement:
+    'data' type=[MessageDecl|FQN] name=ID
+;
+
+ClientServerInterface:
+    'interface' 'clientServer' name=ID '{'
+        operations*=OperationDecl
+    '}'
+;
+
+OperationDecl:
+    'operation' name=ID '(' (params*=OperationParam[','])? ')'
+    ('returns' returns=[MessageDecl|FQN])?
+;
+
+OperationParam:
+    direction=ParamDirection name=ID ':' type=[MessageDecl|FQN]
+;
+
+ParamDirection:
+    'in' | 'out' | 'inout'
+;
+
+// ---- 3. Nodes (atomic components on the host) ------------------------------
+
+NodeDecl:
+    'node' kind=NodeKind name=ID '{'
+        tipc=TipcAddress
+        ('ports' '{' ports*=PortDecl '}')?
+        ('params' '{' params*=NodeParam '}')?
+    '}'
+;
+
+NodeKind:
+    'atomic'
+;
+
+TipcAddress:
+    'tipc' 'type' '=' type=HexOrInt 'instance' '=' instance=HexOrInt
+;
+
+HexOrInt:
+    /0x[0-9a-fA-F]+|\d+/
+;
+
+PortDecl:
+      SenderPort
+    | ReceiverPort
+    | ClientPort
+    | ServerPort
+;
+
+SenderPort:
+    'sender'   name=ID 'provides' iface=[SenderReceiverInterface|FQN]
+;
+
+ReceiverPort:
+    'receiver' name=ID 'requires' iface=[SenderReceiverInterface|FQN]
+;
+
+ServerPort:
+    'server'   name=ID 'provides' iface=[ClientServerInterface|FQN]
+;
+
+ClientPort:
+    'client'   name=ID 'requires' iface=[ClientServerInterface|FQN]
+;
+
+// ---- 4. Compositions (netgraph source) -------------------------------------
+
+CompositionDecl:
+    'composition' name=ID '{'
+        elements*=CompositionElement
+    '}'
+;
+
+CompositionElement:
+      PrototypeDecl
+    | ConnectDecl
+;
+
+PrototypeDecl:
+    'prototype' type=[NodeDecl|FQN] name=ID
+;
+
+ConnectDecl:
+    'connect' source=PortRef 'to' target=PortRef
+;
+
+PortRef:
+    proto=[PrototypeDecl] '.' port=ID
+;
+
+// ---- 5. Params (ROS2-style, etcd-backed; no migrations) -------------------
+//
+// Each node may declare typed parameters with default values. At build time
+// these become an etcd seed schema; at runtime the node receives callbacks
+// when a value changes. System engineers edit defaults pre-install.
+
+NodeParam:
+    name=ID ':' type=ParamType '=' default=ParamLiteral
+;
+
+ParamType:
+      'int32'  | 'int64'
+    | 'uint32' | 'uint64'
+    | 'float'  | 'double'
+    | 'bool'   | 'string'
+;
+
+ParamLiteral:
+      value=BoolLit
+    | value=STRING
+    | value=NUMBER
+;
+
+BoolLit:
+    'true' | 'false'
+;
+
+// ---- 6. Buses and gateway routes ------------------------------------------
+//
+// Bus declarations are optional for the well-known set the gateway already
+// knows about (kcan, komfortcan, mlbevo_gen2_a, ...). Declarations are
+// required for any bus the user invents on top.
+//
+// gateway_route blocks live at the top level and reference a NodeDecl by
+// name. Field names track gw_proto.h verbatim (can_id, channel_idx, dlc,
+// slot_id, pdu_offset, cycle).
+
+BusDecl:
+    'bus' name=ID 'kind' '=' kind=BusKind
+    ('channels' '=' '[' channels*=ID[','] ']')?
+;
+
+BusKind:
+    'can' | 'flexray'
+;
+
+GatewayRouteDecl:
+    'gateway_route' node=[NodeDecl|FQN] '{'
+        spec=BusRouteSpec
+        direction=RouteDirectionStmt
+    '}'
+;
+
+BusRouteSpec:
+    SignalRouteSpec | CanRouteSpec | FlexRayRouteSpec
+;
+
+SignalRouteSpec:
+    'signal' '=' message=[MessageDecl|FQN]
+;
+
+CanRouteSpec:
+    'can' 'id' '=' can_id=HexOrInt
+          'bus' '=' bus=ID
+        ('channel_idx' '=' channel_idx=INT)?
+        ('dlc'         '=' dlc=INT)?
+        ('extended_id' '=' extended_id=BoolLit)?
+        ('rtr'         '=' rtr=BoolLit)?
+;
+
+FlexRayRouteSpec:
+    'flexray' 'slot' '=' slot_id=INT
+              'bus'  '=' bus=ID
+            ('channel' '=' channel=FlexRayChannel)?
+            ('cycle'      '=' cycle=INT)?
+            ('pdu_offset' '=' pdu_offset=INT)?
+;
+
+FlexRayChannel:
+    'A' | 'B'
+;
+
+RouteDirectionStmt:
+    'direction' '=' value=RouteDirection
+;
+
+RouteDirection:
+    'in' | 'out'
+;
+
+// ---- Lexical ---------------------------------------------------------------
+
+QualifiedName:
+    ID ('.' ID)*
+;
+
+QualifiedNameWithWildcard:
+    QualifiedName ('.' '*')?
+;
+
+FQN:
+    ID ('.' ID)*
+;
+
+Comment:
+      /\/\/.*$/
+    | /\/\*(.|\n)*?\*\//
+;
