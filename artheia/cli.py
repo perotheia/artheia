@@ -174,6 +174,21 @@ def gen_codec_dispatch(
 
 
 @main.command(
+    "gen-signal-filter",
+    help="Walk a vendor system tree for gateway_route signal references, "
+    "cross-reference against the AUTOSAR catalog, and emit "
+    "signal_filter.csv (signal_name,pdu_name) consumed by the gateway codegen.",
+)
+@click.option("--vendor-root", required=True, type=click.Path(exists=True, file_okay=False),
+              help="Vendor root, e.g. vendor/tornado.")
+@click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
+              help="Output CSV path, e.g. vendor/tornado/config/signal_filter.csv.")
+def gen_signal_filter(vendor_root: str, out_path: str) -> None:
+    from .generators.signal_filter_csv import generate
+    generate(vendor_root, out_path)
+
+
+@main.command(
     "signal-filter",
     help="Interactive REPL for searching platform signals and building "
     "a signal_filter.csv (formerly tools/psp_signal_filter.py).",
