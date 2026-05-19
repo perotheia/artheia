@@ -95,8 +95,9 @@ def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
 
 @main.command(
     "import-dbc",
-    help="Import a DBC file. Emits package.art (one opaque message per "
-    "CAN frame) and catalog.json (bus, can_id, dlc, signal layout).",
+    help="Import a DBC file. Emits package.art (message per CAN frame "
+    "with scalar signal fields + companion enum decls for value tables) "
+    "and catalog.json (bus, can_id, dlc, per-signal layout incl. values).",
 )
 @click.option("--dbc", "dbc_path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--bus", "bus_name", required=True, help="Bus name, e.g. kcan, hcan.")
@@ -104,18 +105,30 @@ def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
               help="Output directory: vendor/autosar/<bus>/")
 @click.option("--csv", "signal_csv", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Optional filter CSV (signal_name,message_name); restricts emission.")
-def import_dbc_cmd(dbc_path: str, bus_name: str, out_dir: str, signal_csv: str | None) -> None:
+@click.option("--package", "package_prefix", default="vendor.autosar",
+              help="Package prefix for the emitted .art (default: vendor.autosar; "
+              "use vendor.<v>.system.autosar when the output lives under a vendor tree).")
+@click.option("--validate/--no-validate", default=True,
+              help="Round-trip parse the emitted .art (default on). Skip on big "
+              "FIBEX outputs — the parse can take minutes.")
+def import_dbc_cmd(
+    dbc_path: str, bus_name: str, out_dir: str, signal_csv: str | None,
+    package_prefix: str, validate: bool,
+) -> None:
     from .importers import import_dbc
-    res = import_dbc(dbc_path, bus_name, out_dir, signal_csv=signal_csv)
-    _parse(str(res.art))
+    res = import_dbc(dbc_path, bus_name, out_dir, signal_csv=signal_csv,
+                     package_prefix=package_prefix)
+    if validate:
+        _parse(str(res.art))
     click.echo(f"art:     {res.art}  ({res.frame_count} frames)")
     click.echo(f"catalog: {res.catalog}")
 
 
 @main.command(
     "import-fibex",
-    help="Import a FIBEX cluster file. Emits package.art (one opaque "
-    "message per FlexRay frame) and catalog.json (slot, cycle, channel, signal layout).",
+    help="Import a FIBEX cluster file. Emits package.art (message per "
+    "FlexRay frame with scalar signal fields + companion enum decls for "
+    "value tables) and catalog.json (slot, cycle, channel, per-signal layout).",
 )
 @click.option("--fibex", "fibex_path", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--bus", "bus_name", required=True, help="Bus name, e.g. mlbevo_gen2_a.")
@@ -123,10 +136,21 @@ def import_dbc_cmd(dbc_path: str, bus_name: str, out_dir: str, signal_csv: str |
               help="Output directory: vendor/autosar/<bus>/")
 @click.option("--csv", "signal_csv", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Optional filter CSV (signal_name,message_name); restricts emission.")
-def import_fibex_cmd(fibex_path: str, bus_name: str, out_dir: str, signal_csv: str | None) -> None:
+@click.option("--package", "package_prefix", default="vendor.autosar",
+              help="Package prefix for the emitted .art (default: vendor.autosar; "
+              "use vendor.<v>.system.autosar when the output lives under a vendor tree).")
+@click.option("--validate/--no-validate", default=True,
+              help="Round-trip parse the emitted .art (default on). Skip on big "
+              "FIBEX outputs — the parse can take minutes.")
+def import_fibex_cmd(
+    fibex_path: str, bus_name: str, out_dir: str, signal_csv: str | None,
+    package_prefix: str, validate: bool,
+) -> None:
     from .importers import import_fibex
-    res = import_fibex(fibex_path, bus_name, out_dir, signal_csv=signal_csv)
-    _parse(str(res.art))
+    res = import_fibex(fibex_path, bus_name, out_dir, signal_csv=signal_csv,
+                       package_prefix=package_prefix)
+    if validate:
+        _parse(str(res.art))
     click.echo(f"art:     {res.art}  ({res.frame_count} frames)")
     click.echo(f"catalog: {res.catalog}")
 

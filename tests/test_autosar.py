@@ -48,11 +48,15 @@ def test_import_dbc_minimal(tmp_path):
         e.name for e in model.elements if e.__class__.__name__ == "MessageDecl"
     )
     assert msg_names == ["BrakeFrame", "SpeedFrame"]
-    # Frames are forward declarations with no fields — bit layout lives
-    # in catalog.json, not in the .art.
-    for el in model.elements:
-        if el.__class__.__name__ == "MessageDecl":
-            assert len(el.fields) == 0
+    # Each frame now carries one MessageField per signal so callers can
+    # reference signals by name. Bit layout still lives in catalog.json.
+    msgs = {
+        el.name: el
+        for el in model.elements
+        if el.__class__.__name__ == "MessageDecl"
+    }
+    assert len(msgs["BrakeFrame"].fields) >= 1
+    assert len(msgs["SpeedFrame"].fields) >= 1
     assert model.name == "vendor.autosar.kcan"
 
     # The catalog carries bus metadata + per-signal layout.
