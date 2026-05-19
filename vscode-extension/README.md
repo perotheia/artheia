@@ -36,4 +36,5 @@ Language support for Artheia `.art` files:
 
 - The LSP looks for `*catalog*.json` files anywhere in the workspace to
   populate completion for gateway/AUTOSAR messages.
-- Generate one with `artheia import-arxml ... --out-catalog gateway_catalog.json`.
+- Generate one with `artheia import-dbc --dbc ... --bus ... --out vendor/autosar/<bus>/`
+  (or `import-fibex` for FlexRay). Each writes a `catalog.json` next to a `package.art`.

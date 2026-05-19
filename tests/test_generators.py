@@ -173,18 +173,3 @@ def test_cpp_stubs_per_node(tmp_path):
     assert "#include \"SpeedSignal.pb.h\"" in torque
 
 
-def test_python_stubs_per_node(tmp_path):
-    import ast
-    from artheia.generators import generate_python_stubs
-    model = parse_file(REPO / "examples" / "demo.art")
-    paths = generate_python_stubs(model, tmp_path, source_file="examples/demo.art")
-    # every emitted file must be valid Python
-    for p in paths:
-        ast.parse(p.read_text())
-    torque = (tmp_path / "torque_controller_gen.py").read_text()
-    assert "def on_speed_in_speed(msg:" in torque
-    assert "def send_torque_out_torque(msg:" in torque
-    assert "def on_param_gain(new_value: float)" in torque
-    assert "return 1.25" in torque
-    assert "return 250" in torque
-    assert "TIPC_TYPE = 0x80010002" in torque

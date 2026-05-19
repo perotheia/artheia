@@ -31,7 +31,7 @@ generator emits, and ends with a worked example.
 7. [Params — runtime config from etcd](#7-params--runtime-config-from-etcd)
 8. [Compositions — wiring the graph](#8-compositions--wiring-the-graph)
 9. [Buses and gateway routes](#9-buses-and-gateway-routes)
-10. [Importing ARXML for the gateway catalog](#10-importing-arxml-for-the-gateway-catalog)
+10. [Importing DBC + FIBEX for the gateway catalog](#10-importing-dbc--fibex-for-the-gateway-catalog)
 11. [The generators](#11-the-generators)
 12. [Worked example](#12-worked-example)
 13. [The CLI](#13-the-cli)
@@ -386,9 +386,9 @@ Field names mirror `GwFlexRayMeta`: `slot`, `bus`, `channel` (`A` or
 
 ### Signal-named routes (preferred)
 
-When you've imported the ARXML signal catalog (see §10), the cleanest form
-is to reference the message symbol and let the importer's catalog fill in
-the bus and address:
+When you've imported the DBC/FIBEX signal catalog (see §10), the cleanest
+form is to reference the message symbol and let the importer's catalog
+fill in the bus and address:
 
 ```artheia
 gateway_route SpeedFromCar {
@@ -418,38 +418,52 @@ through the gateway (host transmits). Direction is required on every
 
 ---
 
-## 10. Importing ARXML for the gateway catalog
+## 10. Importing DBC + FIBEX for the gateway catalog
 
-The job: take an AUTOSAR system ARXML, extract every CAN/FlexRay frame
-plus its routing metadata, and emit (a) a generated `.art` stub with one
-`message` per frame, and (b) a JSON catalog that the netgraph generator
+The job: take a DBC (CAN) or FIBEX (FlexRay) network description, extract
+every frame plus its routing metadata, and emit (a) a `package.art` with
+one **opaque** `message FrameName { }` per gateway-visible frame, and
+(b) a JSON catalog with per-signal layout that the netgraph generator
 and the LSP read for completion.
 
+These are the same parsers `theia/gateway/pero_cmp_lnx/tools/` uses —
+vendored verbatim under `artheia/importers/_asam_cmp_parser.py` so the
+two stacks agree byte-for-byte on what a frame is.
+
 ```sh
-artheia import-arxml SystemDef.arxml \
-    --out-art     gateway_signals.art \
-    --out-catalog gateway_catalog.json \
-    --package     gateway.signals
+# CAN
+artheia import-dbc \
+    --dbc MLBevo_KCAN.dbc \
+    --bus kcan \
+    --out vendor/autosar/kcan/
+
+# FlexRay
+artheia import-fibex \
+    --fibex MLBevo_FR_Cluster.xml \
+    --bus mlbevo_gen2_a \
+    --out vendor/autosar/mlbevo_gen2_a/
 ```
 
-What gets extracted today:
+Each command writes a `package.art` (forward-decl messages, opaque
+bodies) and a `catalog.json` next to it. ARXML is **not** supported —
+the gateway already generates its netgraph from DBC/FIBEX, so reading
+the higher-level ARXML view would be redundant.
 
-- CAN: cluster → bus name; every `CAN-FRAME-TRIGGERING` becomes a
-  message with its `IDENTIFIER` as `can_id`. Each `I-SIGNAL` mapped onto
-  the frame becomes a typed field (signal bit length picks the proto3
-  type: 1 → `bool`, ≤32 → `uint32`, ≤64 → `uint64`).
-- FlexRay: cluster → bus name; physical-channel suffix encodes A/B (so
-  `MlbFR` channel A becomes bus `mlbfr_a`, matching `GwBusId`'s
-  `_A`/`_B` convention). Each `FLEXRAY-FRAME-TRIGGERING` becomes one
-  message — the same frame on channels A and B becomes two messages
-  (`Foo_A`, `Foo_B`).
+What `package.art` contains: `package vendor.autosar.<bus>` and one
+`message <FrameName> { }` per frame. Bit layout, signal types, can_id /
+slot_id, dlc, channel, cycle — none of that lives in the `.art`. It all
+lives in `catalog.json`, which is consumed downstream by:
 
-What is **not** extracted: SWCs, runnables, datatypes, ECU mappings —
-that's not how host components are described in Artheia.
+- `gen-netgraph --catalog catalog.json` for `gateway_route signal=Foo`
+  references in host-side `.art` files.
+- The LSP for completion of catalog message names.
 
-The generated `.art` is **regenerable** — never hand-edit it. Re-running
-the importer overwrites it. The catalog is the same shape, JSON, and lives
-next to the `.art`.
+The `--csv` filter mirrors theia's tooling. The CSV has a
+`signal_name,message_name` header; only listed frames are emitted.
+Omit `--csv` to emit every frame.
+
+The generated files are **regenerable** — never hand-edit. Re-running
+the importer overwrites them.
 
 In your application `.art`, reference the generated messages:
 
@@ -520,10 +534,12 @@ resolved on the spot; otherwise they appear with `"unresolved": true`.
 The seed schema described in §7. Flat dict keyed by etcd path; one entry
 per param across all nodes.
 
-### `artheia gen-cpp-stubs` / `artheia gen-py-stubs`
+### `artheia gen-cpp-stubs`
 
-Callback-style free-function stubs, one file per node. No classes, no
-inheritance, no run loop.
+Callback-style free-function header stubs, one file per node. No classes,
+no inheritance, no run loop. The runtime target for Artheia is C++; the
+older Python stub generator was removed because it was never load-bearing
+for any real deployment.
 
 For a node with a receiver port `speed_in` carrying `SpeedSignal`, a
 sender port `out` carrying `TorqueRequest`, a client port `status_query`
@@ -544,9 +560,6 @@ int  call_status_query_GetStatus(StatusReport* response);
 float    get_param_gain(void);
 uint32_t get_param_max_torque(void);
 ```
-
-Python stubs have the same shape with type hints against the protobuf
-classes (`Foo_pb2.Foo`).
 
 Runtime glue — wiring TIPC reads to `on_*` callbacks, wiring `send_*` to
 TIPC writes, wiring etcd watchers to `on_param_*` — lives outside the
@@ -641,12 +654,11 @@ artheia gen-proto      examples/demo.art --out generated/proto
 artheia gen-netgraph   examples/demo.art --out generated/netgraph.json
 artheia gen-etcd       examples/demo.art --out generated/etcd_schema.json
 artheia gen-cpp-stubs  examples/demo.art --out generated/cpp
-artheia gen-py-stubs   examples/demo.art --out generated/py
 ```
 
 You will get one `.proto` per message, a netgraph with three nodes plus
 their gateway routes, an etcd schema with five keys, and three C++ header
-stubs + three Python stubs.
+stubs.
 
 ---
 
@@ -659,10 +671,12 @@ artheia gen-netgraph FILE --out FILE          composition + gateway routes
        [--catalog CATALOG.json]               resolve signal= routes
 artheia gen-etcd FILE --out FILE              flat etcd seed schema
 artheia gen-cpp-stubs FILE --out DIR          one <Node>_gen.h per node
-artheia gen-py-stubs FILE --out DIR           one <node>_gen.py per node
-artheia import-arxml ARXML                    extract gateway messages
-       --out-art ART --out-catalog JSON
-       [--package PKG]
+artheia import-dbc                            extract CAN frames from DBC
+       --dbc PATH --bus NAME --out DIR
+       [--csv PATH]
+artheia import-fibex                          extract FlexRay frames from FIBEX
+       --fibex PATH --bus NAME --out DIR
+       [--csv PATH]
 ```
 
 Exit code 0 on success, 1 on errors. Errors are written to stderr.
@@ -686,9 +700,9 @@ What the LSP provides:
   message found in any `gateway_catalog*.json` in the workspace.
 
 The completion source for gateway messages is the same JSON the netgraph
-generator reads, so the catalog written by `artheia import-arxml` does
-double duty: it routes the netgraph and it powers editor completion for
-those signal names.
+generator reads, so the catalog written by `artheia import-dbc` /
+`artheia import-fibex` does double duty: it routes the netgraph and it
+powers editor completion for those signal names.
 
 Install:
 
@@ -714,17 +728,21 @@ Settings (in VS Code):
 Artheia deliberately does **not** include any of the following. They have
 been considered and rejected. They are not on a roadmap.
 
-- **ARXML emission.** One-way (ARXML → Artheia catalog) is enough; system
-  engineering owns the ARXML. We don't try to round-trip.
+- **ARXML.** Not read, not emitted. The gateway already generates its
+  netgraph from DBC/FIBEX; reading the higher-level ARXML system view on
+  top of that would be redundant work for no win. System engineering
+  owns the ARXML.
+- **Python code generation.** Artheia targets C++ runtimes; the older
+  Python stub generator was removed because it was never load-bearing
+  for any real deployment.
 - **Migrations / versioned schemas for params.** etcd is mutable; new
   installs ship a fresh schema. There is no `version` or `migration`
   syntax and there never will be.
 - **AUTOSAR-tool compatibility.** Artheia is not an AUTOSAR authoring
-  tool. It happens to read a slice of ARXML for the gateway catalog,
-  that's the extent of its AUTOSAR awareness.
-- **SWC / runnable / interface metamodel extraction.** Artheia interfaces
-  and nodes describe the host runtime, not ARXML SWCs. The ARXML importer
-  does not try to translate SWCs into Artheia nodes.
+  tool. It reads DBC + FIBEX for the gateway catalog and that's it.
+- **SWC / runnable / interface metamodel extraction.** Artheia
+  interfaces and nodes describe the host runtime, not classic-AUTOSAR
+  SWCs.
 - **Extension-point grammar plugins** (the ARText `@ArtextExtension`
   mechanism). Adds complexity that nothing currently uses.
 

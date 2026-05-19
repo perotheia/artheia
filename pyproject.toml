@@ -24,9 +24,6 @@ dev = [
 lsp = [
     "pygls>=1.3",
 ]
-importers = [
-    "autosar-data>=0.12",
-]
 
 [project.scripts]
 artheia = "artheia.cli:main"

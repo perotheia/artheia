@@ -215,29 +215,3 @@ def generate_cpp_stubs(model, out_dir: str | Path, source_file: str = "") -> lis
     return written
 
 
-def generate_python_stubs(model, out_dir: str | Path, source_file: str = "") -> list[Path]:
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    env = _env()
-    tpl = env.get_template("stub.py.j2")
-    written: list[Path] = []
-    for node in _iter_nodes(model):
-        nv = _node_view(node)
-        rendered = tpl.render(
-            source_file=source_file,
-            node=nv,
-            messages_used=_messages_used(nv),
-        )
-        path = out_dir / f"{_snake(node.name)}_gen.py"
-        path.write_text(rendered)
-        written.append(path)
-    return written
-
-
-def _snake(name: str) -> str:
-    out = []
-    for i, ch in enumerate(name):
-        if ch.isupper() and i and not name[i-1].isupper():
-            out.append("_")
-        out.append(ch.lower())
-    return "".join(out)

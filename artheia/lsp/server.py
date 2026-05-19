@@ -113,7 +113,15 @@ def _parse(text: str):
 
 # ---- catalog loading ------------------------------------------------------
 
-_CATALOG_GLOBS = ("gateway_catalog*.json", "*.gateway-catalog.json")
+_CATALOG_GLOBS = (
+    "gateway_catalog*.json",
+    "*.gateway-catalog.json",
+    # New `artheia import-dbc` / `import-fibex` outputs land at
+    # vendor/autosar/<bus>/catalog.json. We restrict to files under a
+    # `vendor/autosar/` path segment so unrelated `catalog.json` files
+    # (npm catalogs, etc.) don't get pulled in.
+    "vendor/autosar/*/catalog.json",
+)
 
 
 def _scan_workspace_catalogs(root: Path) -> set[str]:

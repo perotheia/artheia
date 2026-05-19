@@ -13,7 +13,6 @@ from .generators import (
     generate_etcd_schema,
     generate_netgraph,
     generate_proto,
-    generate_python_stubs,
 )
 from .model import parse_file
 
@@ -64,7 +63,8 @@ def gen_proto(art_file: str, out_dir: str) -> None:
     "--catalog",
     type=click.Path(exists=True, dir_okay=False),
     default=None,
-    help="Gateway catalog JSON (produced by `artheia import-arxml`). When "
+    help="Gateway catalog JSON (produced by `artheia import-dbc` / "
+    "`artheia import-fibex`). When "
     "supplied, gateway_route signal=Foo refs are resolved to bus + addresses.",
 )
 def gen_netgraph(art_file: str, out_file: str, catalog: str | None) -> None:
@@ -93,34 +93,42 @@ def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
         click.echo(str(p))
 
 
-@main.command("gen-py-stubs", help="Emit Python callback-style stubs (one per node).")
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
-def gen_py_stubs(art_file: str, out_dir: str) -> None:
-    model = _parse(art_file)
-    for p in generate_python_stubs(model, out_dir, source_file=art_file):
-        click.echo(str(p))
+@main.command(
+    "import-dbc",
+    help="Import a DBC file. Emits package.art (one opaque message per "
+    "CAN frame) and catalog.json (bus, can_id, dlc, signal layout).",
+)
+@click.option("--dbc", "dbc_path", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--bus", "bus_name", required=True, help="Bus name, e.g. kcan, hcan.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Output directory: vendor/autosar/<bus>/")
+@click.option("--csv", "signal_csv", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Optional filter CSV (signal_name,message_name); restricts emission.")
+def import_dbc_cmd(dbc_path: str, bus_name: str, out_dir: str, signal_csv: str | None) -> None:
+    from .importers import import_dbc
+    res = import_dbc(dbc_path, bus_name, out_dir, signal_csv=signal_csv)
+    _parse(str(res.art))
+    click.echo(f"art:     {res.art}  ({res.frame_count} frames)")
+    click.echo(f"catalog: {res.catalog}")
 
 
 @main.command(
-    "import-arxml",
-    help="Import an AUTOSAR ARXML system file. Emits a .art stub with one "
-    "message per gateway frame plus a catalog JSON for netgraph + LSP.",
+    "import-fibex",
+    help="Import a FIBEX cluster file. Emits package.art (one opaque "
+    "message per FlexRay frame) and catalog.json (slot, cycle, channel, signal layout).",
 )
-@click.argument("arxml_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out-art", required=True, type=click.Path(dir_okay=False),
-              help="Generated .art file (regenerable, do not hand-edit).")
-@click.option("--out-catalog", required=True, type=click.Path(dir_okay=False),
-              help="Catalog JSON: bus, can_id|slot, dlc, field layout per message.")
-@click.option("--package", default="gateway.signals",
-              help="Package name for the generated .art file.")
-def import_arxml(arxml_file: str, out_art: str, out_catalog: str, package: str) -> None:
-    from .importers import import_arxml_signals
-    art, cat = import_arxml_signals(arxml_file, out_art, out_catalog, package=package)
-    # Round-trip the generated stub to catch any emission bugs early.
-    _parse(str(art))
-    click.echo(f"art:     {art}")
-    click.echo(f"catalog: {cat}")
+@click.option("--fibex", "fibex_path", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--bus", "bus_name", required=True, help="Bus name, e.g. mlbevo_gen2_a.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Output directory: vendor/autosar/<bus>/")
+@click.option("--csv", "signal_csv", type=click.Path(exists=True, dir_okay=False), default=None,
+              help="Optional filter CSV (signal_name,message_name); restricts emission.")
+def import_fibex_cmd(fibex_path: str, bus_name: str, out_dir: str, signal_csv: str | None) -> None:
+    from .importers import import_fibex
+    res = import_fibex(fibex_path, bus_name, out_dir, signal_csv=signal_csv)
+    _parse(str(res.art))
+    click.echo(f"art:     {res.art}  ({res.frame_count} frames)")
+    click.echo(f"catalog: {res.catalog}")
 
 
 if __name__ == "__main__":
