@@ -29,7 +29,7 @@ from typing import Iterable
 
 from ._asam_cmp_parser import (
     DbcDb, DbcMessage, DbcSignal,
-    FibexDb, FrameInfo, PduInfo,
+    FibexDb, PduInfo,
     SignalInstance, _proto_type_for,
 )
 
@@ -235,26 +235,59 @@ def _fibex_field_entry(inst: SignalInstance) -> dict:
     return entry
 
 
-def _fibex_catalog_entry(
-    bus_name: str, trig, frame: FrameInfo, channel_name: str,
-) -> dict:
-    fields: list[dict] = []
-    for inst in frame.pdu_instances:
-        if inst.pdu is None:
-            continue
-        for sig_inst in inst.pdu.signal_instances:
-            fields.append(_fibex_field_entry(sig_inst))
+def _fibex_pdu_catalog_entry(bus_name: str, pdu: PduInfo) -> dict:
+    """Per-PDU catalog entry. PDU is the canonical wire object on
+    FlexRay: an APPLICATION PDU like `EML_01` or `ACC_06` carries a
+    fixed set of signals and can ride in one or more frames at
+    different slots/cycles/channels. We capture the PDU shape here;
+    the frame-trigger list (where the PDU rides on the wire) is
+    attached separately so netgraph can resolve symbolic destinations
+    to real bus addresses.
+    """
     return {
         "bus": bus_name,
         "bus_kind": "flexray",
-        "slot_id": trig.slot_id,
-        "cycle": trig.base_cycle,
-        "cycle_repetition": trig.cycle_repetition,
-        "channel": channel_name,
-        "channel_idx": trig.channel_idx,
-        "byte_length": frame.byte_length,
-        "fields": fields,
+        "pdu_id": pdu.id,
+        "pdu_type": pdu.pdu_type,
+        "byte_length": pdu.byte_length,
+        "fields": [_fibex_field_entry(si) for si in pdu.signal_instances],
+        # filled in by the caller; one entry per (frame, slot, cycle, channel)
+        # carrying this PDU. Empty list means the PDU is declared in the
+        # FIBEX cluster but has no triggered frame — usually filtered out.
+        "frame_triggers": [],
     }
+
+
+def _collect_pdu_frame_triggers(
+    db: FibexDb,
+) -> dict[str, list[dict]]:
+    """For every APPLICATION PDU referenced by a FrameTrigger, collect
+    the list of trigger sites (slot/cycle/channel/byte_offset). Same
+    PDU appearing on multiple channels or slots yields multiple
+    entries — netgraph picks the right one based on the route spec.
+    """
+    name_by_idx = {
+        idx: name for name, idx in getattr(db, "_channel_map", {}).items()
+    }
+    result: dict[str, list[dict]] = {}
+    for trig in db.frame_triggers:
+        if trig.frame is None:
+            continue
+        ch_name = name_by_idx.get(trig.channel_idx, f"channel_{trig.channel_idx}")
+        for inst in trig.frame.pdu_instances:
+            if inst.pdu is None or not inst.pdu.name:
+                continue
+            result.setdefault(inst.pdu.name, []).append({
+                "frame_name": trig.frame.name,
+                "frame_byte_length": trig.frame.byte_length,
+                "slot_id": trig.slot_id,
+                "cycle": trig.base_cycle,
+                "cycle_repetition": trig.cycle_repetition,
+                "channel": ch_name,
+                "channel_idx": trig.channel_idx,
+                "pdu_byte_offset": inst.bit_position // 8,
+            })
+    return result
 
 
 # ---- public entry points ---------------------------------------------------
@@ -308,22 +341,6 @@ def import_dbc(
     return ImportResult(art=art_path, catalog=cat_path, frame_count=len(frame_names))
 
 
-def _iter_fibex_frames(
-    db: FibexDb,
-) -> Iterable[tuple[object, FrameInfo, str]]:
-    """Yield (trigger, frame, channel_name) for every frame triggered in
-    the FIBEX cluster. Channel-name lookup inverts the parser's
-    `_channel_map` (`name → idx`) so we report a human-readable name when
-    possible, falling back to `channel_<idx>`.
-    """
-    name_by_idx = {idx: name for name, idx in getattr(db, "_channel_map", {}).items()}
-    for trig in db.frame_triggers:
-        if trig.frame is None:
-            continue
-        ch_name = name_by_idx.get(trig.channel_idx, f"channel_{trig.channel_idx}")
-        yield trig, trig.frame, ch_name
-
-
 def import_fibex(
     fibex_path: str | Path,
     bus_name: str,
@@ -333,7 +350,14 @@ def import_fibex(
     package_prefix: str = "vendor.autosar",
 ) -> ImportResult:
     """Parse a FIBEX cluster file, emit `package.art` + `catalog.json` under
-    `out_dir`. Returns paths and the number of emitted frames.
+    `out_dir`. Returns paths and the number of emitted PDUs.
+
+    Output is **PDU-centric**: one `message <PduName> { ... }` per
+    APPLICATION PDU (`EML_01`, `ACC_06`, `BV2_Objekt_01`, ...). The
+    frame-level wire details (slot/cycle/channel/byte-offset) live in
+    each PDU's `frame_triggers` array in the catalog, so a netgraph
+    consumer can resolve a symbolic route to a concrete bus address
+    without re-parsing the source FIBEX.
 
     `package_prefix` controls the `.art` package name (e.g.
     "vendor.tornado.system.autosar" when the output lives under a
@@ -345,20 +369,28 @@ def import_fibex(
     db.load(str(fibex_path))
 
     keep = _load_signal_csv(Path(signal_csv) if signal_csv else None)
+
+    # Collect every (pdu_name → list-of-trigger-sites) mapping first;
+    # then walk the parsed PDU set and emit one catalog entry per PDU
+    # that has at least one trigger (the FIBEX defines lots of unused
+    # PDUs).
+    triggers_by_pdu = _collect_pdu_frame_triggers(db)
+
     catalog: dict[str, dict] = {}
-    frame_names: list[str] = []
-    for trig, frame, ch_name in _iter_fibex_frames(db):
-        if keep is not None and frame.name not in keep:
+    pdu_names: list[str] = []
+    for pdu in db.pdus.values():
+        if not pdu.name:
             continue
-        if frame.name in catalog:
-            # Same frame triggered on multiple channels — record only the
-            # first, but tag the channel-name list onto the catalog entry
-            # so consumers don't lose the multi-channel fact.
-            existing = catalog[frame.name]
-            existing.setdefault("extra_channels", []).append(ch_name)
+        if pdu.pdu_type.upper() != "APPLICATION":
             continue
-        catalog[frame.name] = _fibex_catalog_entry(bus_name, trig, frame, ch_name)
-        frame_names.append(frame.name)
+        if pdu.name not in triggers_by_pdu:
+            continue  # declared but never on the wire
+        if keep is not None and pdu.name not in keep:
+            continue
+        entry = _fibex_pdu_catalog_entry(bus_name, pdu)
+        entry["frame_triggers"] = triggers_by_pdu[pdu.name]
+        catalog[pdu.name] = entry
+        pdu_names.append(pdu.name)
 
     art_path = out_dir / "package.art"
     cat_path = out_dir / "catalog.json"
@@ -369,4 +401,6 @@ def import_fibex(
             indent=2,
         )
     )
-    return ImportResult(art=art_path, catalog=cat_path, frame_count=len(frame_names))
+    # `frame_count` is the historical name; for FIBEX it's now the
+    # number of emitted PDU messages (one per APPLICATION PDU).
+    return ImportResult(art=art_path, catalog=cat_path, frame_count=len(pdu_names))

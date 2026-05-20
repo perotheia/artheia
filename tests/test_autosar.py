@@ -181,25 +181,32 @@ def test_import_fibex_minimal(tmp_path):
     fx_path.write_text(_FIBEX)
     res = import_fibex(fx_path, "test_cluster", tmp_path / "out")
 
+    # FIBEX output is PDU-centric: one message per APPLICATION PDU.
     assert res.frame_count == 1
     model = parse_file(str(res.art))
     msg_names = [
         e.name for e in model.elements if e.__class__.__name__ == "MessageDecl"
     ]
-    assert msg_names == ["SpeedFrame_A"]
+    assert msg_names == ["SpeedPDU"]
     assert model.name == "vendor.autosar.test_cluster"
 
     catalog = json.loads(res.catalog.read_text())
     assert catalog["bus"] == "test_cluster"
     assert catalog["bus_kind"] == "flexray"
-    entry = catalog["messages"]["SpeedFrame_A"]
-    assert entry["slot_id"] == 5
-    assert entry["cycle"] == 0
-    assert entry["cycle_repetition"] == 1
-    # Channel "name" comes from the FIBEX element ID, not its SHORT-NAME.
-    # Real cluster files name channels via ID; this fixture uses `ch_a`.
-    assert entry["channel"] == "ch_a"
+    entry = catalog["messages"]["SpeedPDU"]
+    # PDU shape: byte length + signal fields.
     assert entry["byte_length"] == 4
+    assert entry["pdu_type"].upper() == "APPLICATION"
+    # Frame-wire details live in `frame_triggers` — one entry per place
+    # the PDU rides on the wire (one frame, one slot in this fixture).
+    assert len(entry["frame_triggers"]) == 1
+    trig = entry["frame_triggers"][0]
+    assert trig["slot_id"] == 5
+    assert trig["cycle"] == 0
+    assert trig["cycle_repetition"] == 1
+    # Channel "name" comes from the FIBEX element ID; fixture uses `ch_a`.
+    assert trig["channel"] == "ch_a"
+    assert trig["frame_name"] == "SpeedFrame_A"
     # One signal at bit 0, 16 bits, uint32.
     assert len(entry["fields"]) == 1
     field = entry["fields"][0]
