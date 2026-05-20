@@ -198,6 +198,59 @@ def gen_codec_dispatch(
 
 
 @main.command(
+    "gen-netgraph-partition",
+    help="Emit a per-bus netgraph partition (PDU -> bus address LUT) from "
+    "an AUTOSAR catalog.json. Output is the routing layer the gateway "
+    "runtime joins with symbolic port names to fill the transport header.",
+)
+@click.option("--catalog", "catalog_path", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Per-bus catalog.json (output of import-dbc / import-fibex).")
+@click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
+              help="Output netgraph.json (typically alongside the catalog).")
+def gen_netgraph_partition(catalog_path: str, out_path: str) -> None:
+    from .generators.netgraph_partition import generate
+    generate(catalog_path, out_path)
+
+
+@main.command(
+    "gen-autosar-system",
+    help="Emit autosar/<psp>/system/system.art with one mega-node per bus, "
+    "each carrying a sender port per PDU. Forward-declares the PDU interfaces "
+    "locally so the file parses standalone.",
+)
+@click.option("--catalog", "catalog_paths", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Per-bus catalog.json. Repeat for multiple buses (FIBEX + DBC).")
+@click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
+              help="Output system.art (typically autosar/<psp>/system/system.art).")
+@click.option("--package", "package_name", required=True,
+              help="Package name for the emitted .art (e.g. autosar.mlbevo_gen2_cmp_psp.system).")
+def gen_autosar_system(
+    catalog_paths: tuple[str, ...], out_path: str, package_name: str,
+) -> None:
+    from .generators.autosar_system import generate
+    generate(list(catalog_paths), out_path, package_name)
+
+
+@main.command(
+    "gen-host-netgraph",
+    help="Walk a platform .art composition, find every tipc-addressed node, "
+    "and emit a host_netgraph.json mapping symbolic_port_name -> TIPC address "
+    "and port shape. Consumed by the host transport layer (pero_cmp_lnx).",
+)
+@click.option("--art", "art_paths", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help=".art files declaring TIPC nodes (platform/system/system.art "
+              "plus any imported fragments). Repeat per file; nodes are merged.")
+@click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
+              help="Output host_netgraph.json.")
+def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
+    from .generators.host_netgraph import generate
+    generate(list(art_paths), out_path)
+
+
+@main.command(
     "gen-signal-filter",
     help="Walk a vendor system tree for gateway_route signal references, "
     "cross-reference against the AUTOSAR catalog, and emit "
