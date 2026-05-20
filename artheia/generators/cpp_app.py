@@ -1,5 +1,19 @@
 """Generate a C++14 application scaffold from an Artheia vendor system fragment.
 
+Routing info (per port -> bus address) is joined from one or more
+netgraph.json files passed via `netgraph_paths`. The naming convention
+`<Pdu>_Iface` (e.g. `EML_01_Iface`) maps the interface name to the PDU
+name, which keys the netgraph.
+
+Generated apps:
+  1. connect to the gateway via GwClient
+  2. loop on recv_signal()
+  3. dispatch by can_id (CAN) or slot_id+channel_idx (FlexRay) to the
+     right on_<port>() callback
+  4. nanopb-decode the proto wire bytes into shared_<Pdu> and pass to
+     the user handler
+
+
 Three-slice layout matches `up/mosaic-eng-ref/...climate_arbitrator`:
 
     applications/<vendor>/
@@ -91,6 +105,17 @@ class _PortInfo:
     callback: str = ""      # method name on the app class
     call: str = ""          # for client ports: helper method name
     call_dispatch: str = ""
+    # Routing — filled in from netgraph.json. Exactly one of can_id /
+    # slot_id is set, or both empty if the PDU has no wire route (e.g.
+    # client status_query → Status RPC, not a bus PDU).
+    can_id: int = -1        # CAN: 11-bit ID, used to filter recv_signal
+    slot_id: int = -1       # FlexRay: cycle slot
+    channel_idx: int = -1   # FlexRay: 0=A, 1=B
+    bus_kind: str = ""      # "can" | "flexray" | ""
+    # Nanopb resolution — filled in from the per-PSP .proto files.
+    proto_pkg: str = ""     # `shared`, `mlbevo_gen2`, `can_kcan`, ...
+    proto_dir: str = ""     # `shared`, `flexray`, `can/kcan`, ...
+    cxx_struct: str = ""    # e.g. `shared_ACC_07`, `mlbevo_gen2_EML_01`
 
 
 @dataclass
@@ -194,6 +219,114 @@ def _write(path: Path, content: str, *, overwrite: bool) -> str:
     return "wrote"
 
 
+# ---- netgraph load + port routing ----------------------------------------
+
+
+def _load_netgraph(paths: Iterable[str | Path]) -> dict[str, dict]:
+    """Merge every netgraph.json into a single {pdu_name: route_dict}.
+
+    Each route_dict carries `bus_kind` plus the bus-specific keys
+    (`can_id` for CAN, `slot_id`+`channel_idx`+`cycle` for FlexRay).
+    If a PDU appears in multiple netgraphs the first occurrence wins
+    (caller's responsibility to order intentionally).
+    """
+    import json
+
+    merged: dict[str, dict] = {}
+    for p in paths:
+        ng = json.loads(Path(p).read_text())
+        kind = ng.get("bus_kind", "")
+        for pdu, route in ng.get("routes", {}).items():
+            if pdu in merged:
+                continue
+            entry: dict = {"bus_kind": kind}
+            if kind == "can":
+                entry["can_id"] = route.get("can_id", -1)
+                entry["extended_id"] = route.get("extended_id", False)
+                entry["dlc"] = route.get("dlc", 0)
+            elif kind == "flexray":
+                # Pick the first frame trigger as the canonical route.
+                triggers = route.get("frame_triggers") or []
+                if triggers:
+                    t = triggers[0]
+                    entry["slot_id"] = t.get("slot_id", -1)
+                    entry["channel_idx"] = t.get("channel_idx", -1)
+                    entry["cycle"] = t.get("cycle", -1)
+            merged[pdu] = entry
+    return merged
+
+
+def _annotate_ports(node: "_NodeInfo", routes: dict[str, dict]) -> None:
+    """Decorate every receiver/sender port with its bus address."""
+    for port in node.recv_ports + node.send_ports:
+        if not port.message:
+            continue
+        route = routes.get(port.message)
+        if not route:
+            continue
+        port.bus_kind = route["bus_kind"]
+        if route["bus_kind"] == "can":
+            port.can_id = route.get("can_id", -1)
+        elif route["bus_kind"] == "flexray":
+            port.slot_id = route.get("slot_id", -1)
+            port.channel_idx = route.get("channel_idx", -1)
+
+
+def _resolve_proto_locations(
+    node: "_NodeInfo", psp_proto_root: Path,
+) -> None:
+    """For each receiver/sender port whose interface names a PDU, find
+    that PDU's .proto under `psp_proto_root/<dir>/<Pdu>.proto`, parse
+    its `package` line, and stash both into the port. Subsequent
+    templates use this to write the right include path and the right
+    C struct typename.
+
+    Search order: shared/ first (cross-bus PDUs), then flexray/, then
+    can/<bus>/ in alphabetical order. The first hit wins.
+    """
+    import re
+
+    if not psp_proto_root.is_dir():
+        return
+
+    # Build PDU → (dir, package) index once.
+    pkg_re = re.compile(r"^package\s+([A-Za-z0-9_]+)\s*;", re.MULTILINE)
+    locs: dict[str, tuple[str, str]] = {}
+    candidate_subdirs = ["shared"]
+    flexray_dir = psp_proto_root / "flexray"
+    if flexray_dir.is_dir():
+        candidate_subdirs.append("flexray")
+    can_root = psp_proto_root / "can"
+    if can_root.is_dir():
+        for bus in sorted(d.name for d in can_root.iterdir() if d.is_dir()):
+            candidate_subdirs.append(f"can/{bus}")
+
+    for sub in candidate_subdirs:
+        sub_dir = psp_proto_root / sub
+        if not sub_dir.is_dir():
+            continue
+        for f in sub_dir.glob("*.proto"):
+            pdu = f.stem
+            if pdu in locs:
+                continue
+            try:
+                text = f.read_text()
+            except OSError:
+                continue
+            m = pkg_re.search(text)
+            pkg = m.group(1) if m else "shared"
+            locs[pdu] = (sub, pkg)
+
+    for port in node.recv_ports + node.send_ports:
+        if not port.message:
+            continue
+        loc = locs.get(port.message)
+        if not loc:
+            continue
+        port.proto_dir, port.proto_pkg = loc
+        port.cxx_struct = f"{port.proto_pkg}_{port.message}"
+
+
 # ---- public API ------------------------------------------------------------
 
 def generate(
@@ -202,14 +335,25 @@ def generate(
     *,
     namespace: str = "",
     project_name: str = "",
+    netgraph_paths: Iterable[str | Path] = (),
+    psp_proto_root: str | Path | None = None,
 ) -> dict[str, list[str]]:
     """Walk a vendor system tree, emit a C++14 application scaffold.
+
+    `netgraph_paths` — list of netgraph.json files (typically from
+    `artheia gen-netgraph-partition`, one per bus). The generator joins
+    each receiver port with its bus address (can_id or slot_id) so the
+    emitted dispatch loop can route incoming GwMessageHeader frames to
+    the right `on_<port>()` callback.
 
     Returns a dict {kind: [paths]} listing every file written or skipped,
     grouped by slice for the caller to summarize.
     """
     vendor_root = Path(vendor_root)
     out_dir = Path(out_dir)
+
+    # Load netgraphs first so every node gets routed ports.
+    routes = _load_netgraph(netgraph_paths)
 
     components_dir = vendor_root / "system" / "components"
     if not components_dir.is_dir():
@@ -223,6 +367,12 @@ def generate(
     if not nodes:
         raise ValueError("no NodeDecl with ports found in vendor components")
 
+    proto_root_path = Path(psp_proto_root) if psp_proto_root else None
+    for node in nodes:
+        _annotate_ports(node, routes)
+        if proto_root_path is not None:
+            _resolve_proto_locations(node, proto_root_path)
+
     # Defaults derived from the vendor path.
     vendor_name = vendor_root.name
     if not namespace:
@@ -230,16 +380,19 @@ def generate(
     if not project_name:
         project_name = vendor_name
 
-    # Set of PDU includes the templates emit. Convention: `<Pdu>.pb.h`
-    # under <PSP>/proto/shared/. We treat every receiver/sender message
-    # as a possible PDU; non-PDU interfaces (e.g. Status) produce no
-    # include because their `message` field is empty.
-    pdu_set: set[str] = set()
+    # Set of PDU includes the templates emit. Resolved per port from
+    # the .proto files under psp_proto_root: each receiver/sender port
+    # gets an include like `<proto_dir>/<Pdu>.pb.h` (e.g.
+    # `shared/ACC_07.pb.h` or `flexray/EML_01.pb.h`). Ports without a
+    # resolved location are skipped (their handlers would not compile
+    # — the template emits TODO comments instead).
+    include_set: set[str] = set()
     for n in nodes:
         for p in n.recv_ports + n.send_ports:
-            if p.message:
-                pdu_set.add(p.message)
-    pdus_referenced = sorted(pdu_set)
+            if p.message and p.proto_dir:
+                include_set.add(f"{p.proto_dir}/{p.message}.pb.h")
+    pdu_includes = sorted(include_set)
+    pdus_referenced = pdu_includes  # back-compat alias used by templates
 
     env = Environment(
         loader=FileSystemLoader(str(_TEMPLATES)),

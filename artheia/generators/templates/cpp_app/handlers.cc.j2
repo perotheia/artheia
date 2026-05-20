@@ -4,21 +4,24 @@
 // existence and refuses to overwrite. If you delete it, the next
 // regen will recreate the empty stubs.
 //
-// What lives here:
-//   - one method body per receiver port: {{ node.name }}::on_<port>()
-//   - one method body per client-port response (if any)
+// One method body per receiver port:
+//   void {{ node.name }}::on_<port>(const GwMessageHeader& hdr,
+//                                   const shared_<Pdu>& msg) noexcept
 // The declarations are in {{ node.name }}.hh; only the bodies are yours.
 
 #include "{{ node.name }}.hh"
 
 namespace {{ namespace }} {
 
-{% for port in node.recv_ports %}
+{% for port in node.recv_ports -%}
+{%- if port.cxx_struct %}
 void {{ node.name }}::{{ port.callback }}(
-    const std::shared_ptr<{{ port.message }}> msg) noexcept {
-  (void)msg;
+    const GwMessageHeader& hdr,
+    const {{ port.cxx_struct }}& msg) noexcept {
+  (void)hdr; (void)msg;
   // TODO: handle {{ port.name }} ({{ port.interface }})
-  // msg fields are nanopb-decoded; see {{ port.message }}.pb.h for layout.
+  // Decoded fields are nanopb POD; see {{ port.proto_dir }}/{{ port.message }}.pb.h for layout.
 }
-{% endfor %}
+{% endif %}
+{%- endfor %}
 }  // namespace {{ namespace }}

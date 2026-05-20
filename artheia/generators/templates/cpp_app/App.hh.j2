@@ -4,18 +4,26 @@
 //
 // Slice 2 (stub): the application class declaration. Inherits from
 // LifecycleInterface for OnCreate/OnStart/OnStop; declares one
-// callback method per receiver port and one helper per client port.
+// callback per receiver port. The callback signature is
+//   void on_<port>(const GwMessageHeader& hdr, const shared_<Pdu>& msg) noexcept
 // User implementations live in {{ node.name }}_handlers.cc under impl/.
 
 #pragma once
+#include <atomic>
 #include <memory>
+#include <thread>
 
 #include "LifecycleInterface.hh"
 #include "{{ node.name }}Inputs.hh"
 
-{% for pdu in pdus_referenced -%}
-#include "{{ pdu }}.pb.h"
+extern "C" {
+#include "gw_proto.h"
+}
+{% for inc in pdus_referenced -%}
+#include "{{ inc }}"
 {% endfor %}
+
+class GwClient;
 
 namespace {{ namespace }} {
 
@@ -31,6 +39,7 @@ class {{ node.name }} : public platform::runtime::LifecycleInterface {
 
  public:
   explicit {{ node.name }}(const {{ node.name }}Inputs& inputs);
+  ~{{ node.name }}() override;
 
   // LifecycleInterface ---------------------------------------------------
   void OnCreate() noexcept override;
@@ -39,17 +48,19 @@ class {{ node.name }} : public platform::runtime::LifecycleInterface {
 
   // ---- receiver port callbacks (user implements in impl/) ----------------
   {% for port in node.recv_ports -%}
-  void {{ port.callback }}(const std::shared_ptr<{{ port.message }}> msg) noexcept;
-  {% endfor %}
-
-  // ---- client-port helpers (user calls these from impl/) -----------------
-  {% for port in node.client_ports -%}
-  // client {{ port.name }} requires {{ port.interface }}
-  int {{ port.call }}() noexcept;
+  {%- if port.cxx_struct -%}
+  // {{ port.name }} ← {{ port.interface }}{% if port.bus_kind == 'can' %} (CAN id 0x{{ '%03x' % port.can_id }}){% elif port.bus_kind == 'flexray' %} (FlexRay slot {{ port.slot_id }}, ch {{ port.channel_idx }}){% endif %}
+  void {{ port.callback }}(const GwMessageHeader& hdr, const {{ port.cxx_struct }}& msg) noexcept;
+  {% endif -%}
   {% endfor %}
 
  private:
   const {{ node.name }}Inputs& inputs_;
+  std::unique_ptr<GwClient>    client_;
+  std::atomic<bool>            running_{false};
+  std::thread                  rx_thread_;
+
+  void rx_loop_() noexcept;
 };
 
 }  // namespace {{ namespace }}

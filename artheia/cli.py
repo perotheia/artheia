@@ -266,10 +266,25 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
               help="C++ namespace (default: vendor dir name with '-' -> '_').")
 @click.option("--project", "project_name", default="",
               help="CMake project name (default: vendor dir name).")
-def gen_app(vendor_root: str, out_dir: str, namespace: str, project_name: str) -> None:
+@click.option("--netgraph", "netgraph_paths", multiple=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="netgraph.json (per bus). Joins each receiver port's "
+              "interface name (<Pdu>_Iface) with its can_id or slot_id so the "
+              "generated dispatch loop can route incoming TIPC frames. "
+              "Repeat for multiple buses.")
+@click.option("--psp-proto-root", "psp_proto_root", default=None,
+              type=click.Path(exists=True, file_okay=False),
+              help="Directory containing the PSP's .proto tree "
+              "(shared/, flexray/, can/<bus>/). Used to resolve each "
+              "PDU's package (e.g. shared_ACC_07 vs mlbevo_gen2_EML_01) "
+              "so includes and struct types match nanopb output.")
+def gen_app(vendor_root: str, out_dir: str, namespace: str, project_name: str,
+            netgraph_paths: tuple[str, ...], psp_proto_root: str | None) -> None:
     from .generators.cpp_app import generate
     results = generate(vendor_root, out_dir,
-                       namespace=namespace, project_name=project_name)
+                       namespace=namespace, project_name=project_name,
+                       netgraph_paths=netgraph_paths,
+                       psp_proto_root=psp_proto_root)
     for path in results.get("wrote", []):
         click.echo(f"  wrote:   {path}")
     for path in results.get("skipped-exists", []):
