@@ -9,14 +9,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# pero_cmp_lnx provides the runtime + transport. Set PERO_CMP_LNX to the
-# checkout path (defaults to the workspace layout).
-set(PERO_CMP_LNX "${CMAKE_SOURCE_DIR}/../../gateway/libs/pero_cmp_lnx" CACHE PATH
-    "Path to pero_cmp_lnx (LifecycleInterface, runtime, transport).")
+# Workspace paths — adjust if you build outside the standard layout.
+set(WORKSPACE_ROOT "${CMAKE_SOURCE_DIR}/../.." CACHE PATH
+    "pero_theia workspace root (parent of applications/ and platform/).")
 
-# AUTOSAR PSP supplies nanopb message structs for the PDUs we consume.
-set(PSP_ROOT "${CMAKE_SOURCE_DIR}/../../autosar/mlbevo_gen2_cmp_psp" CACHE PATH
-    "Path to the MLBevo PSP (nanopb structs + dispatch tables).")
+set(PLATFORM_RUNTIME "${WORKSPACE_ROOT}/platform/runtime" CACHE PATH
+    "platform/runtime: LifecycleInterface, Logger, Clock, Timer, Context.")
+
+set(LIBGW "${WORKSPACE_ROOT}/gateway/libs/libgw" CACHE PATH
+    "libgw: gateway NIF (CMP → PSP → TIPC + UDP TX).")
+
+set(PSP_ROOT "${WORKSPACE_ROOT}/autosar/mlbevo_gen2_cmp_psp" CACHE PATH
+    "MLBevo PSP: nanopb message structs + dispatch tables.")
 
 add_executable({{ project_name }}
     {% for node in nodes -%}
@@ -29,14 +33,25 @@ add_executable({{ project_name }}
 target_include_directories({{ project_name }} PRIVATE
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/app
-    ${PERO_CMP_LNX}/lib/include
+    ${PLATFORM_RUNTIME}/include
+    ${LIBGW}/include
     ${PSP_ROOT}/proto/shared
     {% for bus in proto_buses -%}
     ${PSP_ROOT}/proto/{{ bus.kind }}/{{ bus.name }}
     {% endfor %}
 )
 
-# Runtime libs from pero_cmp_lnx (cmpdecoder + gw).
-find_library(PERO_CMPDECODER NAMES cmpdecoder PATHS ${PERO_CMP_LNX}/build ${PERO_CMP_LNX}/lib)
-find_library(PERO_GW         NAMES gw         PATHS ${PERO_CMP_LNX}/build ${PERO_CMP_LNX}/lib)
-target_link_libraries({{ project_name }} PRIVATE ${PERO_CMPDECODER} ${PERO_GW})
+# platform/runtime is a Bazel target; for a CMake build, locate the .a/.so.
+find_library(PLATFORM_RUNTIME_LIB NAMES runtime
+             PATHS ${PLATFORM_RUNTIME}/build ${WORKSPACE_ROOT}/bazel-bin/platform/runtime)
+
+# libgw and libcmpdecoder come from gateway/libs/.
+find_library(LIBGW_LIB         NAMES gw         PATHS ${LIBGW}/build ${WORKSPACE_ROOT}/bazel-bin/gateway/libs/libgw)
+find_library(LIBCMPDECODER_LIB NAMES cmpdecoder PATHS ${WORKSPACE_ROOT}/gateway/libs/pero_cmp_lnx/build ${WORKSPACE_ROOT}/bazel-bin/gateway/libs/pero_cmp_lnx/lib)
+
+target_link_libraries({{ project_name }} PRIVATE
+    ${PLATFORM_RUNTIME_LIB}
+    ${LIBGW_LIB}
+    ${LIBCMPDECODER_LIB}
+    pthread
+)

@@ -10,8 +10,8 @@
 #pragma once
 #include <memory>
 
+#include "LifecycleInterface.hh"
 #include "{{ node.name }}Inputs.hh"
-#include "gateway/libs/pero_cmp_lnx/lib/include/lifecycle_interface.hh"
 
 {% for pdu in pdus_referenced -%}
 #include "{{ pdu }}.pb.h"
@@ -19,7 +19,7 @@
 
 namespace {{ namespace }} {
 
-class {{ node.name }} : public pero_cmp_lnx::LifecycleInterface {
+class {{ node.name }} : public platform::runtime::LifecycleInterface {
  public:
   static constexpr uint32_t TIPC_TYPE     = {{ node.tipc_type }}u;
   static constexpr uint32_t TIPC_INSTANCE = {{ node.tipc_instance }}u;
