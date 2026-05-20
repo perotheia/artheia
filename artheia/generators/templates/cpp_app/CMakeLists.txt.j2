@@ -19,6 +19,9 @@ set(PLATFORM_RUNTIME "${WORKSPACE_ROOT}/platform/runtime" CACHE PATH
 set(LIBGW "${WORKSPACE_ROOT}/gateway/libs/libgw" CACHE PATH
     "libgw: gateway NIF (CMP → PSP → TIPC + UDP TX).")
 
+set(PLATFORM_PROTO "${WORKSPACE_ROOT}/platform/proto" CACHE PATH
+    "platform/proto: nanopb sources mirroring .art package paths.")
+
 set(BAZEL_BIN "${WORKSPACE_ROOT}/bazel-bin" CACHE PATH
     "Bazel output root; psp_nanopb TreeArtifact lives under here.")
 
@@ -51,6 +54,17 @@ set_target_properties({{ project_name }}_psp_protos PROPERTIES
     LINKER_LANGUAGE C)
 set_source_files_properties(${PSP_NANOPB_SRCS} PROPERTIES LANGUAGE C)
 
+{# Collect .pb.c files for every clientServer interface this app calls
+   (set-dedupes across multiple ports targeting the same service). #}
+{%- set client_proto_csrcs = [] -%}
+{%- for n in nodes -%}
+{%- for cp in n.client_ports -%}
+{%- if cp.service_info and cp.service_info.proto_csrc not in client_proto_csrcs -%}
+{%- set _ = client_proto_csrcs.append(cp.service_info.proto_csrc) -%}
+{%- endif -%}
+{%- endfor -%}
+{%- endfor %}
+
 add_executable({{ project_name }}
     {% for node in nodes -%}
     app/{{ node.name }}.cc
@@ -58,13 +72,20 @@ add_executable({{ project_name }}
     app/impl/{{ node.name }}_handlers.cc
     {% endfor %}
     app/gw_client.cpp
+    {% for csrc in client_proto_csrcs -%}
+    ${PLATFORM_PROTO}/{{ csrc }}
+    {% endfor %}
 )
+{% for csrc in client_proto_csrcs -%}
+set_source_files_properties(${PLATFORM_PROTO}/{{ csrc }} PROPERTIES LANGUAGE C)
+{% endfor %}
 
 target_include_directories({{ project_name }} PRIVATE
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/app
     ${PLATFORM_RUNTIME}/include
     ${LIBGW}/include
+    ${PLATFORM_PROTO}       # for `#include "<pkg-path>/<Iface>.pb.h"` (clientServer types)
     ${PSP_PROTO_INC}        # for `#include "<dir>/<Pdu>.pb.h"`
     /usr/include            # nanopb runtime: pb.h, pb_decode.h, pb_encode.h
 )

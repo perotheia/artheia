@@ -97,6 +97,40 @@ def _pdu_from_iface(iface_name: str) -> str:
     return ""
 
 
+# ---- known clientServer interfaces (hand-table) ---------------------------
+#
+# Bridges `client <port> requires <Iface>` declarations in .art to the
+# RPC IDs published by libgw (gw_service_ids.h) and the nanopb types
+# generated from each interface's .proto. Each entry lists the operations
+# in textual .art order; method_id is the list index.
+#
+# Eventually we'll harvest this from `interface clientServer Status {
+# operation GetStatus() returns ... }` once the operation bodies are
+# populated; until then the table below keeps client + server in lockstep.
+_CLIENT_SERVICES: dict[str, dict] = {
+    "Status": {
+        "service_id": 0x7929,           # djb2_low16("Status") — matches gw_service_ids.h
+        "service_id_macro": "GW_SVC_STATUS_ID",
+        # .art package path is gateway.system → proto lives at
+        # platform/proto/gateway/system/status.{proto,pb.h,pb.c}.
+        # The app's include root is platform/proto/, so apps write
+        # `#include "gateway/system/status.pb.h"`.
+        "proto_header": "gateway/system/status.pb.h",
+        "proto_csrc":   "gateway/system/status.pb.c",
+        "proto_pkg": "gw_status",
+        "operations": [
+            # method_id 0 = GetStatus()
+            {
+                "name": "GetStatus",
+                "method_id_macro": "GW_SVC_STATUS_GETSTATUS",
+                "request_type":  "gw_status_StatusGetStatusRequest",
+                "response_type": "gw_status_StatusGetStatusResponse",
+            },
+        ],
+    },
+}
+
+
 @dataclass
 class _PortInfo:
     name: str               # snake-case name as written in .art
@@ -166,6 +200,9 @@ def _harvest_node(node) -> _NodeInfo:
         elif kind == "SenderPort":
             info.send_ports.append(pi)
         elif kind == "ClientPort":
+            svc = _CLIENT_SERVICES.get(iface_name)
+            if svc is not None:
+                pi.service_info = svc  # type: ignore[attr-defined]
             info.client_ports.append(pi)
         elif kind == "ServerPort":
             info.server_ports.append(pi)

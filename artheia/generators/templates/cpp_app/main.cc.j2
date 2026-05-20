@@ -8,6 +8,8 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
+#include <future>
 #include <thread>
 
 #include "Clock.hh"
@@ -16,6 +18,14 @@
 
 #include "{{ node.name }}.hh"
 #include "{{ node.name }}Inputs.hh"
+#include "gw_client.h"
+{% set client_proto_set = [] -%}
+{%- for cp in node.client_ports -%}
+{%- if cp.service_info and cp.service_info.proto_header not in client_proto_set -%}
+{%- set _ = client_proto_set.append(cp.service_info.proto_header) -%}
+#include "{{ cp.service_info.proto_header }}"
+{% endif -%}
+{%- endfor %}
 
 namespace {
 
@@ -52,6 +62,46 @@ int main(int argc, char* argv[]) {
 
     logger->info("{{ node.name }}: starting");
     app.OnCreate();
+
+    // ── Boot-time clientServer calls ────────────────────────────────────────
+    // Issued between OnCreate (connect) and OnStart (rx thread spawn) so the
+    // socket is ours alone — we can call pump_response() without racing the
+    // rx loop. Each call is one round-trip on the same TIPC socket the app
+    // will then use for signal subscriptions.
+{% for cp in node.client_ports -%}
+{%- if cp.service_info -%}
+{%- for op in cp.service_info.operations %}
+    {
+        {{ op.request_type }} req = {{ op.request_type }}_init_zero;
+        auto fut = app.{{ cp.name }}_{{ op.name }}(req);
+        // Pump the socket waiting for the RESPONSE. In pcap-replay mode
+        // the gateway floods SIGNAL_UPDATE frames; the demuxer discards
+        // them until the matching RPC RESPONSE arrives. Cap at 5s so a
+        // misconfigured gateway can't hang boot indefinitely.
+        bool got = app.client() && app.client()->pump_response(5000);
+        // fut is a deferred future (the proxy chains std::async(deferred,
+        // ...) around the raw byte vector future). Don't .wait_for(0) it
+        // — deferred futures show "timeout" until you actually .get()
+        // them. pump_response's return tells us whether the inner promise
+        // was fulfilled.
+        if (got) {
+            {{ op.response_type }} resp = fut.get();
+            std::fprintf(stderr,
+                "[boot] {{ cp.name }}.{{ op.name }} OK\n");
+            (void)resp;
+{%- if op.response_type == "gw_status_StatusGetStatusResponse" %}
+            std::fprintf(stderr,
+                "       uptime_ms=%u  packet_count=%u\n",
+                (unsigned)resp.uptime_ms, (unsigned)resp.packet_count);
+{%- endif %}
+        } else {
+            std::fprintf(stderr,
+                "[boot] {{ cp.name }}.{{ op.name }} TIMEOUT — no response in 5s\n");
+        }
+    }
+{% endfor -%}
+{% endif -%}
+{% endfor %}
     app.OnStart();
     while (!g_shutdown.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

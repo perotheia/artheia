@@ -10,9 +10,11 @@
 #include "{{ node.name }}.hh"
 
 #include <cstring>
+#include <utility>
 
 #include <pb.h>
 #include <pb_decode.h>
+#include <pb_encode.h>
 
 #include "gw_client.h"
 
@@ -80,5 +82,39 @@ void {{ node.name }}::rx_loop_() noexcept {
     // unmatched: not one of this node's subscribed PDUs; drop silently
   }
 }
+
+// ---- clientServer proxies (impl) -------------------------------------------
+{% for cp in node.client_ports -%}
+{%- if cp.service_info -%}
+{%- for op in cp.service_info.operations %}
+std::future<{{ op.response_type }}>
+{{ node.name }}::{{ cp.name }}_{{ op.name }}(const {{ op.request_type }}& req) {
+  uint8_t      req_buf[256];
+  pb_ostream_t os = pb_ostream_from_buffer(req_buf, sizeof(req_buf));
+  uint16_t     req_len = 0;
+  if (pb_encode(&os, {{ op.request_type }}_fields, &req)) {
+    req_len = (uint16_t)os.bytes_written;
+  }
+  auto raw = client_->send_request(
+      {{ cp.service_info.service_id_macro }},
+      {{ op.method_id_macro }},
+      req_buf, req_len);
+
+  // Chain a decode step that consumes the byte vector and yields the
+  // typed response. std::launch::deferred so the work happens on the
+  // .get() thread, not a runtime-spawned worker.
+  return std::async(std::launch::deferred,
+      [r = std::move(raw)]() mutable {
+        std::vector<uint8_t> bytes = r.get();
+        {{ op.response_type }} resp = {{ op.response_type }}_init_zero;
+        pb_istream_t is = pb_istream_from_buffer(bytes.data(),
+                                                  bytes.size());
+        (void)pb_decode(&is, {{ op.response_type }}_fields, &resp);
+        return resp;
+      });
+}
+{% endfor -%}
+{% endif -%}
+{% endfor %}
 
 }  // namespace {{ namespace }}
