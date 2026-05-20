@@ -477,5 +477,121 @@ def gen_psp_registry(
     generate(list(can_namespaces), include_dir, out_dir)
 
 
+@main.command(
+    "generate-manifest",
+    help="Generate the deploy manifest YAML for a vehicle syscomp module. "
+    "TARGET is either a dotted import path "
+    "(e.g. artheia.vehicles.tornado.syscomp) or a path to a .py file. "
+    "The module must export a SoftwareSpecification (default name: "
+    "TornadoSoftware / <Vehicle>Software / Software) and optionally a "
+    "VehicleInstance.",
+)
+@click.argument("target")
+@click.option(
+    "--software",
+    "software_attr",
+    default=None,
+    help="Name of the SoftwareSpecification attribute in the module. "
+    "If omitted, the CLI looks for *Software, then Software.",
+)
+@click.option(
+    "--vehicle",
+    "vehicle_attr",
+    default=None,
+    help="Name of the VehicleInstance attribute. If omitted, the CLI looks "
+    "for *Vehicle, then Vehicle.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write the YAML manifest here. Defaults to stdout.",
+)
+def generate_manifest_cmd(
+    target: str,
+    software_attr: str | None,
+    vehicle_attr: str | None,
+    out_file: str | None,
+) -> None:
+    """Run a vehicle syscomp file and emit its deploy manifest as YAML."""
+    import importlib
+    import importlib.util
+
+    from artheia.manifest import SoftwareSpecification, VehicleInstance
+    from artheia.manifest.serialize import to_yaml
+
+    # Load by file path or dotted module name.
+    if target.endswith(".py") or "/" in target:
+        spec = importlib.util.spec_from_file_location("_artheia_syscomp", target)
+        if spec is None or spec.loader is None:
+            click.secho(f"error: cannot load {target}", fg="red", err=True)
+            sys.exit(2)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    else:
+        module = importlib.import_module(target)
+
+    # Resolve the SoftwareSpecification attribute.
+    # Prefer candidates *defined in* this module (not re-imported), and among
+    # those prefer the one whose name's prefix matches the module's last
+    # segment — so artheia.vehicles.tornado.syscomp picks TornadoSoftware
+    # over a re-imported MacanSoftware.
+    module_tag = module.__name__.rsplit(".", 1)[-1].lower()
+    parent_tag = module.__name__.split(".")[-2].lower() if "." in module.__name__ else ""
+
+    def _pick(attr_hint: str | None, kind: type, suffix: str, fallback: str) -> object | None:
+        if attr_hint is not None:
+            if not hasattr(module, attr_hint):
+                click.secho(
+                    f"error: {target} has no attribute '{attr_hint}'",
+                    fg="red",
+                    err=True,
+                )
+                sys.exit(2)
+            return getattr(module, attr_hint)
+        candidates = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), kind) and n.endswith(suffix)
+        ]
+        if not candidates:
+            return getattr(module, fallback, None)
+
+        def _score(name: str) -> tuple[int, str]:
+            prefix = name[: -len(suffix)].lower()
+            # higher score is better; sort descending later
+            if prefix == module_tag:
+                priority = 3
+            elif prefix == parent_tag:
+                priority = 2
+            elif prefix:
+                priority = 1
+            else:
+                priority = 0
+            return (priority, name)
+
+        candidates.sort(key=_score, reverse=True)
+        return getattr(module, candidates[0])
+
+    software = _pick(software_attr, SoftwareSpecification, "Software", "Software")
+    if software is None:
+        click.secho(
+            "error: no SoftwareSpecification found (looked for *Software / Software). "
+            "Pass --software <name> to disambiguate.",
+            fg="red",
+            err=True,
+        )
+        sys.exit(2)
+
+    vehicle = _pick(vehicle_attr, VehicleInstance, "Vehicle", "Vehicle")
+
+    yaml_text = to_yaml(software, vehicle=vehicle)  # type: ignore[arg-type]
+    if out_file is None:
+        click.echo(yaml_text, nl=False)
+    else:
+        Path(out_file).write_text(yaml_text)
+        click.echo(out_file)
+
+
 if __name__ == "__main__":
     main()
