@@ -1,0 +1,24 @@
+// User-implementable handler bodies for {{ node.name }}.
+//
+// FIRST-TIME-ONLY SCAFFOLD. `artheia gen-app` checks for this file's
+// existence and refuses to overwrite. If you delete it, the next
+// regen will recreate the empty stubs.
+//
+// What lives here:
+//   - one method body per receiver port: {{ node.name }}::on_<port>()
+//   - one method body per client-port response (if any)
+// The declarations are in {{ node.name }}.hh; only the bodies are yours.
+
+#include "{{ node.name }}.hh"
+
+namespace {{ namespace }} {
+
+{% for port in node.recv_ports %}
+void {{ node.name }}::{{ port.callback }}(
+    const std::shared_ptr<{{ port.message }}> msg) noexcept {
+  (void)msg;
+  // TODO: handle {{ port.name }} ({{ port.interface }})
+  // msg fields are nanopb-decoded; see {{ port.message }}.pb.h for layout.
+}
+{% endfor %}
+}  // namespace {{ namespace }}

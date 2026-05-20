@@ -34,7 +34,7 @@ where = ["."]
 include = ["artheia*"]
 
 [tool.setuptools.package-data]
-artheia = ["grammar/*.tx", "generators/templates/*.j2"]
+artheia = ["grammar/*.tx", "generators/templates/*.j2", "generators/templates/**/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

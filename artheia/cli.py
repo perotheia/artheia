@@ -251,6 +251,32 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
 
 
 @main.command(
+    "gen-app",
+    help="Generate a C++14 application scaffold from a vendor system fragment "
+    "(three-slice layout: core/, app/, app/impl/, plus CMakeLists.txt). "
+    "Re-runs are safe — slice 3 (handlers.cc) is write-once.",
+)
+@click.option("--vendor-root", required=True,
+              type=click.Path(exists=True, file_okay=False),
+              help="Vendor system root, e.g. vendor/odd_path_client. "
+              "Must contain system/components/*.art with at least one NodeDecl.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Output dir, e.g. applications/odd_path_client.")
+@click.option("--namespace", default="",
+              help="C++ namespace (default: vendor dir name with '-' -> '_').")
+@click.option("--project", "project_name", default="",
+              help="CMake project name (default: vendor dir name).")
+def gen_app(vendor_root: str, out_dir: str, namespace: str, project_name: str) -> None:
+    from .generators.cpp_app import generate
+    results = generate(vendor_root, out_dir,
+                       namespace=namespace, project_name=project_name)
+    for path in results.get("wrote", []):
+        click.echo(f"  wrote:   {path}")
+    for path in results.get("skipped-exists", []):
+        click.echo(f"  skipped: {path}  (exists; would overwrite user impl)")
+
+
+@main.command(
     "gen-signal-filter",
     help="Walk a vendor system tree for gateway_route signal references, "
     "cross-reference against the AUTOSAR catalog, and emit "
