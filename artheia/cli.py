@@ -56,6 +56,61 @@ def gen_proto(art_file: str, out_dir: str) -> None:
         click.echo(p)
 
 
+@main.command("gen-proto-package",
+              help="Emit ONE .proto file per .art package at "
+                   "<out>/<pkg-path>/<leaf>.proto (mirrors the .art "
+                   "package hierarchy; matches the platform/proto/ layout "
+                   "used by libgw and apps).")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_root", required=True, type=click.Path(file_okay=False))
+def gen_proto_package(art_file: str, out_root: str) -> None:
+    from .generators.proto_package import generate_package_proto
+    path = generate_package_proto(art_file, out_root)
+    click.echo(str(path))
+
+
+@main.command("gen-routing",
+              help="Emit per-process routing headers for a composition. "
+                   "Each header declares LocalRef<T> for prototypes owned "
+                   "by that process and RemoteRef<T, tipc_type, instance> "
+                   "for prototypes owned elsewhere. User code calls "
+                   "cast/call identically regardless of local vs remote; "
+                   "overload resolution picks the path.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--composition", required=True,
+              help="Name of the composition to generate routing for.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
+def gen_routing(art_file: str, composition: str, out_dir: str) -> None:
+    from .generators.routing import generate_routing
+    paths = generate_routing(art_file, composition, out_dir)
+    for p in paths:
+        click.echo(str(p))
+
+
+@main.command("gen-app-composition",
+              help="Emit one CMake project per `on process P` partition of a "
+                   "composition. Each project boots TimerService + TipcMux + "
+                   "local nodes, connects RemoteRefs, registers inbound "
+                   "dispatch entries, and runs until SIGINT / DEMO_RUN_MS. "
+                   "Node implementations are NOT generated — they come from "
+                   "the existing demo_runtime; this generator only emits "
+                   "main.cc + CMakeLists per process.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--composition", required=True,
+              help="Name of the composition to materialize.")
+@click.option("--out", "out_root", required=True, type=click.Path(file_okay=False))
+@click.option("--runtime-dir", default="../../demo",
+              help="Path to the demo runtime, used by each generated "
+                   "CMakeLists as an add_subdirectory target.")
+def gen_app_composition(art_file: str, composition: str,
+                         out_root: str, runtime_dir: str) -> None:
+    from .generators.app_composition import generate_composition
+    paths = generate_composition(art_file, composition, out_root,
+                                  runtime_dir=runtime_dir)
+    for p in paths:
+        click.echo(str(p))
+
+
 @main.command("gen-netgraph", help="Emit a JSON netgraph describing nodes + compositions.")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))

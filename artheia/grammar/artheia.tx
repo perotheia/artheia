@@ -117,6 +117,20 @@ ParamDirection:
 NodeDecl:
     'node' kind=NodeKind name=ID '{'
         tipc=TipcAddress
+        // Lifecycle / dependency annotations. Each is independently
+        // optional; the generator uses them to drop hand-tables
+        // (which nodes auto-start, which need TimerService).
+        //
+        // Tracing has no annotation: every node is traceable at
+        // runtime. Enable it from a supervisor on crash, on watchdog
+        // failure, or for postmortem capture. The supervisor flips
+        // an atomic flag; producer cost when off is one relaxed
+        // load + predicted-not-taken branch per event point. The
+        // wins of always-on tracing (postmortem on uncovered bugs,
+        // automatic flip from supervisor) outweigh the ~kB of code
+        // we'd save by compile-time gating.
+        (kick_off?='kick_off')?
+        (requires_timers?='requires_timers')?
         ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?
@@ -179,6 +193,7 @@ CompositionElement:
 
 PrototypeDecl:
     'prototype' type=[NodeDecl|FQN] name=ID
+    ('on' 'process' process=ID)?
 ;
 
 ConnectDecl:
