@@ -532,5 +532,211 @@ def gen_psp_registry(
     generate(list(can_namespaces), include_dir, out_dir)
 
 
+@main.command(
+    "generate-manifest",
+    help="Generate the deploy manifest YAML for a vehicle syscomp module. "
+    "TARGET is either a dotted import path "
+    "(e.g. artheia.vehicles.tornado.syscomp) or a path to a .py file. "
+    "The module must export a SoftwareSpecification (default name: "
+    "TornadoSoftware / <Vehicle>Software / Software) and optionally a "
+    "VehicleInstance.",
+)
+@click.argument("target")
+@click.option(
+    "--software",
+    "software_attr",
+    default=None,
+    help="Name of the SoftwareSpecification attribute in the module. "
+    "If omitted, the CLI looks for *Software, then Software.",
+)
+@click.option(
+    "--vehicle",
+    "vehicle_attr",
+    default=None,
+    help="Name of the VehicleInstance attribute. If omitted, the CLI looks "
+    "for *Vehicle, then Vehicle.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Write the YAML manifest here. Defaults to stdout.",
+)
+def generate_manifest_cmd(
+    target: str,
+    software_attr: str | None,
+    vehicle_attr: str | None,
+    out_file: str | None,
+) -> None:
+    """Run a vehicle syscomp file and emit its deploy manifest as YAML."""
+    import importlib
+    import importlib.util
+
+    from artheia.manifest import SoftwareSpecification, VehicleInstance
+    from artheia.manifest.serialize import to_yaml
+
+    # Load by file path or dotted module name.
+    if target.endswith(".py") or "/" in target:
+        spec = importlib.util.spec_from_file_location("_artheia_syscomp", target)
+        if spec is None or spec.loader is None:
+            click.secho(f"error: cannot load {target}", fg="red", err=True)
+            sys.exit(2)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    else:
+        module = importlib.import_module(target)
+
+    # Resolve the SoftwareSpecification attribute.
+    # Prefer candidates *defined in* this module (not re-imported), and among
+    # those prefer the one whose name's prefix matches the module's last
+    # segment — so artheia.vehicles.tornado.syscomp picks TornadoSoftware
+    # over a re-imported MacanSoftware.
+    module_tag = module.__name__.rsplit(".", 1)[-1].lower()
+    parent_tag = module.__name__.split(".")[-2].lower() if "." in module.__name__ else ""
+
+    def _pick(attr_hint: str | None, kind: type, suffix: str, fallback: str) -> object | None:
+        if attr_hint is not None:
+            if not hasattr(module, attr_hint):
+                click.secho(
+                    f"error: {target} has no attribute '{attr_hint}'",
+                    fg="red",
+                    err=True,
+                )
+                sys.exit(2)
+            return getattr(module, attr_hint)
+        candidates = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), kind) and n.endswith(suffix)
+        ]
+        if not candidates:
+            return getattr(module, fallback, None)
+
+        def _score(name: str) -> tuple[int, str]:
+            prefix = name[: -len(suffix)].lower()
+            # higher score is better; sort descending later
+            if prefix == module_tag:
+                priority = 3
+            elif prefix == parent_tag:
+                priority = 2
+            elif prefix:
+                priority = 1
+            else:
+                priority = 0
+            return (priority, name)
+
+        candidates.sort(key=_score, reverse=True)
+        return getattr(module, candidates[0])
+
+    software = _pick(software_attr, SoftwareSpecification, "Software", "Software")
+    if software is None:
+        click.secho(
+            "error: no SoftwareSpecification found (looked for *Software / Software). "
+            "Pass --software <name> to disambiguate.",
+            fg="red",
+            err=True,
+        )
+        sys.exit(2)
+
+    vehicle = _pick(vehicle_attr, VehicleInstance, "Vehicle", "Vehicle")
+
+    yaml_text = to_yaml(software, vehicle=vehicle)  # type: ignore[arg-type]
+    if out_file is None:
+        click.echo(yaml_text, nl=False)
+    else:
+        Path(out_file).write_text(yaml_text)
+        click.echo(out_file)
+
+
+@main.group("executor", help="Erlang-style executor commands.")
+def executor() -> None:
+    pass
+
+
+@executor.command(
+    "emit",
+    help="Emit the supervisor manifest (executor.yaml) for a vehicle rig. "
+    "TARGET is a dotted import path to a module exporting a Rig "
+    "(e.g. vendor.vehicles.tornado.arsyscomp).",
+)
+@click.argument("target")
+@click.option(
+    "--rig",
+    "rig_attr",
+    default=None,
+    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Where to write the YAML. Defaults to stdout.",
+)
+def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
+    import dataclasses
+    import importlib
+
+    import yaml
+
+    from artheia.armanifest.rig import Rig
+    from artheia.armanifest.supervisor import build_supervisor_tree
+
+    module = importlib.import_module(target)
+
+    # Find the Rig export.
+    if rig_attr is not None:
+        rig = getattr(module, rig_attr)
+    else:
+        candidates = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), Rig)
+        ]
+        # Prefer *Rig over plain Rig.
+        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
+        if not candidates:
+            click.secho(
+                f"error: {target} exports no Rig (pass --rig <name>)",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        rig = getattr(module, candidates[0])
+
+    tree = build_supervisor_tree(rig)
+
+    def _to_dict(node) -> dict:
+        d = {"name": node.name}
+        if hasattr(node, "children"):
+            d["strategy"] = node.strategy.value
+            d["max_restarts"] = node.max_restarts
+            d["max_seconds"] = node.max_seconds
+            if getattr(node, "tombstone_dir", ""):
+                d["tombstone_dir"] = node.tombstone_dir
+            d["children"] = [_to_dict(c) for c in node.children]
+        else:
+            d["start_cmd"] = list(node.start_cmd)
+            d["restart"] = node.restart.value
+            d["shutdown"] = node.shutdown
+            d["type"] = node.type.value
+            if node.modules:
+                d["modules"] = list(node.modules)
+            if node.env:
+                d["env"] = dict(node.env)
+            if node.working_dir:
+                d["working_dir"] = node.working_dir
+            if node.shall_run_on:
+                d["shall_run_on"] = list(node.shall_run_on)
+            if node.shall_not_run_on:
+                d["shall_not_run_on"] = list(node.shall_not_run_on)
+        return d
+
+    out = yaml.safe_dump(_to_dict(tree), sort_keys=False, default_flow_style=False)
+    if out_file is None:
+        click.echo(out, nl=False)
+    else:
+        Path(out_file).write_text(out)
+        click.echo(out_file)
+
+
 if __name__ == "__main__":
     main()
