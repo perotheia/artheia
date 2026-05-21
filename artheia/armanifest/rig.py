@@ -1,0 +1,57 @@
+"""Rig — vendor-side bundle of machines + applications for one vehicle.
+
+Not part of the AUTOSAR Adaptive manifest set proper; this is the
+top-level container a vendor syscomp file emits so a single
+``arsyscomp.py`` produces the full set of manifests for one rig.
+
+Future work: emit each :class:`MachineManifest` / :class:`ApplicationManifest`
+to its own YAML, plus a ``rig.yaml`` index — the bazel rule
+``bazel distr //vendor/vehicles/<rig>/`` consumes the index to assemble
+per-machine opkg images.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from artheia.armanifest.application import ApplicationManifest
+from artheia.armanifest.execution import ExecutionManifest
+from artheia.armanifest.machine import MachineManifest, ProcessToMachineMapping
+from artheia.armanifest.service import ServiceManifest
+
+
+@dataclass
+class VehicleIdentity:
+    """Vendor-facing identity of one vehicle / rig."""
+
+    name: str
+    make: str = ""
+    model: str = ""
+
+
+@dataclass
+class Rig:
+    """Top-level container: one rig = one vehicle identity + N machines + M applications + service manifests.
+
+    Cross-references resolve by *name*:
+
+    - Every :class:`ApplicationManifest`'s ``host_machine`` must match a
+      :class:`MachineManifest.name` in :attr:`machines`.
+    - Every :class:`service.ServiceInstance.remote_machine` (when set)
+      must match a :class:`MachineManifest.name` in :attr:`machines`.
+    - SW components live inside applications; their bazel targets are
+      what the build system ultimately consumes.
+    """
+
+    vehicle: VehicleIdentity
+    machines: list[MachineManifest] = field(default_factory=list)
+    applications: list[ApplicationManifest] = field(default_factory=list)
+    service_manifests: list[ServiceManifest] = field(default_factory=list)
+    execution_manifests: list[ExecutionManifest] = field(default_factory=list)
+    # Process-to-machine mappings (AUTOSAR §9.4). Each entry binds a
+    # Process.name to a Machine.name plus optional core-affinity refs
+    # (shall_run_on / shall_not_run_on, identified by ProcessorCore.name
+    # which we resolve to integer core_ids at supervisor-emit time).
+    process_to_machine_mappings: list[ProcessToMachineMapping] = field(
+        default_factory=list
+    )

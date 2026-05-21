@@ -593,5 +593,95 @@ def generate_manifest_cmd(
         click.echo(out_file)
 
 
+@main.group("executor", help="Erlang-style executor commands.")
+def executor() -> None:
+    pass
+
+
+@executor.command(
+    "emit",
+    help="Emit the supervisor manifest (executor.yaml) for a vehicle rig. "
+    "TARGET is a dotted import path to a module exporting a Rig "
+    "(e.g. vendor.vehicles.tornado.arsyscomp).",
+)
+@click.argument("target")
+@click.option(
+    "--rig",
+    "rig_attr",
+    default=None,
+    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Where to write the YAML. Defaults to stdout.",
+)
+def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
+    import dataclasses
+    import importlib
+
+    import yaml
+
+    from artheia.armanifest.rig import Rig
+    from artheia.armanifest.supervisor import build_supervisor_tree
+
+    module = importlib.import_module(target)
+
+    # Find the Rig export.
+    if rig_attr is not None:
+        rig = getattr(module, rig_attr)
+    else:
+        candidates = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), Rig)
+        ]
+        # Prefer *Rig over plain Rig.
+        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
+        if not candidates:
+            click.secho(
+                f"error: {target} exports no Rig (pass --rig <name>)",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        rig = getattr(module, candidates[0])
+
+    tree = build_supervisor_tree(rig)
+
+    def _to_dict(node) -> dict:
+        d = {"name": node.name}
+        if hasattr(node, "children"):
+            d["strategy"] = node.strategy.value
+            d["max_restarts"] = node.max_restarts
+            d["max_seconds"] = node.max_seconds
+            if getattr(node, "tombstone_dir", ""):
+                d["tombstone_dir"] = node.tombstone_dir
+            d["children"] = [_to_dict(c) for c in node.children]
+        else:
+            d["start_cmd"] = list(node.start_cmd)
+            d["restart"] = node.restart.value
+            d["shutdown"] = node.shutdown
+            d["type"] = node.type.value
+            if node.modules:
+                d["modules"] = list(node.modules)
+            if node.env:
+                d["env"] = dict(node.env)
+            if node.working_dir:
+                d["working_dir"] = node.working_dir
+            if node.shall_run_on:
+                d["shall_run_on"] = list(node.shall_run_on)
+            if node.shall_not_run_on:
+                d["shall_not_run_on"] = list(node.shall_not_run_on)
+        return d
+
+    out = yaml.safe_dump(_to_dict(tree), sort_keys=False, default_flow_style=False)
+    if out_file is None:
+        click.echo(out, nl=False)
+    else:
+        Path(out_file).write_text(out)
+        click.echo(out_file)
+
+
 if __name__ == "__main__":
     main()
