@@ -18,7 +18,7 @@ Plus the composition layer:
 | `layer.py`      | :class:`Layer` + :func:`merge_layers` — compose deltas (platform → vehicle-family → rig). |
 | `transform.py`  | identity-keyed :class:`Add` / :class:`Remove` / :class:`Override` primitives. |
 | `clusters.py`   | :data:`CLUSTERS` catalogue of the 18 Adaptive Platform Functional Clusters by short name. |
-| `platform.py`   | :data:`PlatformBase` — the L0 rig synthesized from `platforms/system/services/<short>/package.art`. |
+| `platform.py`   | :data:`PlatformBase` — the L0 rig sourced from :mod:`services.manifest.fc` and paired with the :class:`ServiceManifest` derived from `platform/system/<short>/package.art`. |
 | `loader.py`     | textX-driven loader that turns `.art` files into Service + Execution manifests. |
 | `supervisor.py` | :func:`build_supervisor_tree` — composes the supervisor view used by `artheia executor emit`. |
 

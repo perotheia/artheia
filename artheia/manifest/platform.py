@@ -34,10 +34,12 @@ def _default_art_root() -> Path:
     Search order:
 
     1. ``$ARTHEIA_PLATFORM_SERVICES`` (absolute path).
-    2. ``<repo_root>/platforms/system/services`` discovered by walking
-       up from this file (works in editable installs).
-    3. Fall back to ``platforms/system/services`` relative to cwd.
+    2. ``<repo_root>/platform/system`` discovered by walking up from
+       this file (works in editable installs).
+    3. Fall back to ``platform/system`` relative to cwd.
 
+    The 18 FC directories live directly under this root as symlinks
+    (e.g. ``platform/system/core -> ../../services/system/core``).
     A vendor that ships its own platform layout points
     ``ARTHEIA_PLATFORM_SERVICES`` at it.
     """
@@ -48,11 +50,11 @@ def _default_art_root() -> Path:
     here = Path(__file__).resolve()
     # artheia/artheia/manifest/platform.py → up 4 levels to the repo root.
     for parent in [here, *here.parents]:
-        candidate = parent / "platforms" / "system" / "services"
+        candidate = parent / "platform" / "system"
         if candidate.is_dir():
             return candidate
 
-    return Path("platforms/system/services")
+    return Path("platform/system")
 
 
 PLATFORM_SERVICES_ROOT = _default_art_root()
