@@ -879,5 +879,134 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
         click.echo(out_file)
 
 
+# -----------------------------------------------------------------------------
+# rig-deps — Bazel-facing rig structure dump
+# -----------------------------------------------------------------------------
+
+
+@main.command(
+    "rig-deps",
+    help="Emit the rig's component structure as JSON. Consumed by the "
+    "Bazel rig() module extension to wire SwComponent.bazel_target refs "
+    "into per-machine deploy bundles.",
+)
+@click.argument("target")
+@click.option(
+    "--rig",
+    "rig_attr",
+    default=None,
+    help="Name of the Rig/SoftwareSpecification attribute. "
+    "Defaults to *Software / *Rig / Rig.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Where to write the JSON. Defaults to stdout.",
+)
+def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
+    """Emit a JSON describing the rig:
+
+      {
+        "vehicle": {"name": "demo", "make": "theia", "model": "..."},
+        "machines": [
+          {
+            "name": "demo_host",
+            "applications": [
+              {
+                "name": "platform_app",
+                "components": [
+                  {"name": "demo_p1", "bazel_target": "//demo:p1_main",
+                   "owner": "platform", "art_node": "system.demo/DemoP1Composition"},
+                  ...
+                ]
+              }
+            ]
+          }
+        ],
+        "executor_yaml_components": [
+          # Same components, flat — for the Bazel rule that builds the
+          # opkg payload (so it doesn't have to walk the machine list).
+          {"name": "demo_p1", "bazel_target": "//demo:p1_main", "machine": "demo_host"},
+          ...
+        ]
+      }
+
+    The Bazel module extension reads this at module-load time and
+    generates one synthetic repo per rig with per-machine targets.
+    """
+    import json
+
+    rig = _resolve_rig(target, rig_attr)
+
+    # Build a per-machine grouping of components. Each ApplicationManifest's
+    # host_machine field binds it to a specific machine; default to the
+    # first machine if no binding is set (single-machine rigs).
+    machines_by_name = {m.name: m for m in rig.machines}
+    apps_by_machine: dict[str, list] = {m: [] for m in machines_by_name}
+
+    for app in rig.applications:
+        host = app.host_machine or (
+            next(iter(machines_by_name)) if machines_by_name else ""
+        )
+        if host not in apps_by_machine:
+            apps_by_machine[host] = []
+        apps_by_machine[host].append(app)
+
+    def _component_dict(c) -> dict:
+        return {
+            "name": c.name,
+            "bazel_target": c.bazel_target,
+            "owner": c.owner,
+            "art_node": c.art_node,
+            "bazel_buildable": getattr(c, "bazel_buildable", False),
+        }
+
+    machines_json = []
+    for m in rig.machines:
+        apps_json = []
+        for app in apps_by_machine.get(m.name, []):
+            apps_json.append({
+                "name": app.name,
+                "components": [_component_dict(c) for c in app.components],
+            })
+        machines_json.append({
+            "name": m.name,
+            "applications": apps_json,
+        })
+
+    # Flat list for convenience: every component the rig declares, with
+    # its machine binding.
+    flat_components = []
+    for m in rig.machines:
+        for app in apps_by_machine.get(m.name, []):
+            for c in app.components:
+                flat_components.append({
+                    "name": c.name,
+                    "bazel_target": c.bazel_target,
+                    "machine": m.name,
+                    "owner": c.owner,
+                    "bazel_buildable": getattr(c, "bazel_buildable", False),
+                })
+
+    doc = {
+        "vehicle": {
+            "name": rig.vehicle.name,
+            "make": rig.vehicle.make,
+            "model": rig.vehicle.model,
+        },
+        "machines": machines_json,
+        "flat_components": flat_components,
+    }
+
+    text = json.dumps(doc, indent=2)
+    if out_file is None:
+        click.echo(text)
+    else:
+        Path(out_file).write_text(text + "\n")
+        click.echo(out_file)
+
+
 if __name__ == "__main__":
     main()
