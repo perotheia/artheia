@@ -109,6 +109,21 @@ class Layer(IsDataclass, Generic[T]):
                 squashed[name] = transform_set(var, other_var)
             elif isinstance(other_var, set):
                 squashed[name] = transform_base(other_var)
+            elif (
+                isinstance(var, list)
+                and isinstance(other_var, list)
+                and all(isinstance(x, Identifiable) for x in var)
+                and all(isinstance(x, Identifiable) for x in other_var)
+            ):
+                # Both lists carry Identifiable items — merge by
+                # identity (so a same-name item in `other` replaces
+                # its same-name in `var`, plus extras from `other`
+                # are appended). This is the legacy apply_ops list-
+                # union semantics, lifted into the structured DSL so
+                # `list[SwComponent]` fields inside an
+                # ApplicationManifest don't get wholesale-replaced
+                # when two layers both populate them.
+                squashed[name] = _merge_lists(var, other_var)
             else:
                 squashed[name] = merge_field(var, other_var)
 

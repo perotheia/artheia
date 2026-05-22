@@ -149,6 +149,111 @@ def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
 
 
 @main.command(
+    "gen-rig",
+    help="Bootstrap a vendor rig.py from a top-level .art composition. "
+    "Walks `prototype <Node> name on process <P>` lines, groups by "
+    "process, and emits SwComponent + Executable + Process factories "
+    "plus a SoftwareSpecification delta layer composed against "
+    "FcSoftware. Deployment-specific decisions (machine endpoint, "
+    "CPU affinity, vehicle identity) are emitted as TODO markers.",
+)
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--composition", "-c",
+    required=True,
+    help="Top-level composition name in the .art file (e.g. Demo3Way).",
+)
+@click.option(
+    "--out",
+    "out_path",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Where to write the rig.py.",
+)
+@click.option(
+    "--vehicle-name",
+    default=None,
+    help="VehicleIdentity.name (default: derive from --out parent dir, "
+    "e.g. demo/manifest/ → 'demo').",
+)
+@click.option(
+    "--machine-name",
+    default=None,
+    help="Default host machine name (default: '<vehicle>_host').",
+)
+@click.option(
+    "--bazel-package",
+    default=None,
+    help="Bazel package prefix for SwComponent targets (default: '//' "
+    "+ vehicle name).",
+)
+@click.option(
+    "--grpc-port",
+    type=int,
+    default=7700,
+    help="Default services/com gRPC port (default: 7700).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite an existing non-empty out path.",
+)
+def gen_rig(
+    art_file: str,
+    composition: str,
+    out_path: str,
+    vehicle_name: str | None,
+    machine_name: str | None,
+    bazel_package: str | None,
+    grpc_port: int,
+    force: bool,
+) -> None:
+    from .generators.rig import write_rig_py
+
+    out = Path(out_path)
+    # Default vehicle name from out_path's parent dir name (e.g.
+    # demo/manifest/rig.py → "demo").
+    if vehicle_name is None:
+        parents = list(out.parents)
+        # parents[0] is the directory containing rig.py (e.g. manifest/);
+        # parents[1] is the rig root (e.g. demo/).
+        if len(parents) >= 2 and parents[1].name:
+            vehicle_name = parents[1].name
+        else:
+            click.secho(
+                "error: cannot infer --vehicle-name from --out; pass it explicitly",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+
+    if machine_name is None:
+        machine_name = f"{vehicle_name}_host"
+
+    if bazel_package is None:
+        bazel_package = f"//{vehicle_name}"
+
+    try:
+        write_rig_py(
+            art_path=Path(art_file),
+            composition_name=composition,
+            out_path=out,
+            vehicle_name=vehicle_name,
+            machine_name=machine_name,
+            bazel_package=bazel_package,
+            grpc_port=grpc_port,
+            force=force,
+        )
+    except FileExistsError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+    except ValueError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+
+    click.echo(str(out))
+
+
+@main.command(
     "import-dbc",
     help="Import a DBC file. Emits package.art (message per CAN frame "
     "with scalar signal fields + companion enum decls for value tables) "
@@ -532,10 +637,68 @@ def gen_psp_registry(
     generate(list(can_namespaces), include_dir, out_dir)
 
 
+def _resolve_rig(target: str, rig_attr: str | None):
+    """Import ``target`` and return its Rig export, materializing
+    :class:`SoftwareSpecification` via :meth:`SoftwareSpecification.to_rig`
+    when needed.
+
+    Accepts:
+      - A direct :class:`Rig` export (legacy path).
+      - A :class:`SoftwareSpecification` export (new structured-DSL path) —
+        auto-converted via ``.to_rig()``.
+
+    Search order when ``rig_attr`` is None: prefer attributes whose name
+    ends in ``*Software`` over ``*Rig`` over ``Rig`` (structured-DSL
+    preferred since it's the going-forward shape).
+    """
+    import importlib
+
+    from artheia.manifest.rig import Rig, SoftwareSpecification
+
+    module = importlib.import_module(target)
+
+    if rig_attr is not None:
+        if not hasattr(module, rig_attr):
+            click.secho(
+                f"error: {target} has no attribute '{rig_attr}'",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        candidate = getattr(module, rig_attr)
+    else:
+        names = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), (Rig, SoftwareSpecification))
+        ]
+        # Prefer *Software (new shape) > *Rig > bare "Rig" — emit the
+        # structured-DSL export when present.
+        def _rank(name: str) -> tuple[int, str]:
+            if name.endswith("Software"):
+                return (0, name)
+            if name.endswith("Rig") and name != "Rig":
+                return (1, name)
+            return (2, name)
+
+        names.sort(key=_rank)
+        if not names:
+            click.secho(
+                f"error: {target} exports no Rig or SoftwareSpecification "
+                f"(pass --rig <name>)",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        candidate = getattr(module, names[0])
+
+    if isinstance(candidate, SoftwareSpecification):
+        return candidate.to_rig()
+    return candidate
+
+
 @main.command(
     "generate-manifest",
     help="Generate the full deploy manifest YAML for a vehicle rig. TARGET "
     "is a dotted import path to a module exporting a Rig "
+    "or SoftwareSpecification "
     "(e.g. vendor.vehicles.tornado.arsyscomp). Distinct from "
     "`executor emit`, which only emits the supervisor tree.",
 )
@@ -544,7 +707,8 @@ def gen_psp_registry(
     "--rig",
     "rig_attr",
     default=None,
-    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
+    help="Name of the Rig / SoftwareSpecification attribute. "
+    "Defaults to *Software, then *Rig, then Rig.",
 )
 @click.option(
     "--out",
@@ -560,39 +724,12 @@ def generate_manifest_cmd(
 ) -> None:
     """Run a vendor rig module and emit the full deploy manifest as YAML."""
     import dataclasses
-    import importlib
     from enum import Enum
     from ipaddress import IPv4Address, IPv6Address
 
     import yaml
 
-    from artheia.manifest.rig import Rig
-
-    module = importlib.import_module(target)
-
-    # Find the Rig export.
-    if rig_attr is not None:
-        if not hasattr(module, rig_attr):
-            click.secho(
-                f"error: {target} has no attribute '{rig_attr}'",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-        rig = getattr(module, rig_attr)
-    else:
-        candidates = [
-            n for n in vars(module)
-            if isinstance(getattr(module, n), Rig)
-        ]
-        # Prefer *Rig over plain Rig.
-        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
-        if not candidates:
-            click.secho(
-                f"error: {target} exports no Rig (pass --rig <name>)",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-        rig = getattr(module, candidates[0])
+    rig = _resolve_rig(target, rig_attr)
 
     # Recursive dataclass→dict that also unwraps Enums and IPvN to strings.
     # asdict() can't be used directly: it doesn't know how to render Enum or
@@ -645,34 +782,11 @@ def executor() -> None:
     help="Where to write the YAML. Defaults to stdout.",
 )
 def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
-    import dataclasses
-    import importlib
-
     import yaml
 
-    from artheia.manifest.rig import Rig
     from artheia.manifest.supervisor import build_supervisor_tree
 
-    module = importlib.import_module(target)
-
-    # Find the Rig export.
-    if rig_attr is not None:
-        rig = getattr(module, rig_attr)
-    else:
-        candidates = [
-            n for n in vars(module)
-            if isinstance(getattr(module, n), Rig)
-        ]
-        # Prefer *Rig over plain Rig.
-        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
-        if not candidates:
-            click.secho(
-                f"error: {target} exports no Rig (pass --rig <name>)",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-        rig = getattr(module, candidates[0])
-
+    rig = _resolve_rig(target, rig_attr)
     tree = build_supervisor_tree(rig)
 
     def _to_dict(node) -> dict:
@@ -741,35 +855,9 @@ def gui() -> None:
     help="Where to write the YAML. Defaults to stdout.",
 )
 def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
-    import importlib
-
     import yaml
 
-    from artheia.manifest.rig import Rig
-
-    module = importlib.import_module(target)
-
-    if rig_attr is not None:
-        if not hasattr(module, rig_attr):
-            click.secho(
-                f"error: {target} has no attribute '{rig_attr}'",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-        rig = getattr(module, rig_attr)
-    else:
-        candidates = [
-            n for n in vars(module)
-            if isinstance(getattr(module, n), Rig)
-        ]
-        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
-        if not candidates:
-            click.secho(
-                f"error: {target} exports no Rig (pass --rig <name>)",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-        rig = getattr(module, candidates[0])
+    rig = _resolve_rig(target, rig_attr)
 
     rows: list[dict] = []
     for m in rig.machines:

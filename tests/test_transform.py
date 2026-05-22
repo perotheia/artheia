@@ -411,6 +411,25 @@ def test_software_specification_squashes_machines_via_transforms():
     assert names == {"demo_host"}, f"expected {{demo_host}}, got {names}"
 
 
+def test_demo_software_applications_merge_correctly():
+    """``DemoSpecLayer`` Appends an ``ApplicationManifest`` with the
+    same identity as ``FcSoftware``'s — squash must MERGE the
+    components lists (FC + demo), not replace base with the layer's
+    smaller list. ``Layer.squash``'s ``list[Identifiable]`` branch
+    (added in phase 4) is what makes this work."""
+    from demo.manifest.rig import DemoSoftware
+    rig = DemoSoftware.to_rig()
+    assert len(rig.applications) == 1
+    app = rig.applications[0]
+    assert app.host_machine == "demo_host"
+    # 18 FC components from FcSoftware + 3 demo from DemoSpecLayer.
+    assert len(app.components) == 21
+    names = {c.name for c in app.components}
+    # Spot-check both sides of the merge.
+    assert {"core", "com", "phm"}.issubset(names)        # FC side
+    assert {"demo_p1", "demo_p2", "demo_p3"}.issubset(names)  # demo side
+
+
 def test_demo_software_to_rig_equivalent_to_legacy_demo_rig():
     """Round-trip: ``DemoSoftware.to_rig()`` (new path) produces a
     :class:`Rig` shape equivalent to the legacy ``DemoRig`` (built via
