@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "artheia"
 version = "0.0.1"
 description = "Host-side DSL for Adaptive-AUTOSAR-style nodes that talk to Classical AUTOSAR via the Theia CAN/FR gateway. Inspired by ARText."
-readme = "README.md"
+# README moved to workspace docs/artheia/README.md (out-of-tree of this
+# subrepo). The package's pip-visible description is the line above.
 requires-python = ">=3.10"
 authors = [{ name = "Artheia" }]
 license = { text = "MIT" }
