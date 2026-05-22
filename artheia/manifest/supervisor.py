@@ -143,11 +143,6 @@ class SupervisorSpec(Identifiable):
     # binary should look for libtombstone-emitted tombstone files when a
     # child dies from a fatal signal. Empty = no surfacing.
     tombstone_dir: str = ""
-    # Project extension (root-only convention): the TCP port the
-    # supervisor binary should bind for its GUI feed. 0 = use the
-    # supervisor binary's default (7610). Lifted from the host
-    # MachineManifest.supervisor_endpoint by build_supervisor_tree.
-    listen_port: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -413,19 +408,4 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
             "supervisor tree must have exactly one root"
         )
 
-    root = _materialize(roots[0])
-
-    # Lift the supervisor TCP listen port from the host machine.
-    # Convention: the application's host_machine names which Machine the
-    # supervisor binary will run on; that machine's
-    # ``supervisor_endpoint.port`` becomes the root supervisor's
-    # listen_port. Falls back silently if no machine matches.
-    host_name = ""
-    if rig.applications:
-        host_name = rig.applications[0].host_machine
-    for m in rig.machines:
-        if m.name == host_name and getattr(m, "supervisor_endpoint", None):
-            root.listen_port = m.supervisor_endpoint.port
-            break
-
-    return root
+    return _materialize(roots[0])

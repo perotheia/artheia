@@ -683,8 +683,6 @@ def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> No
             d["max_seconds"] = node.max_seconds
             if getattr(node, "tombstone_dir", ""):
                 d["tombstone_dir"] = node.tombstone_dir
-            if getattr(node, "listen_port", 0):
-                d["listen_port"] = node.listen_port
             d["children"] = [_to_dict(c) for c in node.children]
         else:
             d["start_cmd"] = list(node.start_cmd)
@@ -725,8 +723,8 @@ def gui() -> None:
     "emit",
     help="Emit the GUI manifest (machines.yaml) for a vehicle rig. "
     "TARGET is a dotted import path to a module exporting a Rig. "
-    "Output lists each Machine's supervisor endpoint — the GUI opens "
-    "one TCP connection per row.",
+    "Output lists each Machine's services/com gRPC endpoint — the GUI "
+    "opens one gRPC channel per row.",
 )
 @click.argument("target")
 @click.option(
@@ -775,13 +773,13 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
 
     rows: list[dict] = []
     for m in rig.machines:
-        ep = getattr(m, "supervisor_endpoint", None)
+        ep = getattr(m, "com_endpoint", None)
         if ep is None:
             continue
         rows.append({
             "name": m.name,
             "address": str(ep.address) if ep.address is not None else "127.0.0.1",
-            "port": int(ep.port) if ep.port else 7610,
+            "port": int(ep.port) if ep.port else 7700,
         })
 
     doc = {"machines": rows}
