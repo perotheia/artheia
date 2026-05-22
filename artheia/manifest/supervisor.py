@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Union
 
-from artheia.armanifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +143,54 @@ class SupervisorSpec(Identifiable):
     # binary should look for libtombstone-emitted tombstone files when a
     # child dies from a fatal signal. Empty = no surfacing.
     tombstone_dir: str = ""
+    # Project extension (root-only convention): the TCP port the
+    # supervisor binary should bind for its GUI feed. 0 = use the
+    # supervisor binary's default (7610). Lifted from the host
+    # MachineManifest.supervisor_endpoint by build_supervisor_tree.
+    listen_port: int = 0
+
+
+# ---------------------------------------------------------------------------
+# SupervisorNode — declarative supervisor entry on a Layer/Rig
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SupervisorNode(Identifiable):
+    """One supervisor declared in the manifest.
+
+    Distinct from :class:`SupervisorSpec`: a :class:`SupervisorNode`
+    references its children *by name*, leaving resolution (to either
+    another :class:`SupervisorNode` or a :class:`Process` from the rig's
+    execution_manifests) to :func:`build_supervisor_tree`.
+
+    The order of names in :attr:`children` is the spec order — meaningful
+    for ``rest_for_one`` (which kills children declared after the
+    failing one).
+
+    Root inference: the supervisor whose name appears in no other
+    supervisor's ``children`` list. Exactly one must qualify.
+
+    Special child names:
+
+    - ``"<auto:apps>"`` — at build time, expand into ``ChildSpec``
+      entries for every non-FC SwComponent on the rig (one
+      ``vendor/apps/<name>/daemon.sh`` per component). Provides the
+      "app_sup gets populated from SwComponents" behaviour without
+      restating every vendor app in the layer file.
+    """
+
+    name: str
+    strategy: RestartStrategy = RestartStrategy.ONE_FOR_ONE
+    max_restarts: int = 3
+    max_seconds: int = 5
+    children: list[str] = field(default_factory=list)
+    tombstone_dir: str = ""
+
+
+# Sentinel child-name that expands into "every non-FC SwComponent as a
+# leaf ChildSpec" at build time. Used in the canonical FcLayer for app_sup.
+AUTO_APPS_CHILDREN = "<auto:apps>"
 
 
 # ---------------------------------------------------------------------------
@@ -164,8 +212,8 @@ def _topo_sort_services(rig: "object") -> list[str]:
     # Lazy imports keep this module light if only the dataclass is wanted.
     from pathlib import Path
 
-    from artheia.armanifest.clusters import CLUSTERS
-    from artheia.armanifest.platform import PLATFORM_SERVICES_ROOT
+    from artheia.manifest.clusters import CLUSTERS
+    from artheia.manifest.platform import PLATFORM_SERVICES_ROOT
     from artheia.model.loader import parse_file
 
     fc_shorts = [fc.short for fc in CLUSTERS]
@@ -233,39 +281,42 @@ def _topo_sort_services(rig: "object") -> list[str]:
 def build_supervisor_tree(rig) -> SupervisorSpec:
     """Compose the executor's supervisor tree from a :class:`Rig`.
 
-    Layout:
+    Walks ``rig.supervisors`` (a list of :class:`SupervisorNode` carrying
+    children-by-name) and materializes a :class:`SupervisorSpec` tree
+    with concrete :class:`ChildSpec` leaves. Single root is inferred as
+    the supervisor named in no other supervisor's children list.
 
-    - Root supervisor ``root`` with :class:`RestartStrategy.ONE_FOR_ALL`
-      so a catastrophic services failure pulls the apps down too.
-    - First child: ``services`` supervisor with
-      :class:`RestartStrategy.REST_FOR_ONE` and FC children in
-      topological order (``core`` first). When ``core`` dies, everything
-      after it in the list restarts; localised crashes only affect
-      downstream FCs.
-    - Second child: ``apps`` supervisor with
-      :class:`RestartStrategy.ONE_FOR_ONE`. Each vendor SwComponent
-      is one child; a single app crash is local.
+    Child-name resolution:
 
-    Bash daemon paths follow convention:
-    - FC: ``services/<short>/daemon.sh``
-    - App: ``vendor/apps/<name>/daemon.sh`` (created by the
-      build/install pipeline; the executor expects them on disk).
+    - Match against another :class:`SupervisorNode` first.
+    - Otherwise match against :class:`Process` in
+      ``rig.execution_manifests`` — emits a leaf :class:`ChildSpec`
+      pointing at ``services/<name>/daemon.sh``.
+    - :data:`AUTO_APPS_CHILDREN` expands into one leaf per non-FC
+      :class:`SwComponent` on the rig (``vendor/apps/<name>/daemon.sh``).
+    - Unknown names are quietly dropped — a layer can :class:`Remove` a
+      Process while leaving a supervisor that listed it untouched.
+
+    Process-to-machine affinity (``shall_run_on`` / ``shall_not_run_on``)
+    is lifted onto each :class:`ChildSpec` for FC children.
     """
-    # Reorder FCs by dependency.
-    fc_order = _topo_sort_services(rig)
+    if not rig.supervisors:
+        raise ValueError(
+            "rig has no supervisors declared — populate Rig.supervisors "
+            "(or set add_supervisors on a Layer) before calling "
+            "build_supervisor_tree"
+        )
 
-    # FC short → its process_name (from the loaded ExecutionManifest /
-    # Process — that's the canonical handle).
+    # FC short → its Process. Process.name == FC short by convention.
     process_by_short = {p.name: p for p in rig.execution_manifests}
 
-    # Look up ProcessToMachineMapping by process name so we can lift
-    # core-affinity refs (shall_run_on / shall_not_run_on) onto each
-    # ChildSpec. The PTM fields are name refs into ProcessorCore in the
-    # full AUTOSAR model; until our machine manifests carry named cores
-    # the demo treats them as stringified integer IDs.
+    # ProcessToMachineMapping lookup for core-affinity refs.
     ptm_by_process: dict[str, "ProcessToMachineMapping"] = {  # noqa: F821
         m.process: m for m in getattr(rig, "process_to_machine_mappings", [])
     }
+
+    # Supervisor name → SupervisorNode.
+    sup_by_name: dict[str, SupervisorNode] = {s.name: s for s in rig.supervisors}
 
     def _ids_from_refs(refs: list[str]) -> list[int]:
         out = []
@@ -277,65 +328,104 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
                 continue
         return out
 
-    services_children: list[ChildSpec | SupervisorSpec] = []
-    for short in fc_order:
-        proc = process_by_short.get(short)
-        if proc is None:
-            continue  # FC removed by a layer (e.g. Macan drops fw/shwa)
+    def _fc_child(short: str) -> ChildSpec | None:
+        """Build a leaf ChildSpec for an FC (Process in execution_manifests)."""
+        if short not in process_by_short:
+            return None
         ptm = ptm_by_process.get(short)
-        services_children.append(
-            ChildSpec(
-                name=short,
-                start_cmd=[f"services/{short}/daemon.sh"],
-                restart=RestartType.PERMANENT,
-                shutdown=5000,
-                type=ChildType.WORKER,
-                modules=[f"services/{short}"],
-                shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
-                shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
-            )
+        return ChildSpec(
+            name=short,
+            start_cmd=[f"services/{short}/daemon.sh"],
+            restart=RestartType.PERMANENT,
+            shutdown=5000,
+            type=ChildType.WORKER,
+            modules=[f"services/{short}"],
+            shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
+            shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
         )
 
-    # Vendor apps: every SwComponent whose bazel target isn't under
-    # //services/ goes into the apps tree (those are the FC components).
-    apps_children: list[ChildSpec | SupervisorSpec] = []
-    for app in rig.applications:
-        for comp in app.components:
-            if comp.bazel_target.startswith("//services/"):
-                continue
-            apps_children.append(
-                ChildSpec(
-                    name=comp.name,
-                    start_cmd=[f"vendor/apps/{comp.name}/daemon.sh"],
-                    restart=RestartType.PERMANENT,
-                    shutdown=5000,
-                    type=ChildType.WORKER,
-                    modules=[comp.bazel_target],
+    def _auto_app_children() -> list[ChildSpec]:
+        """Expand AUTO_APPS_CHILDREN into one leaf per non-FC SwComponent."""
+        out: list[ChildSpec] = []
+        for app in rig.applications:
+            for comp in app.components:
+                if comp.bazel_target.startswith("//services/"):
+                    continue
+                out.append(
+                    ChildSpec(
+                        name=comp.name,
+                        start_cmd=[f"vendor/apps/{comp.name}/daemon.sh"],
+                        restart=RestartType.PERMANENT,
+                        shutdown=5000,
+                        type=ChildType.WORKER,
+                        modules=[comp.bazel_target],
+                    )
                 )
+        return out
+
+    # Detect cycles in the supervisor graph; bail early on detection.
+    visiting: set[str] = set()
+
+    def _materialize(name: str) -> SupervisorSpec:
+        if name in visiting:
+            raise ValueError(
+                f"supervisor cycle through '{name}'; check Rig.supervisors"
             )
+        visiting.add(name)
+        try:
+            node = sup_by_name[name]
+            kids: list[ChildSpec | SupervisorSpec] = []
+            for child_name in node.children:
+                if child_name == AUTO_APPS_CHILDREN:
+                    kids.extend(_auto_app_children())
+                    continue
+                if child_name in sup_by_name:
+                    kids.append(_materialize(child_name))
+                    continue
+                ch = _fc_child(child_name)
+                if ch is not None:
+                    kids.append(ch)
+                # else: quietly drop — name didn't resolve to either kind.
+            return SupervisorSpec(
+                name=node.name,
+                strategy=node.strategy,
+                max_restarts=node.max_restarts,
+                max_seconds=node.max_seconds,
+                children=kids,
+                tombstone_dir=node.tombstone_dir,
+            )
+        finally:
+            visiting.discard(name)
 
-    apps_sup = SupervisorSpec(
-        name="apps",
-        strategy=RestartStrategy.ONE_FOR_ONE,
-        max_restarts=3,
-        max_seconds=5,
-        children=apps_children,
-    )
+    # Root inference: the supervisor named in no other's children list.
+    all_named_children: set[str] = set()
+    for s in rig.supervisors:
+        all_named_children.update(s.children)
+    roots = [s.name for s in rig.supervisors if s.name not in all_named_children]
+    if len(roots) == 0:
+        raise ValueError(
+            "no supervisor root found — every declared supervisor is also "
+            "named as a child somewhere (cycle?)"
+        )
+    if len(roots) > 1:
+        raise ValueError(
+            f"multiple supervisor roots found ({sorted(roots)}); the "
+            "supervisor tree must have exactly one root"
+        )
 
-    # The "core fails → apps restart" requirement maps to rest_for_one
-    # semantics with a single supervisor: declare core first, then the
-    # other FCs in dependency order, and the apps sub-supervisor *last*.
-    # When core dies, every later child (including the apps subtree)
-    # restarts. When a tier-3 FC dies, only it + apps restart (still
-    # cheaper than blowing away core). When an individual app dies,
-    # the apps sub-supervisor handles it locally (one_for_one).
-    root_children: list[ChildSpec | SupervisorSpec] = services_children + [apps_sup]
+    root = _materialize(roots[0])
 
-    return SupervisorSpec(
-        name="root",
-        strategy=RestartStrategy.REST_FOR_ONE,
-        max_restarts=3,
-        max_seconds=5,
-        children=root_children,
-        tombstone_dir="/tmp/tombstones",
-    )
+    # Lift the supervisor TCP listen port from the host machine.
+    # Convention: the application's host_machine names which Machine the
+    # supervisor binary will run on; that machine's
+    # ``supervisor_endpoint.port`` becomes the root supervisor's
+    # listen_port. Falls back silently if no machine matches.
+    host_name = ""
+    if rig.applications:
+        host_name = rig.applications[0].host_machine
+    for m in rig.machines:
+        if m.name == host_name and getattr(m, "supervisor_endpoint", None):
+            root.listen_port = m.supervisor_endpoint.port
+            break
+
+    return root

@@ -1,372 +1,193 @@
+"""Layer-merge transforms for the AUTOSAR manifest model.
+
+Three needs justify a small piece of machinery here:
+
+1. *Membership* — add or remove a SwComponent / ServiceInstance from
+   the set the base layer ships.
+2. *Per-field overrides* — an upper layer wants to tweak one field of
+   one element without restating the whole thing. Example: the
+   platform's ``log`` ServiceInstance defaults to ``binding=TIPC``;
+   Macan overrides it to ``binding=INET`` plus an endpoint so logs
+   stream to a remote machine.
+3. *Defaulting* — fields left unset in a lower layer get filled by an
+   upper layer.
+
+Mosaic's ``Layer.squash`` machinery did the same job but came with a
+parallel ``Undefined``/``Default``/``Identifiable`` type system and a
+frozen-counterpart resolver. We don't need that ceremony — plain
+``@dataclass`` plus a class-level ``_identity_field`` is enough.
+
+The two primitives are :class:`Add` and :class:`Remove` (membership) and
+:class:`Override` (field-level merge keyed by identity). They compose
+via :func:`apply_layer` and the convenience wrapper
+:func:`merge_layers`.
+"""
+
 from __future__ import annotations
 
-import importlib
-from abc import abstractmethod
-from collections.abc import Callable
-from copy import copy
-from dataclasses import asdict, is_dataclass
-from typing import (
-    Any,
-    Generic,
-    Optional,
-    Protocol,
-    TypeVar,
-    Union,
-    no_type_check,
-    runtime_checkable,
-)
+import dataclasses
+from dataclasses import dataclass
+from typing import Any, Iterable, TypeVar
 
 T = TypeVar("T")
 
 
-class IsDataclass(Protocol):
-    __dataclass_fields__: dict[str, Any]
+class Identifiable:
+    """Mixin: an element with a stable identity key for layer merging.
 
+    Subclasses set the class-level ``_identity_field`` to the name of
+    the dataclass field that uniquely identifies the element within its
+    containing list. Default: ``"name"``.
+    """
 
-@runtime_checkable
-class IsProtobuf(Protocol):
-    @abstractmethod
-    def SerializeToString(self) -> bytes:
-        raise NotImplementedError()  # pragma: no cover
-
-    @abstractmethod
-    def IsInitialized(self) -> bool:
-        raise NotImplementedError()  # pragma: no cover
-
-
-class Layer(IsDataclass, Generic[T]):
-    def squash(self, other: Any) -> Any:
-        if isinstance(other, Undefined):
-            return self
-        if isinstance(other, Defer):
-            return other
-        # Support for squashing lists. If other is a list of the same type as self, squash each element in order
-        if isinstance(other, list) and all(
-            isinstance(item, type(self)) for item in other
-        ):
-            if len(other) == 0:
-                return self
-            else:
-                return self.squash(other[0]).squash(other[1:])
-        if not isinstance(other, type(self)):
-            return other
-
-        squashed: dict[str, Any] = {}
-        for name in self.__dataclass_fields__.keys():
-            var = getattr(self, name)
-            other_var = getattr(other, name)
-
-            if isinstance(var, Layer):
-                squashed[name] = var.squash(other_var)
-            elif isinstance(var, set):
-                squashed[name] = transform_set(var, other_var)
-            elif isinstance(other_var, set):
-                squashed[name] = transform_base(other_var)
-            else:
-                squashed[name] = merge_field(var, other_var)
-
-        return self.__class__(**squashed)
-
-    def _simplify_set(self, value: set[T] | frozenset[T], context: str) -> frozenset[T]:
-        elements = set()
-
-        for i, element in enumerate(value):
-            if isinstance(element, Layer) and not isinstance(element, Identifiable):
-                raise TypeError(
-                    f"Layers in set {context}({i}) of type {type(element).__name__} must inherit from Identifiable"
-                )
-            elements.add(self._simplify_element(element, f"{context}({i})"))
-
-        return frozenset(elements)
-
-    def _simplify_element(self, value: Any, context: str) -> Any:
-        if isinstance(value, Default):
-            return value.default
-        if isinstance(
-            value,
-            (
-                Undefined,
-                Defer,
-            ),
-        ):
-            raise ValueError(f"{type(value).__name__} value in field {context}")
-        if isinstance(value, Layer):
-            return value.simplify(context)
-        if isinstance(value, set) or isinstance(value, frozenset):
-            return self._simplify_set(value, context)
-
-        return value
-
-    def simplify(self, context: Optional[str] = None) -> T:
-        if context is None:
-            context = "root"
-
-        fields = asdict(self)  # type: ignore[call-overload]
-        resolved_field = {}
-        for field_name in fields.keys():
-            value = getattr(self, field_name)
-
-            field_context = f"{context}.{field_name}"
-            resolved_field[field_name] = self._simplify_element(value, field_context)
-
-        try:
-            return self._resolver(**resolved_field)
-        except TypeError as e:
-            raise ValueError(
-                f"Error resolving {context}: {e} when simplifying with {self._resolver}"
-            )
+    _identity_field: str = "name"
 
     @property
-    def _resolver(self) -> type[T]:
-        raise NotImplementedError()
+    def _identity(self) -> Any:
+        return getattr(self, self._identity_field)
 
 
-class Identifiable(Layer, Generic[T]):
-    @property
-    def _set_identify(self) -> int:
-        raise NotImplementedError()
+# ---------------------------------------------------------------------------
+# Operations
+# ---------------------------------------------------------------------------
 
 
-def type_tree_str(t: IsDataclass, context: str = "root", indent: int = 0) -> str:
-    fields = asdict(t)  # type: ignore[call-overload]
-    indent_str = "  " * indent
-    output_str = f"{indent_str}{context}: {type(t).__name__}\n"
+@dataclass(frozen=True)
+class Add:
+    """Add an element to the target list.
 
-    for field_name in fields.keys():
-        field_value = getattr(t, field_name)
-        output_str += handle_field(field_value, field_name, indent + 1)
+    If an element with the same identity already exists, it's *overridden*
+    rather than duplicated (the new element wins field-wise; unset fields
+    fall back to the old element via :class:`Override` semantics).
+    """
 
-    return output_str
-
-
-def handle_field(field_value: Any, field_name: str, indent: int = 0) -> str:
-    indent_str = "  " * indent
-    output_str = ""
-
-    # Validate the field
-    if isinstance(field_value, Undefined):
-        output_str += f"{indent_str}{field_name}: {str(field_value)}\n"
-    elif isinstance(field_value, Defer):
-        output_str += f"{indent_str}{field_name}: Defer\n"
-    elif isinstance(field_value, Layer) or is_dataclass(field_value):
-        output_str += type_tree_str(field_value, field_name, indent)
-    elif isinstance(field_value, set) or isinstance(field_value, frozenset):
-        output_str += f"{indent_str}{field_name}: set[{len(field_value)}]\n"
-        for i, element in enumerate(field_value):
-            if isinstance(element, Layer) or is_dataclass(element):
-                output_str += type_tree_str(element, f"{field_name}({i})", indent + 1)
-            else:
-                output_str += handle_field(element, f"[{i}]", indent + 1)
-    else:
-        output_str += f"{indent_str}{field_name}: {type(field_value).__name__}\n"
-    return output_str
+    value: Any
 
 
-class NoDefault:
-    pass
+@dataclass(frozen=True)
+class Remove:
+    """Remove the element with this identity from the target list."""
+
+    identity: Any
 
 
-class Undefined(Generic[T]):
-    def __eq__(self, o: object) -> bool:
-        if isinstance(o, Undefined):
-            return True
-        return False
+@dataclass(frozen=True)
+class Override:
+    """Patch field(s) of an existing element identified by ``identity``.
 
-    def __str__(self) -> str:
-        return "Undefined()"
+    Only the fields explicitly set in ``patch`` overwrite the base;
+    everything else stays. If no element with ``identity`` exists, the
+    override is silently dropped — use :class:`Add` for that case.
+    """
 
-    def __repr__(self) -> str:
-        return "Undefined()"
-
-
-class Default(Undefined[T]):
-    def __init__(self, default: T) -> None:
-        super().__init__()
-        self._default = default
-
-    def __str__(self) -> str:
-        return f"Default({str(self._default)})"
-
-    def __repr__(self) -> str:
-        return f"Default({repr(self._default)})"
-
-    def __eq__(self, o: object) -> bool:
-        if isinstance(o, Default):
-            return bool(self._default == o._default)
-        return False
-
-    @property
-    def default(self) -> T:
-        return self._default
+    identity: Any
+    patch: dict[str, Any]
 
 
-class SetTransform(Generic[T]):
-    @abstractmethod
-    def apply(self, current: set[T]) -> set[T]:
-        raise NotImplementedError()
+Op = Add | Remove | Override
 
 
-class Append(SetTransform, Generic[T]):
-    def __init__(self, value: T):
-        self.value = value
-
-    def apply(self, current: set[T]) -> set[T]:
-        # Update
-        if isinstance(self.value, Identifiable):
-            new_elements = []
-
-            added = False
-            for e in current:
-                assert isinstance(e, Identifiable)
-                if e._set_identify == self.value._set_identify:
-                    assert isinstance(e, Layer)
-                    added = True
-                    e = e.squash(self.value)
-                new_elements.append(e)
-            if not added:
-                new_elements.append(self.value)  # type: ignore
-
-            return set(new_elements)
-
-        # Add new element
-        return set(list(current) + [self.value])
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
 
 
-class Remove(SetTransform, Generic[T]):
-    def __init__(self, value: T):
-        self.value = value
-
-    def apply(self, current: set[T]) -> set[T]:
-        if isinstance(self.value, Identifiable):
-            new_elements = []
-            for e in current:
-                assert isinstance(e, Identifiable)
-                if e._set_identify != self.value._set_identify:
-                    new_elements.append(e)
-            return set(new_elements)  # type: ignore
-
-        return {c for c in current if c != self.value}
+def _identity_of(elem: Any) -> Any:
+    """Return the identity of ``elem`` if it's :class:`Identifiable`, else
+    fall back to a ``name`` attribute, else ``id(elem)``."""
+    if isinstance(elem, Identifiable):
+        return elem._identity
+    return getattr(elem, "name", id(elem))
 
 
-SetTransformTypes = Union[Append[Identifiable], Remove[Identifiable]]
-SimpleSetTransformTypes = Union[Append[T], Remove[T]]
+def _merge_fields(base: T, patch: dict[str, Any]) -> T:
+    """Return a copy of ``base`` with ``patch`` keys overwritten."""
+    if not dataclasses.is_dataclass(base):
+        raise TypeError(f"cannot merge fields onto non-dataclass {type(base).__name__}")
+    return dataclasses.replace(base, **patch)
 
 
-def transform_base(
-    base: set[T] | set[SetTransformTypes] | Undefined[set[T]],
-) -> set[T]:
-    if isinstance(base, Undefined):
-        return set()
+def _merge_element(base: T, new: T) -> T:
+    """Field-wise merge of two same-identity dataclass elements.
 
-    if not any(isinstance(v, SetTransform) for v in base):
-        return base  # type: ignore
+    Fields explicitly set on ``new`` (i.e. not equal to their default)
+    win; everything else stays from ``base``. For lists we union by
+    identity, recursing into elements when they share an identity.
 
-    # Don't allow mixed logic
-    assert all(
-        isinstance(v, SetTransform) for v in base
-    ), "Cannot mix LayerTransform and non-LayerTransform"
+    This is the bulk of :class:`Add` for an existing element and of
+    :class:`Override` when the caller passed a whole replacement dataclass.
+    """
+    if not dataclasses.is_dataclass(base) or not dataclasses.is_dataclass(new):
+        return new
+    if type(base) is not type(new):
+        return new
 
-    new_list: set[T] = set()
-    for t in base:
-        assert isinstance(t, SetTransform)
-        new_list = t.apply(new_list)
-    return new_list
+    patch: dict[str, Any] = {}
+    for f in dataclasses.fields(new):
+        base_v = getattr(base, f.name)
+        new_v = getattr(new, f.name)
 
+        if isinstance(new_v, list) and isinstance(base_v, list):
+            patch[f.name] = _merge_lists(base_v, new_v)
+            continue
 
-def transform_set(
-    base: set[T] | set[SetTransformTypes] | Undefined[set[T]],
-    other: set[T] | set[SetTransformTypes] | Undefined[set[T]],
-) -> set[T] | Undefined[set[T]]:
-    base_set = transform_base(base)
+        # If the new value equals the field's default, treat it as "not set"
+        # and keep the base value. Otherwise the new wins.
+        default = _field_default(f)
+        if new_v == default and base_v != default:
+            continue
+        patch[f.name] = new_v
 
-    if isinstance(other, Undefined):
-        return base_set
-
-    # Other is a simple set
-    if not any(isinstance(v, SetTransform) for v in other):
-        return other  # type: ignore
-
-    assert all(
-        isinstance(v, SetTransform) for v in other
-    ), "Cannot mix LayerTransform and non-LayerTransform"
-
-    new_list: set[T] = copy(base_set)
-    for t in other:
-        assert isinstance(t, SetTransform)
-        new_list = t.apply(new_list)
-
-    return new_list
+    return dataclasses.replace(base, **patch)
 
 
-def merge_field(base: T | Undefined, layer: T | Undefined) -> T | Undefined:
-    if not isinstance(layer, Undefined):
-        return layer
-
-    if not isinstance(base, Undefined):
-        return base
-
-    if isinstance(layer, Default):
-        return layer
-
-    return base
+def _field_default(f: dataclasses.Field) -> Any:
+    if f.default is not dataclasses.MISSING:
+        return f.default
+    if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
+        return f.default_factory()  # type: ignore[misc]
+    return dataclasses.MISSING
 
 
-CONTEXT_T = TypeVar("CONTEXT_T")
-
-
-class Defer(Generic[CONTEXT_T, T]):
-    def __init__(self, f: Callable[[CONTEXT_T], T]):
-        self._f = f
-
-    def __call__(self, ctx: CONTEXT_T) -> T:
-        return self._f(ctx)
-
-
-def hash_with_protos(proto: IsDataclass, proto_fields: list[str]) -> int:
-    fields = asdict(proto)  # type: ignore[call-overload]
-
-    hash_values = [
-        getattr(proto, field) for field in fields if field not in proto_fields
-    ]
-
-    proto_values: list[Optional[str]] = []
-    for field in proto_fields:
-        value = getattr(proto, field)
-        if value is None:
-            proto_values.append(None)
+def _merge_lists(base: list, new: list) -> list:
+    """Union two lists by identity; same-identity elements get merged."""
+    out: list = list(base)
+    index = {_identity_of(e): i for i, e in enumerate(out)}
+    for elem in new:
+        ident = _identity_of(elem)
+        if ident in index:
+            out[index[ident]] = _merge_element(out[index[ident]], elem)
         else:
-            proto_values.append(value.SerializeToString())
-
-    return hash(
-        (
-            *hash_values,
-            *proto_values,
-        )
-    )
+            index[ident] = len(out)
+            out.append(elem)
+    return out
 
 
-# TODO: Fix this at some point
-@no_type_check
-def set_squash(
-    base: set[T] | set[SetTransformTypes] | Undefined[set[T]],
-    other: set[T] | set[SetTransformTypes] | Undefined[set[T]],
-) -> set[T] | Undefined[set[T]]:
-    base_set = transform_base(base)
+def apply_ops(target_list: list, ops: Iterable[Op]) -> list:
+    """Apply a sequence of Add / Remove / Override ops to a list."""
+    out: list = list(target_list)
+    index = {_identity_of(e): i for i, e in enumerate(out)}
 
-    if isinstance(other, Undefined):
-        return base_set
+    for op in ops:
+        if isinstance(op, Add):
+            ident = _identity_of(op.value)
+            if ident in index:
+                out[index[ident]] = _merge_element(out[index[ident]], op.value)
+            else:
+                index[ident] = len(out)
+                out.append(op.value)
+        elif isinstance(op, Remove):
+            i = index.pop(op.identity, None)
+            if i is not None:
+                out.pop(i)
+                # rebuild the index — the cost is fine for layer-merge sizes
+                index = {_identity_of(e): j for j, e in enumerate(out)}
+        elif isinstance(op, Override):
+            i = index.get(op.identity)
+            if i is None:
+                continue
+            out[i] = _merge_fields(out[i], op.patch)
+        else:  # pragma: no cover
+            raise TypeError(f"unknown op {type(op).__name__}")
 
-    # Both simple sets
-    if not any(isinstance(v, SetTransform) for v in base_set) and not any(
-        isinstance(v, SetTransform) for v in other
-    ):
-        return base_set | other
-
-    return transform_set(base, other)
-
-
-def import_config(module_name: str, symbol: str) -> object:
-    # Import the module dynamically
-    config_module = importlib.import_module(module_name)
-    # Retrieve the specified symbols from the module
-    return getattr(config_module, symbol)
+    return out

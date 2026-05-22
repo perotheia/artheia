@@ -534,27 +534,17 @@ def gen_psp_registry(
 
 @main.command(
     "generate-manifest",
-    help="Generate the deploy manifest YAML for a vehicle syscomp module. "
-    "TARGET is either a dotted import path "
-    "(e.g. artheia.vehicles.tornado.syscomp) or a path to a .py file. "
-    "The module must export a SoftwareSpecification (default name: "
-    "TornadoSoftware / <Vehicle>Software / Software) and optionally a "
-    "VehicleInstance.",
+    help="Generate the full deploy manifest YAML for a vehicle rig. TARGET "
+    "is a dotted import path to a module exporting a Rig "
+    "(e.g. vendor.vehicles.tornado.arsyscomp). Distinct from "
+    "`executor emit`, which only emits the supervisor tree.",
 )
 @click.argument("target")
 @click.option(
-    "--software",
-    "software_attr",
+    "--rig",
+    "rig_attr",
     default=None,
-    help="Name of the SoftwareSpecification attribute in the module. "
-    "If omitted, the CLI looks for *Software, then Software.",
-)
-@click.option(
-    "--vehicle",
-    "vehicle_attr",
-    default=None,
-    help="Name of the VehicleInstance attribute. If omitted, the CLI looks "
-    "for *Vehicle, then Vehicle.",
+    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
 )
 @click.option(
     "--out",
@@ -565,82 +555,63 @@ def gen_psp_registry(
 )
 def generate_manifest_cmd(
     target: str,
-    software_attr: str | None,
-    vehicle_attr: str | None,
+    rig_attr: str | None,
     out_file: str | None,
 ) -> None:
-    """Run a vehicle syscomp file and emit its deploy manifest as YAML."""
+    """Run a vendor rig module and emit the full deploy manifest as YAML."""
+    import dataclasses
     import importlib
-    import importlib.util
+    from enum import Enum
+    from ipaddress import IPv4Address, IPv6Address
 
-    from artheia.manifest import SoftwareSpecification, VehicleInstance
-    from artheia.manifest.serialize import to_yaml
+    import yaml
 
-    # Load by file path or dotted module name.
-    if target.endswith(".py") or "/" in target:
-        spec = importlib.util.spec_from_file_location("_artheia_syscomp", target)
-        if spec is None or spec.loader is None:
-            click.secho(f"error: cannot load {target}", fg="red", err=True)
+    from artheia.manifest.rig import Rig
+
+    module = importlib.import_module(target)
+
+    # Find the Rig export.
+    if rig_attr is not None:
+        if not hasattr(module, rig_attr):
+            click.secho(
+                f"error: {target} has no attribute '{rig_attr}'",
+                fg="red", err=True,
+            )
             sys.exit(2)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        rig = getattr(module, rig_attr)
     else:
-        module = importlib.import_module(target)
-
-    # Resolve the SoftwareSpecification attribute.
-    # Prefer candidates *defined in* this module (not re-imported), and among
-    # those prefer the one whose name's prefix matches the module's last
-    # segment — so artheia.vehicles.tornado.syscomp picks TornadoSoftware
-    # over a re-imported MacanSoftware.
-    module_tag = module.__name__.rsplit(".", 1)[-1].lower()
-    parent_tag = module.__name__.split(".")[-2].lower() if "." in module.__name__ else ""
-
-    def _pick(attr_hint: str | None, kind: type, suffix: str, fallback: str) -> object | None:
-        if attr_hint is not None:
-            if not hasattr(module, attr_hint):
-                click.secho(
-                    f"error: {target} has no attribute '{attr_hint}'",
-                    fg="red",
-                    err=True,
-                )
-                sys.exit(2)
-            return getattr(module, attr_hint)
         candidates = [
             n for n in vars(module)
-            if isinstance(getattr(module, n), kind) and n.endswith(suffix)
+            if isinstance(getattr(module, n), Rig)
         ]
+        # Prefer *Rig over plain Rig.
+        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
         if not candidates:
-            return getattr(module, fallback, None)
+            click.secho(
+                f"error: {target} exports no Rig (pass --rig <name>)",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        rig = getattr(module, candidates[0])
 
-        def _score(name: str) -> tuple[int, str]:
-            prefix = name[: -len(suffix)].lower()
-            # higher score is better; sort descending later
-            if prefix == module_tag:
-                priority = 3
-            elif prefix == parent_tag:
-                priority = 2
-            elif prefix:
-                priority = 1
-            else:
-                priority = 0
-            return (priority, name)
+    # Recursive dataclass→dict that also unwraps Enums and IPvN to strings.
+    # asdict() can't be used directly: it doesn't know how to render Enum or
+    # IPv4Address into YAML-safe scalars.
+    def _serialize(v):
+        if dataclasses.is_dataclass(v) and not isinstance(v, type):
+            return {f.name: _serialize(getattr(v, f.name)) for f in dataclasses.fields(v)}
+        if isinstance(v, Enum):
+            return v.value
+        if isinstance(v, (IPv4Address, IPv6Address)):
+            return str(v)
+        if isinstance(v, (list, tuple)):
+            return [_serialize(x) for x in v]
+        if isinstance(v, dict):
+            return {k: _serialize(x) for k, x in v.items()}
+        return v
 
-        candidates.sort(key=_score, reverse=True)
-        return getattr(module, candidates[0])
-
-    software = _pick(software_attr, SoftwareSpecification, "Software", "Software")
-    if software is None:
-        click.secho(
-            "error: no SoftwareSpecification found (looked for *Software / Software). "
-            "Pass --software <name> to disambiguate.",
-            fg="red",
-            err=True,
-        )
-        sys.exit(2)
-
-    vehicle = _pick(vehicle_attr, VehicleInstance, "Vehicle", "Vehicle")
-
-    yaml_text = to_yaml(software, vehicle=vehicle)  # type: ignore[arg-type]
+    doc = _serialize(rig)
+    yaml_text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
     if out_file is None:
         click.echo(yaml_text, nl=False)
     else:
@@ -679,8 +650,8 @@ def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> No
 
     import yaml
 
-    from artheia.armanifest.rig import Rig
-    from artheia.armanifest.supervisor import build_supervisor_tree
+    from artheia.manifest.rig import Rig
+    from artheia.manifest.supervisor import build_supervisor_tree
 
     module = importlib.import_module(target)
 
@@ -712,6 +683,8 @@ def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> No
             d["max_seconds"] = node.max_seconds
             if getattr(node, "tombstone_dir", ""):
                 d["tombstone_dir"] = node.tombstone_dir
+            if getattr(node, "listen_port", 0):
+                d["listen_port"] = node.listen_port
             d["children"] = [_to_dict(c) for c in node.children]
         else:
             d["start_cmd"] = list(node.start_cmd)
@@ -735,6 +708,88 @@ def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> No
         click.echo(out, nl=False)
     else:
         Path(out_file).write_text(out)
+        click.echo(out_file)
+
+
+# -----------------------------------------------------------------------------
+# gui — GUI-side manifests (small endpoint list, one machine per row)
+# -----------------------------------------------------------------------------
+
+
+@main.group("gui", help="Supervisor-GUI manifest commands.")
+def gui() -> None:
+    pass
+
+
+@gui.command(
+    "emit",
+    help="Emit the GUI manifest (machines.yaml) for a vehicle rig. "
+    "TARGET is a dotted import path to a module exporting a Rig. "
+    "Output lists each Machine's supervisor endpoint — the GUI opens "
+    "one TCP connection per row.",
+)
+@click.argument("target")
+@click.option(
+    "--rig",
+    "rig_attr",
+    default=None,
+    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
+)
+@click.option(
+    "--out",
+    "out_file",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Where to write the YAML. Defaults to stdout.",
+)
+def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
+    import importlib
+
+    import yaml
+
+    from artheia.manifest.rig import Rig
+
+    module = importlib.import_module(target)
+
+    if rig_attr is not None:
+        if not hasattr(module, rig_attr):
+            click.secho(
+                f"error: {target} has no attribute '{rig_attr}'",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        rig = getattr(module, rig_attr)
+    else:
+        candidates = [
+            n for n in vars(module)
+            if isinstance(getattr(module, n), Rig)
+        ]
+        candidates.sort(key=lambda n: (not n.endswith("Rig"), n))
+        if not candidates:
+            click.secho(
+                f"error: {target} exports no Rig (pass --rig <name>)",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+        rig = getattr(module, candidates[0])
+
+    rows: list[dict] = []
+    for m in rig.machines:
+        ep = getattr(m, "supervisor_endpoint", None)
+        if ep is None:
+            continue
+        rows.append({
+            "name": m.name,
+            "address": str(ep.address) if ep.address is not None else "127.0.0.1",
+            "port": int(ep.port) if ep.port else 7610,
+        })
+
+    doc = {"machines": rows}
+    text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+    if out_file is None:
+        click.echo(text, nl=False)
+    else:
+        Path(out_file).write_text(text)
         click.echo(out_file)
 
 

@@ -14,10 +14,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from artheia.armanifest.application import ApplicationManifest
-from artheia.armanifest.execution import ExecutionManifest
-from artheia.armanifest.machine import MachineManifest, ProcessToMachineMapping
-from artheia.armanifest.service import ServiceManifest
+from artheia.manifest.application import ApplicationManifest
+from artheia.manifest.execution import ExecutionManifest
+from artheia.manifest.machine import MachineManifest, ProcessToMachineMapping
+from artheia.manifest.service import ServiceManifest
+from artheia.manifest.supervisor import SupervisorNode
 
 
 @dataclass
@@ -55,3 +56,9 @@ class Rig:
     process_to_machine_mappings: list[ProcessToMachineMapping] = field(
         default_factory=list
     )
+    # OTP-style supervisor tree, declared by name. Each SupervisorNode
+    # names its children (other SupervisorNodes or Process names from
+    # execution_manifests). build_supervisor_tree(rig) walks this list
+    # to produce the materialized SupervisorSpec tree consumed by the
+    # supervisor binary.
+    supervisors: list[SupervisorNode] = field(default_factory=list)

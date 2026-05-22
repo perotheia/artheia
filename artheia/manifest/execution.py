@@ -18,7 +18,7 @@ where they conflict with verbose AUTOSAR naming):
   - :attr:`executionDependency` — list of :class:`ExecutionDependency`.
   - :attr:`resourceConsumption` — :class:`ResourceConsumption`.
   - :attr:`resourceGroup` — ref to ``ResourceGroup`` (defined in
-    :mod:`armanifest.machine`).
+    :mod:`artheia.manifest.machine`).
 - :class:`StartupConfig` — reusable startup config.
 - :class:`ExecutionDependency` — launch ordering edge.
 - :class:`ResourceConsumption` / :class:`MemoryUsage`.
@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from artheia.armanifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ class TerminationBehaviorEnum(str, Enum):
     PROCESS_IS_SELF_TERMINATING = "processIsSelfTerminating"
 
 
-# Defined fully in :mod:`armanifest.machine` (the spec aggregates it via
+# Defined fully in :mod:`artheia.manifest.machine` (the spec aggregates it via
 # both ``Machine.defaultApplicationTimeout`` and
 # ``StartupConfig.timeout``). Forward-declared here so this file stays
 # self-contained for typing purposes.
@@ -251,7 +251,7 @@ class Process(Identifiable):
 ExecutionManifest = Process
 
 
-# Compact compatibility wrapper used by armanifest.loader and vendor
+# Compact compatibility wrapper used by artheia.manifest.loader and vendor
 # layer files. Constructs the equivalent :class:`StartupConfig` —
 # callers that previously built `ExecutableBinding(timing=…, resources=…)`
 # can switch field-by-field as they migrate.

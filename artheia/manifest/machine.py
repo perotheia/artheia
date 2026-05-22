@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from ipaddress import IPv4Address
 
-from artheia.armanifest.execution import EnterExitTimeout, TagWithOptionalValue
-from artheia.armanifest.transform import Identifiable
+from artheia.manifest.execution import EnterExitTimeout, TagWithOptionalValue
+from artheia.manifest.transform import Identifiable
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +205,19 @@ class Machine(Identifiable):
     # Project-local fields below this line.
     hardware: HardwareResource = field(default_factory=HardwareResource)
     network_interfaces: list[NetworkInterface] = field(default_factory=list)
+    # Project-local: the supervisor binary on this machine listens here.
+    # The supervisor is the entry point a UI / orchestrator binds to; it
+    # is NOT itself a supervised Executable (it sits one layer above the
+    # FCs and apps it manages). Several machines may be deployed on the
+    # same physical host — they distinguish themselves by port.
+    # Default IPv4Address("127.0.0.1") + port 7610 fits the single-machine
+    # demo; multi-machine rigs override.
+    supervisor_endpoint: IpEndpoint = field(
+        default_factory=lambda: IpEndpoint(
+            address=IPv4Address("127.0.0.1"),
+            port=7610,
+        )
+    )
 
 
 # Legacy alias — keep existing callers compiling.

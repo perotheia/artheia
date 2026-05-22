@@ -27,15 +27,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from artheia.armanifest.clusters import CLUSTERS, BY_SHORT, FunctionalCluster
-from artheia.armanifest.execution import (
+from artheia.manifest.clusters import CLUSTERS, BY_SHORT, FunctionalCluster
+from artheia.manifest.execution import (
     ExecutionManifest,
     Process,
     SchedulingPolicy,
     StartupConfig,
     StateDependentStartupConfig,
 )
-from artheia.armanifest.service import (
+from artheia.manifest.service import (
     ClientServerOperation,
     DataType,
     ServiceInstance,

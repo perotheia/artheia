@@ -5,7 +5,7 @@ Chapter 3 is "Application Design" — it specifies the classes an
 application contributes: :class:`Executable` (§3.18),
 :class:`SwComponentType` and its subclasses (§3.4, §3.5),
 :class:`ProcessDesign` (§3.21), the :class:`ServiceInterface` family
-(§3.4; defined in :mod:`armanifest.service`), and data types (§3.3).
+(§3.4; defined in :mod:`artheia.manifest.service`), and data types (§3.3).
 
 We keep :class:`ApplicationManifest` as a project-local umbrella that
 bundles these per logical application. The :class:`SwComponent`
@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from artheia.armanifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ class Executable(Identifiable):
 class ProcessDesign(Identifiable):
     """Design-time pre-allocation of an :class:`Executable` to a Process (§3.21).
 
-    Stands in for a :class:`armanifest.execution.Process` before the
+    Stands in for a :class:`artheia.manifest.execution.Process` before the
     Process itself exists. Used by the deployment-side mapping
     machinery (``ProcessToMachineMapping``, etc.) to plan placement
     without committing to a concrete deployment.
@@ -202,7 +202,7 @@ class ProcessDesign(Identifiable):
 class StartupConfig:
     """Compatibility shim — application-level startup config.
 
-    Use :class:`armanifest.execution.StartupConfig` for the spec-aligned
+    Use :class:`artheia.manifest.execution.StartupConfig` for the spec-aligned
     deployment-side definition.
     """
 
@@ -226,7 +226,7 @@ class ApplicationManifest(Identifiable):
 
     Cross-references:
 
-    - :attr:`host_machine` — name of the :class:`armanifest.machine.Machine`
+    - :attr:`host_machine` — name of the :class:`artheia.manifest.machine.Machine`
       this application lands on. (Strictly an AUTOSAR
       ``ProcessToMachineMapping`` concern; we keep it here for
       convenience.)

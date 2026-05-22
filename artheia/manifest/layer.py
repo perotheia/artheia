@@ -16,12 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Iterable
 
-from artheia.armanifest.application import ApplicationManifest, SwComponent
-from artheia.armanifest.execution import ExecutionManifest
-from artheia.armanifest.machine import MachineManifest, ProcessToMachineMapping
-from artheia.armanifest.rig import Rig, VehicleIdentity
-from artheia.armanifest.service import ServiceInstance, ServiceManifest
-from artheia.armanifest.transform import Add, Op, Override, Remove, apply_ops
+from artheia.manifest.application import ApplicationManifest, SwComponent
+from artheia.manifest.execution import ExecutionManifest
+from artheia.manifest.machine import MachineManifest, ProcessToMachineMapping
+from artheia.manifest.rig import Rig, VehicleIdentity
+from artheia.manifest.service import ServiceInstance, ServiceManifest
+from artheia.manifest.supervisor import SupervisorNode
+from artheia.manifest.transform import Add, Op, Override, Remove, apply_ops
 
 
 @dataclass
@@ -74,6 +75,13 @@ class Layer:
     )
     remove_process_mappings: list[str] = field(default_factory=list)
     override_process_mappings: list[Override] = field(default_factory=list)
+
+    # Applies to Rig.supervisors — declarative supervisor tree.
+    # Upper layers can :class:`Override` a SupervisorNode's strategy or
+    # children list by name, e.g. to splice a vendor sub-supervisor in.
+    add_supervisors: list[SupervisorNode] = field(default_factory=list)
+    remove_supervisors: list[str] = field(default_factory=list)
+    override_supervisors: list[Override] = field(default_factory=list)
 
     # Optional vehicle-identity patch. None = leave the base identity
     # untouched; otherwise this VehicleIdentity replaces the rig's.
@@ -133,6 +141,15 @@ class Layer:
         ops.extend(self.override_process_mappings)
         return ops
 
+    def supervisor_ops(self) -> list[Op]:
+        ops: list[Op] = []
+        for s in self.add_supervisors:
+            ops.append(Add(s))
+        for name in self.remove_supervisors:
+            ops.append(Remove(name))
+        ops.extend(self.override_supervisors)
+        return ops
+
 
 def apply_layer(rig: Rig, layer: Layer) -> Rig:
     """Apply one layer to a rig, returning a new rig."""
@@ -171,6 +188,7 @@ def apply_layer(rig: Rig, layer: Layer) -> Rig:
 
     new_execs = apply_ops(rig.execution_manifests, layer.execution_ops())
     new_ptms = apply_ops(rig.process_to_machine_mappings, layer.process_mapping_ops())
+    new_supervisors = apply_ops(rig.supervisors, layer.supervisor_ops())
 
     return Rig(
         vehicle=new_vehicle,
@@ -179,6 +197,7 @@ def apply_layer(rig: Rig, layer: Layer) -> Rig:
         service_manifests=new_svc_mans,
         execution_manifests=new_execs,
         process_to_machine_mappings=new_ptms,
+        supervisors=new_supervisors,
     )
 
 
