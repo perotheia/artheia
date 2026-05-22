@@ -28,7 +28,7 @@ from enum import Enum
 from ipaddress import IPv4Address
 
 from artheia.manifest.execution import EnterExitTimeout, TagWithOptionalValue
-from artheia.manifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ class CpuArchitecture(str, Enum):
     RISCV64 = "riscv64"
 
 
-@dataclass
+@identifiable_dataclass
 class ProcessorCore(Identifiable):
     """One core within a :class:`Processor` (§9.2)."""
 
@@ -56,7 +56,7 @@ class ProcessorCore(Identifiable):
     core_id: int | None = None
 
 
-@dataclass
+@identifiable_dataclass
 class Processor(Identifiable):
     """A processor aggregated by :class:`Machine` (§9.2)."""
 
@@ -70,7 +70,7 @@ class Processor(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ProcessToMachineMapping(Identifiable):
     """Association of a Process to a Machine, with optional core affinity."""
 
@@ -87,7 +87,7 @@ class ProcessToMachineMapping(Identifiable):
     persistency_central_storage_uri: str = ""
 
 
-@dataclass
+@identifiable_dataclass
 class ProcessToMachineMappingSet(Identifiable):
     """A bucket of :class:`ProcessToMachineMapping` (§9.4)."""
 
@@ -124,7 +124,7 @@ class SchedulingPolicyEnum(str, Enum):
     SCHED_IDLE     = "SCHED_IDLE"      # lowest priority
 
 
-@dataclass
+@identifiable_dataclass
 class NodeToCPUMapping(Identifiable):
     """Pin one artheia node (its thread) to a CPU set + scheduling policy.
 
@@ -192,7 +192,7 @@ class IpEndpoint:
     port: int = 0
 
 
-@dataclass
+@identifiable_dataclass
 class NetworkInterface(Identifiable):
     name: str
     kind: NetworkInterfaceKind = NetworkInterfaceKind.ETHERNET
@@ -243,7 +243,7 @@ class HardwareResource:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class Machine(Identifiable):
     """Root of one machine's manifest set (§9.1).
 
@@ -288,7 +288,7 @@ MachineManifest = Machine
 # Project-local enum kept for backwards compatibility (older docs used
 # ``MachineState`` directly; AUTOSAR puts machine states in the State
 # Management interface, not on the Machine manifest).
-@dataclass
+@identifiable_dataclass
 class MachineState(Identifiable):
     name: str
     description: str = ""

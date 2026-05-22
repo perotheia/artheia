@@ -39,12 +39,11 @@ from artheia.manifest.machine import (  # noqa: F401
     HardwareResource,
     MachineManifest,
 )
-# PlatformBase / PlatformApplication are resolved lazily inside
-# artheia.manifest.platform (services.manifest.fc imports back into
-# this package, so eager re-export here would cycle). Import them via
-# their submodule when needed:
-#   from artheia.manifest.platform import PlatformBase
-from artheia.manifest.platform import PlatformServices  # noqa: F401
+# PlatformBase / PlatformApplication / PlatformServices are resolved
+# lazily inside artheia.manifest.platform (services.manifest.fc imports
+# back into this package, so eager re-export here would cycle). Import
+# them via their submodule when needed:
+#   from artheia.manifest.platform import PlatformBase, PlatformServices
 from artheia.manifest.rig import Rig, VehicleIdentity  # noqa: F401
 from artheia.manifest.service import (  # noqa: F401
     InetEndpoint,
@@ -83,7 +82,6 @@ __all__ = [
     "Layer",
     "MachineManifest",
     "Override",
-    "PlatformServices",
     "Remove",
     "RestartStrategy",
     "RestartType",

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from ipaddress import IPv4Address
 
-from artheia.manifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ from artheia.manifest.transform import Identifiable
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class DataType(Identifiable):
     """An Adaptive Platform datatype (§3.3).
 
@@ -46,7 +46,7 @@ class DataType(Identifiable):
     base_type: str = ""  # e.g. "uint32", or another DataType name
 
 
-@dataclass
+@identifiable_dataclass
 class VariableDataPrototype(Identifiable):
     """One service event (§3.4.2).
 
@@ -68,7 +68,7 @@ class ArgumentDataPrototype:
     direction: str = "in"  # "in" | "out" | "inout"
 
 
-@dataclass
+@identifiable_dataclass
 class ClientServerOperation(Identifiable):
     """One method on a :class:`ServiceInterface` (§3.4.4)."""
 
@@ -79,7 +79,7 @@ class ClientServerOperation(Identifiable):
     # other; ours uses the formal name.
 
 
-@dataclass
+@identifiable_dataclass
 class Field(Identifiable):
     """A field on a :class:`ServiceInterface` (§3.4.5)."""
 
@@ -90,7 +90,7 @@ class Field(Identifiable):
     has_notifier: bool = True
 
 
-@dataclass
+@identifiable_dataclass
 class Trigger(Identifiable):
     """A data-less server→client signal (§3.4.3)."""
 
@@ -102,7 +102,7 @@ class Trigger(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ServiceInterface(Identifiable):
     """One Adaptive service interface (§3.4).
 
@@ -168,7 +168,7 @@ class InetEndpoint:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ServiceInstance(Identifiable):
     """A concrete instance of a :class:`ServiceInterface` on the wire.
 
@@ -201,7 +201,7 @@ class ServiceInstance(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ServiceManifest(Identifiable):
     """Aggregate of one process's service-binding configuration.
 

@@ -4,6 +4,24 @@ Not part of the AUTOSAR Adaptive manifest set proper; this is the
 top-level container a vendor syscomp file emits so a single
 ``arsyscomp.py`` produces the full set of manifests for one rig.
 
+Two parallel types in this module:
+
+- :class:`Rig` (legacy) — flat dataclass with ``list[...]`` fields,
+  composed via the ``apply_ops``-driven :class:`Layer` from
+  ``manifest/layer.py``. Used by every current call site
+  (``services/manifest/fc.py``, ``demo/manifest/rig.py``,
+  ``artheia executor emit``).
+- :class:`SoftwareSpecification` (new) — :class:`Layer` subclass with
+  ``set[...]`` fields that accept either bare elements OR
+  :class:`Append` / :class:`Remove` transforms inline.
+  ``base.squash(other)`` composes them. The mosaic-style DSL the
+  manifest module is migrating to. See
+  ``docs/tasks/PROGRESS/artheia-dsl-recovery.md``.
+
+Both types coexist during the migration. New vehicle layers should
+use :class:`SoftwareSpecification`; old call sites stay on :class:`Rig`
+until each is ported.
+
 Future work: emit each :class:`MachineManifest` / :class:`ApplicationManifest`
 to its own YAML, plus a ``rig.yaml`` index — the bazel rule
 ``bazel distr //vendor/vehicles/<rig>/`` consumes the index to assemble
@@ -13,6 +31,7 @@ per-machine opkg images.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Union
 
 from artheia.manifest.application import ApplicationManifest
 from artheia.manifest.execution import ExecutionManifest
@@ -23,6 +42,13 @@ from artheia.manifest.machine import (
 )
 from artheia.manifest.service import ServiceManifest
 from artheia.manifest.supervisor import SupervisorNode
+from artheia.manifest.transform import (
+    Append,
+    Layer,
+    Remove,
+    SetTransformTypes,
+    Undefined,
+)
 
 
 @dataclass
@@ -74,3 +100,125 @@ class Rig:
     # to produce the materialized SupervisorSpec tree consumed by the
     # supervisor binary.
     supervisors: list[SupervisorNode] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Structured-DSL aggregator — new shape (mosaic-style)
+# ---------------------------------------------------------------------------
+
+# Type aliases for the set-typed fields. Each field accepts either:
+#   - a bare set of concrete elements (replaces base's set on squash), OR
+#   - a set of Append/Remove transforms (composed onto base's set), OR
+#   - Undefined() (inherit base's value).
+_MachineSet     = Union[set[MachineManifest], set[SetTransformTypes], Undefined]
+_AppSet         = Union[set[ApplicationManifest], set[SetTransformTypes], Undefined]
+_ServiceManSet  = Union[set[ServiceManifest], set[SetTransformTypes], Undefined]
+_ExecSet        = Union[set[ExecutionManifest], set[SetTransformTypes], Undefined]
+_PTMSet         = Union[set[ProcessToMachineMapping], set[SetTransformTypes], Undefined]
+_NodeMapSet     = Union[set[NodeToCPUMapping], set[SetTransformTypes], Undefined]
+_SupervisorSet  = Union[set[SupervisorNode], set[SetTransformTypes], Undefined]
+
+
+@dataclass
+class SoftwareSpecification(Layer):
+    """Vendor-side spec: composition-of-compositions for one rig.
+
+    The structured-DSL counterpart to :class:`Rig`. Where :class:`Rig`
+    has ``list[X]`` fields composed via the parallel ``add_X`` /
+    ``remove_X`` lists on :class:`Layer`, ``SoftwareSpecification`` has
+    ``set[X] | set[SetTransformTypes] | Undefined``, with the
+    transforms living *inside* the set they target.
+
+    Usage:
+
+    .. code-block:: python
+
+        from artheia.manifest import (
+            SoftwareSpecification, MachineManifest, VehicleIdentity,
+        )
+        from artheia.manifest.transform import Append, Remove, SetTransformTypes
+        from typing import cast
+
+        # Base spec for a platform.
+        PlatformSoftware = SoftwareSpecification(
+            vehicle=VehicleIdentity(name="platform"),
+            machines={MachineManifest(name="default_host", ...)},
+            ...
+        )
+
+        # A rig-specific layer.
+        DemoLayer = SoftwareSpecification(
+            vehicle=VehicleIdentity(name="demo", make="theia", model="..."),
+            machines=cast(set[SetTransformTypes], {
+                Append(MachineManifest(name="demo_host", ...)),
+                Remove(MachineManifest(name="default_host")),
+            }),
+        )
+
+        # Compose.
+        DemoSoftware = PlatformSoftware.squash(DemoLayer)
+
+    Field semantics mirror :class:`Rig` 1:1 — same containment, just
+    set-typed instead of list-typed and with transform support.
+    """
+
+    # Fields default to Undefined() (not empty set) so that a layer
+    # which doesn't touch a field inherits the base's value during
+    # squash. Empty set as default would REPLACE the base's content
+    # (transform_set treats a plain non-transform set as "wholesale
+    # replace") — which is rarely what an upper layer means by
+    # "I don't touch this field".
+    vehicle: Union[VehicleIdentity, Undefined] = field(default_factory=Undefined)
+    machines: _MachineSet = field(default_factory=Undefined)
+    applications: _AppSet = field(default_factory=Undefined)
+    service_manifests: _ServiceManSet = field(default_factory=Undefined)
+    execution_manifests: _ExecSet = field(default_factory=Undefined)
+    # Process-to-machine mappings (AUTOSAR §9.4).
+    process_to_machine_mappings: _PTMSet = field(default_factory=Undefined)
+    # Node-to-CPU mappings (project-local; per-thread within a process).
+    node_to_cpu_mappings: _NodeMapSet = field(default_factory=Undefined)
+    # OTP-style supervisor tree.
+    supervisors: _SupervisorSet = field(default_factory=Undefined)
+
+    # -----------------------------------------------------------------
+    # Bridge to legacy Rig — until call sites (executor emit, gui emit,
+    # generate_manifest) walk SoftwareSpecification directly. New code
+    # writes the spec; this method projects it back into the flat
+    # list-typed Rig the CLI still expects.
+    # -----------------------------------------------------------------
+
+    def to_rig(self) -> "Rig":
+        """Materialize this spec into a legacy :class:`Rig`.
+
+        Resolves every set-typed field by running :func:`transform_base`
+        (Append/Remove transforms applied against an empty base) and
+        emitting a deterministically-sorted list.
+
+        Sort key: ``_set_identify`` (i.e. ``hash(name)`` for the
+        default Identifiable). The CLI depends on stable ordering for
+        the executor.yaml supervisor tree.
+        """
+        from artheia.manifest.transform import transform_base
+
+        def _resolve(field_value):
+            """Set field → sorted list. Undefined → empty list."""
+            if isinstance(field_value, Undefined):
+                return []
+            resolved = transform_base(field_value)
+            # Deterministic order: by name (the default _identity_field).
+            return sorted(resolved, key=lambda x: getattr(x, "name", ""))
+
+        vehicle = self.vehicle
+        if isinstance(vehicle, Undefined):
+            vehicle = VehicleIdentity(name="")
+
+        return Rig(
+            vehicle=vehicle,
+            machines=_resolve(self.machines),
+            applications=_resolve(self.applications),
+            service_manifests=_resolve(self.service_manifests),
+            execution_manifests=_resolve(self.execution_manifests),
+            process_to_machine_mappings=_resolve(self.process_to_machine_mappings),
+            node_to_cpu_mappings=_resolve(self.node_to_cpu_mappings),
+            supervisors=_resolve(self.supervisors),
+        )

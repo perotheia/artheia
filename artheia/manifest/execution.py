@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from artheia.manifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ from artheia.manifest.transform import Identifiable
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ModeDeclaration(Identifiable):
     """One discrete state in a :class:`ModeDeclarationGroup`."""
 
@@ -50,7 +50,7 @@ class ModeDeclaration(Identifiable):
     value: int | None = None
 
 
-@dataclass
+@identifiable_dataclass
 class ModeDeclarationGroup(Identifiable):
     """A named set of mode declarations (e.g. a Process's state list).
 
@@ -63,7 +63,7 @@ class ModeDeclarationGroup(Identifiable):
     initial_mode: str = ""
 
 
-@dataclass
+@identifiable_dataclass
 class FunctionGroup(Identifiable):
     """An identifiable group of processes managed together by State
     Management — e.g. ``Startup``, ``Driving``, ``Parking``.
@@ -98,7 +98,7 @@ class SchedulingPolicy(str, Enum):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class MemoryUsage(Identifiable):
     """Worst-case memory consumption, in bytes."""
 
@@ -106,7 +106,7 @@ class MemoryUsage(Identifiable):
     memory_consumption: int | None = None
 
 
-@dataclass
+@identifiable_dataclass
 class ResourceConsumption(Identifiable):
     """Per-startup resource budgets aggregated by
     :class:`StateDependentStartupConfig`.
@@ -162,7 +162,7 @@ class EnterExitTimeout:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ProcessExecutionError(Identifiable):
     """Identifiable execution-error reference. Spec-§8.3.8."""
 
@@ -170,7 +170,7 @@ class ProcessExecutionError(Identifiable):
     error_code: int | None = None
 
 
-@dataclass
+@identifiable_dataclass
 class StartupConfig(Identifiable):
     """Reusable startup configuration for one or more processes."""
 
@@ -220,7 +220,7 @@ class StateDependentStartupConfig:
     resource_group: str = ""  # ref by name to ResourceGroup on the Machine
 
 
-@dataclass
+@identifiable_dataclass
 class Process(Identifiable):
     """The root execution-manifest class — one POSIX process.
 

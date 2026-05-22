@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Union
 
-from artheia.manifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ ShutdownSpec = Union[int, str]
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ChildSpec(Identifiable):
     """One supervised child.
 
@@ -116,7 +116,7 @@ class ChildSpec(Identifiable):
     shall_not_run_on: list[int] = field(default_factory=list)
 
 
-@dataclass
+@identifiable_dataclass
 class SupervisorSpec(Identifiable):
     """A supervisor — owns children and a restart strategy.
 
@@ -150,7 +150,7 @@ class SupervisorSpec(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class SupervisorNode(Identifiable):
     """One supervisor declared in the manifest.
 

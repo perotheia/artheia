@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from artheia.manifest.transform import Identifiable
+from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ from artheia.manifest.transform import Identifiable
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class PortPrototype(Identifiable):
     """A port on a :class:`SwComponentType` (§3.4 / §3.5).
 
@@ -47,7 +47,7 @@ class PortPrototype(Identifiable):
     interface: str = ""           # ref by name to a ServiceInterface
 
 
-@dataclass
+@identifiable_dataclass
 class SwComponentType(Identifiable):
     """Abstract base for AUTOSAR software-component types (§3.4 / §3.5).
 
@@ -69,7 +69,7 @@ class SwComponentType(Identifiable):
     port: list[PortPrototype] = field(default_factory=list)
 
 
-@dataclass
+@identifiable_dataclass
 class SwComponentPrototype(Identifiable):
     """An instance of a :class:`SwComponentType` inside a composition (§3.5)."""
 
@@ -77,7 +77,7 @@ class SwComponentPrototype(Identifiable):
     component_type: str = ""   # ref by name to SwComponentType
 
 
-@dataclass
+@identifiable_dataclass
 class SwConnector(Identifiable):
     """A connector between two ports in a composition (§3.5)."""
 
@@ -86,7 +86,7 @@ class SwConnector(Identifiable):
     target: str = ""   # "<prototype>.<port>"
 
 
-@dataclass
+@identifiable_dataclass
 class CompositionSwComponentType(Identifiable):
     """A composition aggregating :class:`SwComponentPrototype` + :class:`SwConnector` (§3.5)."""
 
@@ -100,7 +100,7 @@ class CompositionSwComponentType(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class SwComponent(Identifiable):
     """A deployable software component (project-local).
 
@@ -146,7 +146,7 @@ class ExecutionStateReportingBehaviorEnum(str, Enum):
     REPORTING_BEHAVIOR_INDIVIDUAL = "reportingBehaviorIndividual"
 
 
-@dataclass
+@identifiable_dataclass
 class RootSwComponentPrototype(Identifiable):
     """Root SwComponentPrototype aggregated by an :class:`Executable` (§3.18.3)."""
 
@@ -154,7 +154,7 @@ class RootSwComponentPrototype(Identifiable):
     application_type: str = ""  # ref by name to SwComponentType
 
 
-@dataclass
+@identifiable_dataclass
 class Executable(Identifiable):
     """Spec §3.18.
 
@@ -178,7 +178,7 @@ class Executable(Identifiable):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ProcessDesign(Identifiable):
     """Design-time pre-allocation of an :class:`Executable` to a Process (§3.21).
 
@@ -215,7 +215,7 @@ class StartupConfig:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@identifiable_dataclass
 class ApplicationManifest(Identifiable):
     """Project-local umbrella bundling the design-side artefacts of one
     application.
