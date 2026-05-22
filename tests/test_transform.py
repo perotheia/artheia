@@ -411,47 +411,65 @@ def test_software_specification_squashes_machines_via_transforms():
     assert names == {"demo_host"}, f"expected {{demo_host}}, got {names}"
 
 
-def test_demo_software_applications_merge_correctly():
-    """``DemoSpecLayer`` Appends an ``ApplicationManifest`` with the
-    same identity as ``FcSoftware``'s — squash must MERGE the
-    components lists (FC + demo), not replace base with the layer's
-    smaller list. ``Layer.squash``'s ``list[Identifiable]`` branch
-    (added in phase 4) is what makes this work."""
+def test_demo_software_routes_components_to_two_machines():
+    """``DemoSoftware`` is the multi-host shape:
+      - platform_app on central_host (18 FCs from FcSoftware)
+      - compute_app on compute_host (3 demo binaries)
+
+    Same-identity Append of platform_app merges FcSoftware's 18 FC
+    components with DemoSpecLayer's empty list, AND overrides
+    host_machine from "" → "central_host". The compute_app is a
+    separate identity, so it lands on a separate machine.
+    """
     from demo.manifest.rig import DemoSoftware
     rig = DemoSoftware.to_rig()
-    assert len(rig.applications) == 1
-    app = rig.applications[0]
-    assert app.host_machine == "demo_host"
-    # 18 FC components from FcSoftware + 3 demo from DemoSpecLayer.
-    assert len(app.components) == 21
-    names = {c.name for c in app.components}
-    # Spot-check both sides of the merge.
-    assert {"core", "com", "phm"}.issubset(names)        # FC side
-    assert {"demo_p1", "demo_p2", "demo_p3"}.issubset(names)  # demo side
+
+    # Two machines, two applications.
+    assert {m.name for m in rig.machines} == {"central_host", "compute_host"}
+    assert {a.name for a in rig.applications} == {"platform_app", "compute_app"}
+
+    by_app = {a.name: a for a in rig.applications}
+
+    # platform_app → central, the 18 FC components.
+    platform = by_app["platform_app"]
+    assert platform.host_machine == "central_host"
+    assert len(platform.components) == 18
+    fc_names = {c.name for c in platform.components}
+    assert {"core", "com", "phm", "log"}.issubset(fc_names)
+    # demo binaries are NOT in platform_app — they're in compute_app.
+    assert "demo_p1" not in fc_names
+
+    # compute_app → compute, the 3 demo binaries.
+    compute = by_app["compute_app"]
+    assert compute.host_machine == "compute_host"
+    assert {c.name for c in compute.components} == {
+        "demo_p1", "demo_p2", "demo_p3",
+    }
 
 
-def test_demo_software_to_rig_equivalent_to_legacy_demo_rig():
-    """Round-trip: ``DemoSoftware.to_rig()`` (new path) produces a
-    :class:`Rig` shape equivalent to the legacy ``DemoRig`` (built via
-    ``merge_layers(PlatformBase, [DemoLayer])``).
+def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():
+    """The legacy ``DemoRig`` is single-host (collapses both machines
+    into demo_host). The new ``DemoSoftware`` is multi-host. They're
+    intentionally different shapes — what we keep stable:
 
-    Equivalence is checked field-by-field. The test stays loose
-    (set-of-names rather than ordered-list equality) because the
-    new path's deterministic-sort key may produce a different order
-    than legacy ``apply_ops``; what matters is the same set of items.
+      - Vehicle identity unchanged.
+      - Set of execution_manifests (process names) unchanged (the
+        Process list lives on the spec, not the application).
+      - Set of supervisors unchanged (the OTP tree is rig-wide).
+
+    The application shape and machine list ARE expected to differ
+    between the two paths now.
     """
     from demo.manifest.rig import DemoRig, DemoSoftware
-
     materialized = DemoSoftware.to_rig()
 
     assert materialized.vehicle == DemoRig.vehicle
 
-    assert {m.name for m in materialized.machines} == \
-           {m.name for m in DemoRig.machines}
-
+    # Process names line up.
     assert {e.name for e in materialized.execution_manifests} == \
            {e.name for e in DemoRig.execution_manifests}
 
+    # Supervisor names line up.
     assert {s.name for s in materialized.supervisors} == \
            {s.name for s in DemoRig.supervisors}
 
