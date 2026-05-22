@@ -16,7 +16,11 @@ from dataclasses import dataclass, field
 
 from artheia.manifest.application import ApplicationManifest
 from artheia.manifest.execution import ExecutionManifest
-from artheia.manifest.machine import MachineManifest, ProcessToMachineMapping
+from artheia.manifest.machine import (
+    MachineManifest,
+    NodeToCPUMapping,
+    ProcessToMachineMapping,
+)
 from artheia.manifest.service import ServiceManifest
 from artheia.manifest.supervisor import SupervisorNode
 
@@ -54,6 +58,14 @@ class Rig:
     # (shall_run_on / shall_not_run_on, identified by ProcessorCore.name
     # which we resolve to integer core_ids at supervisor-emit time).
     process_to_machine_mappings: list[ProcessToMachineMapping] = field(
+        default_factory=list
+    )
+    # Node-to-CPU mappings (project-local). The intra-process equivalent
+    # of PTM: pin one artheia node (its thread) to a CPU set + scheduling
+    # policy. PTM constrains the *process*; this constrains a *thread*
+    # inside that process — both can apply simultaneously, with the
+    # thread-side acting as a finer subset of the process-side.
+    node_to_cpu_mappings: list[NodeToCPUMapping] = field(
         default_factory=list
     )
     # OTP-style supervisor tree, declared by name. Each SupervisorNode

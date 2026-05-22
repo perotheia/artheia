@@ -98,6 +98,67 @@ class ProcessToMachineMappingSet(Identifiable):
 
 
 # ---------------------------------------------------------------------------
+# NodeToCPUMapping (project-local; intra-process thread affinity)
+# ---------------------------------------------------------------------------
+
+# AUTOSAR §9.4 puts process-to-machine affinity on the Machine manifest
+# via ProcessToMachineMapping. That mechanism stops at the process
+# boundary: it can say "this Process runs on machine M, may use cores
+# {0,1}", but in our world a Process is also a host for several actor
+# threads (one per artheia ``node atomic``). Real workloads need a
+# *narrower* pin — e.g. "the crypto Daemon process can use cores 0-3,
+# but inside it the AES worker thread pins to core 0 with SCHED_FIFO
+# priority 80". That's NodeToCPUMapping.
+#
+# Identity (for layer merging) is :attr:`name`. The rig validator
+# checks that ``process`` matches a Process.shortName already in the
+# rig and ``node`` matches a node declared in that process's .art.
+
+class SchedulingPolicyEnum(str, Enum):
+    """POSIX scheduler policy (mirrored from <sched.h>)."""
+    SCHED_OTHER    = "SCHED_OTHER"     # default time-sharing
+    SCHED_FIFO     = "SCHED_FIFO"      # static real-time, no preemption by peers
+    SCHED_RR       = "SCHED_RR"        # static real-time, round-robin
+    SCHED_DEADLINE = "SCHED_DEADLINE"  # EDF (3 params: runtime, deadline, period)
+    SCHED_BATCH    = "SCHED_BATCH"     # cpu-intensive batch
+    SCHED_IDLE     = "SCHED_IDLE"      # lowest priority
+
+
+@dataclass
+class NodeToCPUMapping(Identifiable):
+    """Pin one artheia node (its thread) to a CPU set + scheduling policy.
+
+    Lives on the rig alongside :class:`ProcessToMachineMapping`; the
+    supervisor side resolves it onto a per-worker ChildSpec hint that
+    the worker's process applies during node startup (pthread_setaffinity_np
+    + sched_setscheduler). For SCHED_DEADLINE the three EDF params land
+    in dl_runtime/deadline/period_ns (0 = unused otherwise).
+    """
+
+    name: str
+    node:    str = ""                       # artheia node short name
+    process: str = ""                       # the Process.shortName hosting the node
+    machine: str = ""                       # the Machine.shortName the process runs on
+
+    # CPU set — same semantics as PTM (mutually exclusive). When both
+    # empty the node inherits its process's affinity.
+    shall_run_on:     list[str] = field(default_factory=list)
+    shall_not_run_on: list[str] = field(default_factory=list)
+
+    # POSIX scheduling. SCHED_OTHER+0 means "leave default".
+    scheduling_policy:   SchedulingPolicyEnum = SchedulingPolicyEnum.SCHED_OTHER
+    scheduling_priority: int = 0          # rtprio for SCHED_FIFO/RR (1..99)
+    nice:                int = 0          # -20..19, only for SCHED_OTHER/BATCH
+
+    # SCHED_DEADLINE EDF parameters (nanoseconds). Ignored unless
+    # scheduling_policy == SCHED_DEADLINE. Constraint: dl_runtime ≤
+    # dl_deadline ≤ dl_period.
+    dl_runtime_ns:  int = 0
+    dl_deadline_ns: int = 0
+    dl_period_ns:   int = 0
+
+
+# ---------------------------------------------------------------------------
 # Trust-platform launch behaviour (§9.1)
 # ---------------------------------------------------------------------------
 
