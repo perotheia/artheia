@@ -88,6 +88,52 @@ def test_etcd_schema_empty_when_no_params(tmp_path):
     assert data["keys"] == {}
 
 
+def test_netgraph_flattens_nested_composition(tmp_path):
+    """`composition Outer { composition Inner inner; ... }` should
+    surface the inner's prototypes + connects in Outer's flattened
+    netgraph JSON — inner names appear verbatim at Outer's scope, no
+    prefixing. Mirrors the design choice in model/flatten.py."""
+    from artheia.model import parse_string
+    model = parse_string(
+        """
+        package p
+        interface clientServer Foo { operation Get() }
+        node atomic NodeA {
+            tipc type=0x10 instance=0
+            ports { server p provides Foo }
+        }
+        node atomic NodeB {
+            tipc type=0x11 instance=0
+            ports { client q requires Foo }
+        }
+        composition Inner {
+            prototype NodeA a
+            prototype NodeB b
+            connect b.q to a.p
+        }
+        composition Outer {
+            composition Inner inner
+            prototype NodeA top_a
+        }
+        """
+    )
+    out = tmp_path / "netgraph.json"
+    generate_netgraph(model, out)
+    data = json.loads(out.read_text())
+
+    comps_by_name = {c["name"]: c for c in data["compositions"]}
+    outer = comps_by_name["Outer"]
+    proto_names = {p["name"] for p in outer["prototypes"]}
+    # Inner's "a" and "b" appear at Outer's scope verbatim, alongside
+    # Outer's own "top_a".
+    assert proto_names == {"a", "b", "top_a"}
+    # Inner's `connect b.q -> a.p` shows up in Outer's connections too.
+    assert len(outer["connections"]) == 1
+    conn = outer["connections"][0]
+    assert conn["source"]["prototype"] == "b"
+    assert conn["target"]["prototype"] == "a"
+
+
 def test_netgraph_includes_gateway_routes_can(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     out = tmp_path / "netgraph.json"

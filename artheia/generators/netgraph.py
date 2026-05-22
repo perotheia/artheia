@@ -88,17 +88,20 @@ def _connection_dict(conn) -> dict:
 
 
 def _composition_dict(comp) -> dict:
-    prototypes = []
-    connections = []
-    for el in comp.elements:
-        if el.__class__.__name__ == "PrototypeDecl":
-            prototypes.append({
-                "name": el.name,
-                "node": el.type.name,
-                "tipc": {"type": el.type.tipc.type, "instance": el.type.tipc.instance},
-            })
-        else:
-            connections.append(_connection_dict(el))
+    # Flatten nested-composition refs: an inner `composition Foo bar`
+    # contributes its prototypes + connects verbatim. Inner names appear
+    # at parent scope (no instance-prefixing — see model/flatten.py).
+    from artheia.model import flatten_composition
+    proto_decls, connect_decls = flatten_composition(comp)
+    prototypes = [
+        {
+            "name": el.name,
+            "node": el.type.name,
+            "tipc": {"type": el.type.tipc.type, "instance": el.type.tipc.instance},
+        }
+        for el in proto_decls
+    ]
+    connections = [_connection_dict(el) for el in connect_decls]
     return {"name": comp.name, "prototypes": prototypes, "connections": connections}
 
 

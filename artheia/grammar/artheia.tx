@@ -188,12 +188,24 @@ CompositionDecl:
 
 CompositionElement:
       PrototypeDecl
+    | CompositionRefDecl
     | ConnectDecl
 ;
 
 PrototypeDecl:
     'prototype' type=[NodeDecl|FQN] name=ID
     ('on' 'process' process=ID)?
+;
+
+// Reference to another composition by bare name (resolves through
+// `import` lines, same as PrototypeDecl). At flatten time the referenced
+// composition's prototypes + connects are spliced into the parent
+// composition verbatim — no instance-prefixing on names.
+//
+// Distinguishable from the outer CompositionDecl because that one has
+// a '{' body block; this one ends with the instance ID.
+CompositionRefDecl:
+    'composition' type=[CompositionDecl|FQN] name=ID
 ;
 
 ConnectDecl:

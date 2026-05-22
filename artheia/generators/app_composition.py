@@ -187,30 +187,34 @@ def _harvest(art_path: Path, composition_name: str
     if comp_el is None:
         raise ValueError(f"no composition {composition_name!r} in {art_path}")
 
+    # Flatten nested-composition refs so an inner `composition Foo bar`
+    # contributes its prototypes + connects to this composition's view.
+    # Inner names appear verbatim at parent scope (no instance-prefixing).
+    from artheia.model import flatten_composition
+    proto_decls, connect_decls = flatten_composition(comp_el)
+
     comp = _Composition(name=composition_name)
-    for el in comp_el.elements:
-        ek = el.__class__.__name__
-        if ek == "PrototypeDecl":
-            node = el.type
-            proc = getattr(el, "process", None) or "default"
-            tipc_type = node.tipc.type
-            if isinstance(tipc_type, int):
-                tipc_type_hex = f"0x{tipc_type:x}"
-            else:
-                tipc_type_hex = str(tipc_type)
-            comp.protos.append(_Proto(
-                name=el.name,
-                node_type=node.name,
-                snake=_snake(node.name),
-                process=proc,
-                tipc_type_hex=tipc_type_hex,
-                tipc_instance=int(getattr(node.tipc, "instance", 0) or 0),
-            ))
-        elif ek == "ConnectDecl":
-            s = el.source
-            t = el.target
-            comp.connects.append((s.proto.name, s.port,
-                                    t.proto.name, t.port))
+    for el in proto_decls:
+        node = el.type
+        proc = getattr(el, "process", None) or "default"
+        tipc_type = node.tipc.type
+        if isinstance(tipc_type, int):
+            tipc_type_hex = f"0x{tipc_type:x}"
+        else:
+            tipc_type_hex = str(tipc_type)
+        comp.protos.append(_Proto(
+            name=el.name,
+            node_type=node.name,
+            snake=_snake(node.name),
+            process=proc,
+            tipc_type_hex=tipc_type_hex,
+            tipc_instance=int(getattr(node.tipc, "instance", 0) or 0),
+        ))
+    for el in connect_decls:
+        s = el.source
+        t = el.target
+        comp.connects.append((s.proto.name, s.port,
+                              t.proto.name, t.port))
 
     return comp, nodes, ifaces, proto_pkg
 

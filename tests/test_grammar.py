@@ -389,3 +389,133 @@ def test_flexray_route():
     assert spec.slot_id == 15
     assert spec.channel == "A"
     assert spec.pdu_offset == 4
+
+
+# ---- composition-of-compositions ------------------------------------------
+
+# Reusable scaffolding for the nested-composition tests: one interface,
+# two nodes, an "inner" composition that wires them, and an "outer" that
+# references the inner. Tests assemble different invariants on top.
+_NESTED_PROLOGUE = """
+package p
+interface clientServer Foo {
+    operation Get()
+}
+node atomic NodeA {
+    tipc type=0x1 instance=0
+    ports { server p provides Foo }
+}
+node atomic NodeB {
+    tipc type=0x2 instance=0
+    ports { client q requires Foo }
+}
+"""
+
+
+def test_nested_composition_parses_and_flattens():
+    """A `composition Inner inner` element inside an outer composition
+    surfaces in the AST as a CompositionRefDecl, and flatten_composition
+    splices the inner prototypes + connects in at parent scope."""
+    from artheia.model import flatten_composition
+    m = parse_string(
+        _NESTED_PROLOGUE
+        + """
+        composition Inner {
+            prototype NodeA a
+            prototype NodeB b
+            connect b.q to a.p
+        }
+        composition Outer {
+            composition Inner inner
+            prototype NodeA top_a
+        }
+        """
+    )
+    outer = next(
+        e for e in m.elements
+        if e.__class__.__name__ == "CompositionDecl" and e.name == "Outer"
+    )
+    # The outer composition body has 2 elements: 1 ref + 1 proto.
+    kinds = [e.__class__.__name__ for e in outer.elements]
+    assert kinds == ["CompositionRefDecl", "PrototypeDecl"]
+
+    # Flattening surfaces inner protos at parent scope, verbatim names.
+    protos, connects = flatten_composition(outer)
+    assert [p.name for p in protos] == ["a", "b", "top_a"]
+    assert len(connects) == 1
+    assert connects[0].source.proto.name == "b"
+    assert connects[0].target.proto.name == "a"
+
+
+def test_nested_composition_unresolved_ref_rejected():
+    """A bare-name reference that isn't in scope (e.g. no matching
+    CompositionDecl visible in this file or its imports) is caught by
+    textX as an unresolved cross-reference before our validator runs."""
+    with pytest.raises(TextXSemanticError, match="NoSuchThing"):
+        parse_string(
+            _NESTED_PROLOGUE
+            + """
+            composition Outer {
+                composition NoSuchThing x
+                prototype NodeA a
+            }
+            """
+        )
+
+
+def test_nested_composition_cycle_rejected():
+    """Composition A refs B, B refs A — must be reported as a cycle, not
+    silently flattened into infinite recursion."""
+    with pytest.raises(TextXSemanticError, match="composition cycle"):
+        parse_string(
+            _NESTED_PROLOGUE
+            + """
+            composition A {
+                composition B b
+                prototype NodeA na
+            }
+            composition B {
+                composition A a
+                prototype NodeB nb
+            }
+            """
+        )
+
+
+def test_nested_composition_prototype_name_collision_rejected():
+    """Inner names land at parent scope verbatim (no instance-prefixing).
+    A collision between a flattened inner prototype and a parent-scope
+    prototype must be flagged with a clear error."""
+    with pytest.raises(
+        TextXSemanticError, match="appears twice after flattening"
+    ):
+        parse_string(
+            _NESTED_PROLOGUE
+            + """
+            composition Inner {
+                prototype NodeA x
+            }
+            composition Outer {
+                composition Inner inner
+                prototype NodeA x
+            }
+            """
+        )
+
+
+def test_nested_composition_instance_name_collides_with_prototype():
+    """The `name` in `composition Inner inner` and a sibling
+    `prototype NodeA inner` share a namespace at the parent level."""
+    with pytest.raises(TextXSemanticError, match="used by both"):
+        parse_string(
+            _NESTED_PROLOGUE
+            + """
+            composition Inner {
+                prototype NodeA a
+            }
+            composition Outer {
+                composition Inner inner
+                prototype NodeA inner
+            }
+            """
+        )

@@ -69,11 +69,17 @@ def _format_tipc_type(tipc) -> str:
 def _harvest_composition(comp) -> _Composition:
     """Partition prototypes by `on process X`. A prototype without an
     `on process` annotation goes to a synthetic process named "default"
-    (i.e. composition is single-process)."""
+    (i.e. composition is single-process).
+
+    Flattens nested-composition refs: an inner `composition Foo bar`
+    contributes its prototypes verbatim at this composition's scope
+    (inner names appear unprefixed — see model/flatten.py).
+    """
+    from artheia.model import flatten_composition
+    proto_decls, _ = flatten_composition(comp)
+
     out = _Composition(name=comp.name)
-    for el in comp.elements:
-        if el.__class__.__name__ != "PrototypeDecl":
-            continue
+    for el in proto_decls:
         # The grammar field for the new annotation is `process`. textX
         # leaves it as None if absent.
         proc = getattr(el, "process", None) or "default"

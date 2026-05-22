@@ -8,12 +8,15 @@ add whole-model invariants:
   - Param defaults match their declared types.
   - Gateway route bus refs resolve (declared or in the well-known gateway set).
   - Gateway route direction matches the bus kind (CAN spec ↔ CAN bus, etc).
+  - Nested-composition refs resolve, are cycle-free, and don't introduce
+    prototype-name collisions after flattening.
 """
 from __future__ import annotations
 
 from textx import TextXSemanticError
 
 from .bus_catalog import WELL_KNOWN_GATEWAY_BUSES
+from .flatten import flatten_composition
 
 
 # The gateway itself sits at TIPC type=0x80010000, instance=0 (see
@@ -118,10 +121,12 @@ def _resolve_port(proto, port_name: str):
 
 def _validate_connections(model):
     for comp in _iter(model, "CompositionDecl"):
-        for el in comp.elements:
-            if el.__class__.__name__ != "ConnectDecl":
-                continue
-
+        # Flatten so connects inside nested compositions are validated
+        # together with the parent's connects. Inner prototype names
+        # appear verbatim in the flat list, so connects targeting them
+        # resolve correctly.
+        _, connects = flatten_composition(comp)
+        for el in connects:
             src_port = _resolve_port(el.source.proto, el.source.port)
             tgt_port = _resolve_port(el.target.proto, el.target.port)
 
@@ -162,6 +167,68 @@ def _validate_connections(model):
                     f"{el.target.proto.name}.{el.target.port}: interface "
                     f"mismatch ({src_port.iface.name} vs {tgt_port.iface.name})",
                 )
+
+
+# ---- composition refs ------------------------------------------------------
+
+def _validate_composition_refs(model):
+    """Cross-cutting checks on nested-composition references.
+
+    Three failure modes, each reported with the offending composition
+    name + reference name so the error message points at the .art line.
+    """
+    for comp in _iter(model, "CompositionDecl"):
+        # Unresolved refs: textX leaves `.type` as None when a bare-name
+        # reference can't be resolved (typically a missing `import`).
+        for el in comp.elements:
+            if el.__class__.__name__ != "CompositionRefDecl":
+                continue
+            if el.type is None:
+                raise TextXSemanticError(
+                    f"composition {comp.name}: cannot resolve "
+                    f"`composition {el.name}` — referenced composition "
+                    f"not in scope (missing `import <pkg>.*`?)"
+                )
+
+        # Cycles + flat-name collisions: flatten_composition raises on
+        # cycles; we surface that as TextXSemanticError. Name collisions
+        # are not raised by the helper (it preserves duplicates so callers
+        # see them) — we walk the flat list here and check.
+        try:
+            prototypes, _ = flatten_composition(comp)
+        except ValueError as exc:
+            raise TextXSemanticError(
+                f"composition {comp.name}: {exc}"
+            ) from exc
+
+        seen_proto: dict[str, str] = {}
+        for p in prototypes:
+            if p.name in seen_proto:
+                raise TextXSemanticError(
+                    f"composition {comp.name}: prototype name '{p.name}' "
+                    f"appears twice after flattening (already used by "
+                    f"prototype of type '{seen_proto[p.name]}')"
+                )
+            seen_proto[p.name] = p.type.name
+
+        # Instance-name collision between a CompositionRefDecl's `name`
+        # and a sibling PrototypeDecl's `name`. The instance name is
+        # presentational today, but a clash misleads readers.
+        ref_names = {
+            el.name for el in comp.elements
+            if el.__class__.__name__ == "CompositionRefDecl"
+        }
+        proto_names_at_parent = {
+            el.name for el in comp.elements
+            if el.__class__.__name__ == "PrototypeDecl"
+        }
+        clash = ref_names & proto_names_at_parent
+        if clash:
+            sample = next(iter(clash))
+            raise TextXSemanticError(
+                f"composition {comp.name}: name '{sample}' is used by "
+                f"both a `prototype` and a `composition` reference"
+            )
 
 
 # ---- params ----------------------------------------------------------------
@@ -300,6 +367,10 @@ def _on_model(model, metamodel):
     _validate_messages(model)
     _validate_enums(model)
     _validate_tipc_unique(model)
+    # Composition refs first — cycle / collision errors are more
+    # informative than the downstream connect/codegen failures they'd
+    # otherwise trigger.
+    _validate_composition_refs(model)
     _validate_connections(model)
     _validate_params(model)
     _validate_gateway_routes(model)
