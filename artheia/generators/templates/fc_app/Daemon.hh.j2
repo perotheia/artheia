@@ -95,6 +95,15 @@ public:
 {% endfor -%}
 {% endfor %}
 
+    // ---- GenServer plumbing: handle_info + terminate defaults
+    //
+    // GenServer's dispatch_info_ unconditionally calls
+    // Derived::handle_info; the base also looks for terminate. We
+    // provide no-op defaults inline; impl can shadow either with
+    // its own overload if the daemon needs them.
+    void handle_info(const char* /*info*/, {{ n.name }}State& /*s*/) {}
+    void terminate(const char* /*reason*/, {{ n.name }}State& /*s*/) noexcept {}
+
     // ---- handle_cast / handle_call — declared here, body in impl
 {% for p in n.ports %}
 {%- if p.kind == "receiver" %}
