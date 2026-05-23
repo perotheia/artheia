@@ -66,6 +66,7 @@ _KEYWORDS = [
     "gateway_route", "can", "flexray", "id", "slot", "channel",
     "channel_idx", "dlc", "extended_id", "rtr", "cycle", "pdu_offset",
     "signal", "direction",
+    "statem", "states", "initial", "event", "timeout", "after", "halt",
     "true", "false",
     "int32", "int64", "uint32", "uint64",
     "sint32", "sint64", "fixed32", "fixed64", "sfixed32", "sfixed64",

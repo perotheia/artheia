@@ -135,7 +135,73 @@ NodeDecl:
         ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?
+        ('statem' '{' statem=StateMBody '}')?
     '}'
+;
+
+// ---- 3b. Statem block (gen_statem FSM, optional per node) ------------------
+//
+// A node may declare a finite state machine via a `statem { ... }` block.
+// The block is parsed-only by artheia; the C++ runtime side
+// (platform/runtime/GenStateM.hh) provides the actor template. Codegen
+// (gen-cpp-stubs, Phase 4) emits a <NodeName>StateMBase.hpp deriving from
+// GenStateM with the static transition table from this block.
+//
+// Grammar shape:
+//
+//   statem {
+//       states  Off Starting Running Degraded Update Shutdown
+//       initial Off
+//       data    SmStateMsg                  // optional, must be a MessageDecl
+//
+//       on Off:
+//           event SystemBoot       → Starting after 30s
+//
+//       on Starting:
+//           event StartupComplete  → Running
+//           timeout                → Degraded
+//
+//       on Shutdown:
+//           event PowerOff         → halt
+//   }
+//
+// Per-state `on <State>:` blocks list transitions out of that state.
+// Each transition matches either `event <MessageType>` or `timeout` and
+// targets either another state (optionally `after <duration>` to arm a
+// state timeout) or `halt` (clean-stop the FSM).
+
+StateMBody:
+    'states'  '[' states*=ID[','] ']'
+    'initial' initial=ID
+    ('data' data_type=[MessageDecl|FQN])?
+    on_blocks*=StateBlock
+;
+
+StateBlock:
+    'on' state=ID ':'
+        rules*=TransitionRule
+;
+
+// Per-rule trigger: an event of a specific message type, or the state
+// timeout firing. Direction arrow uses `→` (U+2192) to read naturally
+// in the source; we DO NOT accept `->` to keep one canonical form (no
+// tabs vs spaces religious war on this).
+TransitionRule:
+    (   'event'   event=[MessageDecl|FQN] '→' target=TransitionTarget )
+  | (   'timeout' '→' target=TransitionTarget )
+;
+
+// Transition targets either another state (with optional state timeout
+// armed on entry) or `halt` (clean stop). `halt_with_error` is reserved
+// for the future; today's grammar keeps the surface minimal.
+TransitionTarget:
+    halt?='halt' | (state=ID ('after' timeout=Duration)?)
+;
+
+// Durations: "30s", "500ms", "1h", "2m". Stored as a string at parse
+// time; the loader normalises to milliseconds.
+Duration:
+    /[0-9]+(ms|s|m|h)/
 ;
 
 NodeKind:
