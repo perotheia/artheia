@@ -125,29 +125,59 @@ def _service_payload(rig, machine_name: str) -> dict:
 
 
 def _execution_payload(rig, machine_name: str) -> dict:
-    """Processes running on *machine_name*, plus the OTP supervisor
-    sub-tree for this machine (if applicable).
+    """Processes + supervisor sub-tree for *machine_name*.
 
-    Selection:
-      - If ``rig.process_to_machine_mappings`` names processes pinned
-        to *machine_name*, use that list.
-      - Otherwise (no PTM entry for this machine), emit every Process —
-        a best-effort fallback for single-machine rigs.
+    Three pieces in the payload:
+
+    - ``supervisor_tree``: result of
+      :func:`build_supervisor_tree(rig, machine=machine_name)` — the
+      OTP-style supervision tree sliced to this machine. Empty
+      ``children`` list = this machine runs no supervised processes
+      (e.g. a HOST/admin machine).
+    - ``processes``: the Process entries whose names appear as leaves
+      in the sliced supervisor tree. Walked from the sliced tree so
+      they stay in lockstep — no risk of emitting a Process whose
+      supervisor declaration didn't make the slice.
+    - ``process_to_machine_mappings`` / ``node_to_cpu_mappings``:
+      the affinity entries for this machine (PTM that names
+      ``machine_name``, NTM with no machine pin or matching).
+
+    Falls back gracefully:
+
+    - If the rig has no supervisors declared, the tree is omitted
+      entirely and every Process is emitted (single-machine rig that
+      hasn't migrated to the supervisor DSL yet).
     """
+    from artheia.manifest.supervisor import build_supervisor_tree
+
+    # Build the sliced supervisor tree, if the rig has any.
+    if getattr(rig, "supervisors", []):
+        sliced = build_supervisor_tree(rig, machine=machine_name)
+        # Walk the sliced tree to collect surviving Process names.
+        surviving_names: set[str] = set()
+
+        def _walk(n) -> None:
+            if hasattr(n, "children"):
+                # Sub-supervisor: descend.
+                for c in n.children:
+                    _walk(c)
+            else:
+                # Leaf ChildSpec.
+                surviving_names.add(n.name)
+
+        _walk(sliced)
+        procs = [p for p in rig.execution_manifests if p.name in surviving_names]
+        supervisor_tree_payload = _supervisor_spec_to_dict(sliced)
+    else:
+        procs = list(rig.execution_manifests)
+        supervisor_tree_payload = None
+
     ptm_for_machine = [
         m for m in rig.process_to_machine_mappings
         if getattr(m, "machine", "") == machine_name
     ]
-    pinned_names = {m.process for m in ptm_for_machine if hasattr(m, "process")}
-    if pinned_names:
-        procs = [
-            p for p in rig.execution_manifests
-            if p.name in pinned_names
-        ]
-    else:
-        procs = list(rig.execution_manifests)
 
-    return {
+    payload = {
         "kind": "ExecutionManifest",
         "host_machine": machine_name,
         "processes": [_serialize(p) for p in procs],
@@ -159,6 +189,40 @@ def _execution_payload(rig, machine_name: str) -> dict:
             if getattr(m, "machine", "") in ("", machine_name)
         ],
     }
+    if supervisor_tree_payload is not None:
+        payload["supervisor_tree"] = supervisor_tree_payload
+    return payload
+
+
+def _supervisor_spec_to_dict(node) -> dict:
+    """Render a :class:`SupervisorSpec` / :class:`ChildSpec` tree as
+    nested dicts ready for YAML. Mirrors the logic in
+    ``artheia executor emit`` so the in-execution-yaml shape matches.
+    """
+    d: dict = {"name": node.name}
+    if hasattr(node, "children"):
+        d["strategy"] = node.strategy.value
+        d["max_restarts"] = node.max_restarts
+        d["max_seconds"] = node.max_seconds
+        if getattr(node, "tombstone_dir", ""):
+            d["tombstone_dir"] = node.tombstone_dir
+        d["children"] = [_supervisor_spec_to_dict(c) for c in node.children]
+    else:
+        d["start_cmd"] = list(node.start_cmd)
+        d["restart"] = node.restart.value
+        d["shutdown"] = node.shutdown
+        d["type"] = node.type.value
+        if node.modules:
+            d["modules"] = list(node.modules)
+        if getattr(node, "env", None):
+            d["env"] = dict(node.env)
+        if getattr(node, "working_dir", ""):
+            d["working_dir"] = node.working_dir
+        if getattr(node, "shall_run_on", None):
+            d["shall_run_on"] = list(node.shall_run_on)
+        if getattr(node, "shall_not_run_on", None):
+            d["shall_not_run_on"] = list(node.shall_not_run_on)
+    return d
 
 
 # ---------------------------------------------------------------------------

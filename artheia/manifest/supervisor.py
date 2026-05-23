@@ -173,6 +173,19 @@ class SupervisorNode(Identifiable):
       ``vendor/apps/<name>/daemon.sh`` per component). Provides the
       "app_sup gets populated from SwComponents" behaviour without
       restating every vendor app in the layer file.
+
+    Per-machine projection:
+
+    The optional :attr:`machine` field pins this SupervisorNode to a
+    specific :class:`Machine.name`. When :func:`build_supervisor_tree`
+    is called with a machine filter, only SupervisorNodes whose
+    :attr:`machine` is None (workspace-wide) OR equal to the requested
+    machine survive. This is what enables per-machine
+    ``execution.yaml`` emission — each ECU runs only the supervisor
+    sub-tree relevant to its locally-hosted Processes.
+
+    Leaves (Process references) are filtered the same way via
+    ``Process.host_machine`` if set.
     """
 
     name: str
@@ -181,6 +194,7 @@ class SupervisorNode(Identifiable):
     max_seconds: int = 5
     children: list[str] = field(default_factory=list)
     tombstone_dir: str = ""
+    machine: "str | None" = None
 
 
 # Sentinel child-name that expands into "every non-FC SwComponent as a
@@ -273,7 +287,7 @@ def _topo_sort_services(rig: "object") -> list[str]:
     return out + leftover
 
 
-def build_supervisor_tree(rig) -> SupervisorSpec:
+def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpec:
     """Compose the executor's supervisor tree from a :class:`Rig`.
 
     Walks ``rig.supervisors`` (a list of :class:`SupervisorNode` carrying
@@ -294,6 +308,21 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
 
     Process-to-machine affinity (``shall_run_on`` / ``shall_not_run_on``)
     is lifted onto each :class:`ChildSpec` for FC children.
+
+    :param machine: If given, return only the sub-tree relevant to that
+        machine — SupervisorNodes pinned to a different machine are
+        dropped, and Process leaves whose owning machine is something
+        else are dropped too. A sub-supervisor with no surviving
+        children after filtering is also dropped. Set ``None`` (default)
+        for the whole-tree view used by single-machine setups.
+
+        Process→machine resolution (priority order):
+
+          1. ``rig.process_to_machine_mappings`` entry whose
+             ``process`` matches the Process name (spec-aligned).
+          2. ``ApplicationManifest.host_machine`` of the AA that owns
+             the matching SwComponent.
+          3. None — unpinned, included on every machine.
     """
     if not rig.supervisors:
         raise ValueError(
@@ -309,6 +338,26 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
     ptm_by_process: dict[str, "ProcessToMachineMapping"] = {  # noqa: F821
         m.process: m for m in getattr(rig, "process_to_machine_mappings", [])
     }
+
+    # Process-name → machine resolver. Used only when ``machine`` is set.
+    # Process→machine resolution order:
+    #   1. PTM entry (spec-aligned, strict).
+    #   2. ApplicationManifest.host_machine of the AA that lists the
+    #      SwComponent with this Process's name.
+    #   3. None (unpinned).
+    app_host_by_component: dict[str, str] = {}
+    for app in getattr(rig, "applications", []) or []:
+        host = getattr(app, "host_machine", "") or ""
+        for comp in getattr(app, "components", []) or []:
+            if comp.name not in app_host_by_component:
+                app_host_by_component[comp.name] = host
+
+    def _process_host(name: str) -> "str | None":
+        ptm = ptm_by_process.get(name)
+        if ptm and ptm.machine:
+            return ptm.machine
+        host = app_host_by_component.get(name)
+        return host if host else None
 
     # Supervisor name → SupervisorNode.
     sup_by_name: dict[str, SupervisorNode] = {s.name: s for s in rig.supervisors}
@@ -340,9 +389,16 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
         )
 
     def _auto_app_children() -> list[ChildSpec]:
-        """Expand AUTO_APPS_CHILDREN into one leaf per non-FC SwComponent."""
+        """Expand AUTO_APPS_CHILDREN into one leaf per non-FC SwComponent.
+
+        When ``machine`` is set, filter to apps whose owning AA's
+        ``host_machine`` matches.
+        """
         out: list[ChildSpec] = []
         for app in rig.applications:
+            host = getattr(app, "host_machine", "") or ""
+            if machine is not None and host and host != machine:
+                continue
             for comp in app.components:
                 if comp.bazel_target.startswith("//services/"):
                     continue
@@ -361,7 +417,20 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
     # Detect cycles in the supervisor graph; bail early on detection.
     visiting: set[str] = set()
 
-    def _materialize(name: str) -> SupervisorSpec:
+    def _leaf_matches_machine(short: str) -> bool:
+        """True if the FC leaf should be included on the target machine.
+
+        Unpinned (no PTM / no AA host_machine) = include on every
+        machine. Pinned = include only when matching.
+        """
+        if machine is None:
+            return True
+        host = _process_host(short)
+        if not host:
+            return True   # unpinned → workspace-wide
+        return host == machine
+
+    def _materialize(name: str) -> "SupervisorSpec | None":
         if name in visiting:
             raise ValueError(
                 f"supervisor cycle through '{name}'; check Rig.supervisors"
@@ -369,18 +438,33 @@ def build_supervisor_tree(rig) -> SupervisorSpec:
         visiting.add(name)
         try:
             node = sup_by_name[name]
+            # Per-supervisor machine pin. None = workspace-wide.
+            if machine is not None and node.machine and node.machine != machine:
+                return None
             kids: list[ChildSpec | SupervisorSpec] = []
             for child_name in node.children:
                 if child_name == AUTO_APPS_CHILDREN:
                     kids.extend(_auto_app_children())
                     continue
                 if child_name in sup_by_name:
-                    kids.append(_materialize(child_name))
+                    sub = _materialize(child_name)
+                    if sub is not None:
+                        kids.append(sub)
+                    continue
+                if not _leaf_matches_machine(child_name):
                     continue
                 ch = _fc_child(child_name)
                 if ch is not None:
                     kids.append(ch)
                 # else: quietly drop — name didn't resolve to either kind.
+
+            # A sub-supervisor that pruned all its children disappears
+            # from its parent's child list. Exception: the root is
+            # always returned (an empty root is a valid result —
+            # "this machine runs nothing" — caller decides what to do).
+            if not kids and name != roots[0]:
+                return None
+
             return SupervisorSpec(
                 name=node.name,
                 strategy=node.strategy,

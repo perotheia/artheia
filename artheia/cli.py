@@ -1551,7 +1551,11 @@ def executor() -> None:
     "emit",
     help="Emit the supervisor manifest (executor.yaml) for a vehicle rig. "
     "TARGET is a dotted import path to a module exporting a Rig "
-    "(e.g. vendor.vehicles.tornado.arsyscomp).",
+    "(e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
+    "Without --machine, emits the whole-rig tree (single-machine deploys, "
+    "or for inspection). With --machine, emits only the sub-tree relevant "
+    "to that machine — Process leaves and pinned SupervisorNodes whose "
+    "host doesn't match are dropped, and empty sub-supervisors are pruned.",
 )
 @click.argument("target")
 @click.option(
@@ -1567,13 +1571,26 @@ def executor() -> None:
     default=None,
     help="Where to write the YAML. Defaults to stdout.",
 )
-def executor_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
+@click.option(
+    "--machine",
+    "machine",
+    default=None,
+    help="Machine to emit the sliced supervisor tree for "
+    "(matches Machine.name in the rig). Without this flag, emits "
+    "the whole-rig tree.",
+)
+def executor_emit(
+    target: str,
+    rig_attr: str | None,
+    out_file: str | None,
+    machine: str | None,
+) -> None:
     import yaml
 
     from artheia.manifest.supervisor import build_supervisor_tree
 
     rig = _resolve_rig(target, rig_attr)
-    tree = build_supervisor_tree(rig)
+    tree = build_supervisor_tree(rig, machine=machine)
 
     def _to_dict(node) -> dict:
         d = {"name": node.name}
