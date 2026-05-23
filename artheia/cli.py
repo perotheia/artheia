@@ -988,43 +988,92 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
 
 @main.command(
     "gen-app",
-    help="Generate a C++14 application scaffold from a vendor system fragment "
-    "(three-slice layout: core/, app/, app/impl/, plus CMakeLists.txt). "
-    "Re-runs are safe — slice 3 (handlers.cc) is write-once.",
+    help="Generate a C++ application scaffold. Two modes:\n\n"
+    "  --kind psp (default): vendor PSP / signal-routing app (the "
+    "existing three-slice cpp_app generator). Targets vendor-root "
+    "trees like vendor/odd_path_client/system/components/.\n\n"
+    "  --kind fc: single-file Adaptive Functional Cluster. Targets a "
+    "single services/system/<fc>/package.art. Emits the lib / main / "
+    "impl slices for a GenServer-derived daemon plus manifest.py + "
+    "executor.py + the .proto under platform/proto/.",
 )
-@click.option("--vendor-root", required=True,
-              type=click.Path(exists=True, file_okay=False),
-              help="Vendor system root, e.g. vendor/odd_path_client. "
-              "Must contain system/components/*.art with at least one NodeDecl.")
+@click.option("--kind", type=click.Choice(["psp", "fc"]), default="psp",
+              help="Generator mode (default: psp).")
+# --- shared --
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir, e.g. applications/odd_path_client.")
+              help="Output dir. For psp mode: applications/<vendor>/. "
+              "For fc mode: services/system/<fc>/.")
+# --- psp-mode flags --
+@click.option("--vendor-root", default=None,
+              type=click.Path(exists=True, file_okay=False),
+              help="(psp mode) Vendor system root, e.g. vendor/odd_path_client. "
+              "Must contain system/components/*.art.")
 @click.option("--namespace", default="",
-              help="C++ namespace (default: vendor dir name with '-' -> '_').")
+              help="(psp mode) C++ namespace (default: vendor dir name).")
 @click.option("--project", "project_name", default="",
-              help="CMake project name (default: vendor dir name).")
+              help="(psp mode) CMake project name (default: vendor dir name).")
 @click.option("--netgraph", "netgraph_paths", multiple=True,
               type=click.Path(exists=True, dir_okay=False),
-              help="netgraph.json (per bus). Joins each receiver port's "
-              "interface name (<Pdu>_Iface) with its can_id or slot_id so the "
-              "generated dispatch loop can route incoming TIPC frames. "
-              "Repeat for multiple buses.")
+              help="(psp mode) netgraph.json per bus. Joins receiver port "
+              "interfaces to their bus addresses.")
 @click.option("--psp-proto-root", "psp_proto_root", default=None,
               type=click.Path(exists=True, file_okay=False),
-              help="Directory containing the PSP's .proto tree "
-              "(shared/, flexray/, can/<bus>/). Used to resolve each "
-              "PDU's package (e.g. shared_ACC_07 vs mlbevo_gen2_EML_01) "
-              "so includes and struct types match nanopb output.")
-def gen_app(vendor_root: str, out_dir: str, namespace: str, project_name: str,
-            netgraph_paths: tuple[str, ...], psp_proto_root: str | None) -> None:
-    from .generators.cpp_app import generate
-    results = generate(vendor_root, out_dir,
-                       namespace=namespace, project_name=project_name,
-                       netgraph_paths=netgraph_paths,
-                       psp_proto_root=psp_proto_root)
+              help="(psp mode) Pre-existing PSP .proto tree to resolve "
+              "PDU packages against.")
+# --- fc-mode flags --
+@click.argument("art_file", required=False,
+                type=click.Path(exists=True, dir_okay=False))
+@click.option("--manifest-out", "manifest_out", default=None,
+              type=click.Path(file_okay=False),
+              help="(fc mode) Where manifest.py + executor.py land "
+              "(typically manifest/services/<fc>/).")
+@click.option("--proto-out", "proto_out", default=None,
+              type=click.Path(file_okay=False),
+              help="(fc mode) Where the generated .proto lands "
+              "(typically platform/proto/). The .proto goes under "
+              "<proto-out>/<art-pkg-as-path>/<leaf>.proto. After this "
+              "step, run nanopb_generator on the .proto to emit .pb.{c,h}.")
+@click.option("--force", is_flag=True, default=False,
+              help="(fc mode) Overwrite write-once slices (impl + "
+              "executor.py).")
+def gen_app(kind: str,
+            out_dir: str,
+            vendor_root: str | None,
+            namespace: str,
+            project_name: str,
+            netgraph_paths: tuple[str, ...],
+            psp_proto_root: str | None,
+            art_file: str | None,
+            manifest_out: str | None,
+            proto_out: str | None,
+            force: bool) -> None:
+    if kind == "psp":
+        if not vendor_root:
+            click.secho("error: --vendor-root is required for --kind psp",
+                        fg="red", err=True)
+            sys.exit(2)
+        from .generators.cpp_app import generate
+        results = generate(vendor_root, out_dir,
+                           namespace=namespace, project_name=project_name,
+                           netgraph_paths=netgraph_paths,
+                           psp_proto_root=psp_proto_root)
+    else:  # fc
+        if not art_file:
+            click.secho(
+                "error: --kind fc requires an .art file as positional arg",
+                fg="red", err=True)
+            sys.exit(2)
+        from .generators.fc_app import generate_fc
+        results = generate_fc(art_file, out_dir,
+                              manifest_out=manifest_out,
+                              proto_out=proto_out,
+                              force=force)
     for path in results.get("wrote", []):
-        click.echo(f"  wrote:   {path}")
+        click.echo(f"  wrote:      {path}")
+    for path in results.get("overwrote", []):
+        click.echo(f"  overwrote:  {path}")
     for path in results.get("skipped-exists", []):
-        click.echo(f"  skipped: {path}  (exists; would overwrite user impl)")
+        click.echo(f"  skipped:    {path}  (exists; --force to overwrite)")
 
 
 @main.command(

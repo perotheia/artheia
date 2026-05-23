@@ -1,0 +1,23 @@
+# FIRST-TIME-ONLY (regenerated with --force). source: {{ source_file }}
+#
+# Impl slice — handler bodies. The user owns this BUILD.bazel after
+# first emit (you may want to add per-FC test_*.cc files; gen-app
+# won't reach in and squash that).
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "{{ model.fc_short }}_impl",
+    srcs = ["{{ model.daemon_class }}_handlers.cc"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-fPIC",
+    ],
+    deps = [
+        "//services/system/{{ model.fc_short }}/lib:{{ model.fc_short }}_lib",
+    ],
+)
