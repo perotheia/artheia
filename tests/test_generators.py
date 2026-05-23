@@ -219,3 +219,140 @@ def test_cpp_stubs_per_node(tmp_path):
     assert "#include \"SpeedSignal.pb.h\"" in torque
 
 
+def test_cpp_stubs_emit_statem_base(tmp_path):
+    """A node with a `statem { ... }` block gets a sibling
+    <Name>StateMBase.hh that derives from GenStateM and carries the
+    static transition table."""
+    from artheia.generators import generate_cpp_stubs
+    from artheia.model import parse_string
+
+    model = parse_string(
+        """
+        package svc
+        message SystemBoot { }
+        message StartupComplete { }
+        message PowerOff { }
+        message SmData { uint32 boot_attempts }
+        node atomic SmDaemon {
+            tipc type=0x8001000D instance=0
+            statem {
+                states [OFF, STARTING, RUNNING, DEGRADED, SHUTDOWN]
+                initial OFF
+                data SmData
+
+                on OFF:
+                    event SystemBoot → STARTING after 30s
+
+                on STARTING:
+                    event StartupComplete → RUNNING
+                    timeout → DEGRADED
+
+                on DEGRADED:
+                    event SystemBoot → STARTING after 30s
+
+                on SHUTDOWN:
+                    event PowerOff → halt
+            }
+        }
+        """
+    )
+    paths = generate_cpp_stubs(model, tmp_path, source_file="test.art")
+    names = sorted(p.name for p in paths)
+    assert "SmDaemon_gen.h" in names
+    assert "SmDaemonStateMBase.hh" in names
+
+    body = (tmp_path / "SmDaemonStateMBase.hh").read_text()
+
+    # Header skeleton + base-class derivation.
+    assert "#include \"GenStateM.hh\"" in body
+    assert "namespace svc" in body
+    assert "enum class SmDaemonState : uint8_t" in body
+    assert "OFF = 0," in body
+    assert "STARTING = 1," in body
+    assert "SHUTDOWN = 4" in body
+    assert "class SmDaemonStateMBase" in body
+    assert ("public demo::runtime::GenStateM<SmDaemon,"
+            in body.replace("\n", " ").replace("  ", " "))
+
+    # init() returns the declared initial state.
+    assert "return SmDaemonState::OFF;" in body
+
+    # User data type imported as-is (not synthesised) and included.
+    assert "#include \"SmData.pb.h\"" in body
+    assert "SmData" in body
+
+    # Multi-state-shared event collapses into one overload with
+    # cascaded if-branches.
+    assert "handle_event(" in body
+    assert "const SystemBoot& /*e*/" in body
+    assert "if (s == SmDaemonState::OFF)" in body
+    assert "if (s == SmDaemonState::DEGRADED)" in body
+
+    # Single-state event uses the single-branch form.
+    assert "if (s == SmDaemonState::STARTING)" in body
+    assert "const StartupComplete& /*e*/" in body
+    assert ("return demo::runtime::transition_to<SmDaemonState>"
+            "(SmDaemonState::RUNNING);" in body)
+
+    # halt rule lowers to halt<S>().
+    assert "const PowerOff& /*e*/" in body
+    assert ("return demo::runtime::halt<SmDaemonState>();"
+            in body)
+
+    # State-timeout dispatch wraps in a switch.
+    assert "StateTimeoutMsg<SmDaemonState>" in body
+    assert "case SmDaemonState::STARTING:" in body
+    assert ("return demo::runtime::transition_to<SmDaemonState>"
+            "(SmDaemonState::DEGRADED);" in body)
+
+    # The 30s after-clause lowers to 30000ms.
+    assert ("transition_to<SmDaemonState>(SmDaemonState::STARTING, 30000)"
+            in body)
+
+
+def test_cpp_stubs_statem_synthesises_empty_data_struct(tmp_path):
+    """When `.art` omits `data <Msg>`, the generator synthesises an
+    empty POD so the GenStateM template parameter has a name."""
+    from artheia.generators import generate_cpp_stubs
+    from artheia.model import parse_string
+
+    model = parse_string(
+        """
+        package p
+        message Tick { }
+        node atomic Clicker {
+            tipc type=0x1 instance=0
+            statem {
+                states [IDLE, BUSY]
+                initial IDLE
+                on IDLE:
+                    event Tick → BUSY
+            }
+        }
+        """
+    )
+    paths = generate_cpp_stubs(model, tmp_path, source_file="test.art")
+    body = (tmp_path / "ClickerStateMBase.hh").read_text()
+    assert "struct ClickerData {};" in body
+
+
+def test_cpp_stubs_skips_statem_for_plain_node(tmp_path):
+    """Nodes without a statem block get only their _gen.h — no
+    StateMBase.hh sibling."""
+    from artheia.generators import generate_cpp_stubs
+    from artheia.model import parse_string
+
+    model = parse_string(
+        """
+        package p
+        node atomic Plain {
+            tipc type=0x1 instance=0
+        }
+        """
+    )
+    paths = generate_cpp_stubs(model, tmp_path, source_file="test.art")
+    names = [p.name for p in paths]
+    assert names == ["Plain_gen.h"]
+    assert not (tmp_path / "PlainStateMBase.hh").exists()
+
+

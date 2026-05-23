@@ -201,6 +201,7 @@ def generate_cpp_stubs(model, out_dir: str | Path, source_file: str = "") -> lis
     out_dir.mkdir(parents=True, exist_ok=True)
     env = _env()
     tpl = env.get_template("stub.cpp.h.j2")
+    statem_tpl = env.get_template("statem_base.hh.j2")
     written: list[Path] = []
     for node in _iter_nodes(model):
         nv = _node_view(node)
@@ -212,6 +213,177 @@ def generate_cpp_stubs(model, out_dir: str | Path, source_file: str = "") -> lis
         path = out_dir / f"{node.name}_gen.h"
         path.write_text(rendered)
         written.append(path)
+        # Emit a <Node>StateMBase.hh alongside the callback stub if the
+        # node carries a `statem { ... }` block.
+        if getattr(node, "statem", None) is not None:
+            sv = _statem_view(node)
+            rendered_sm = statem_tpl.render(
+                source_file=source_file,
+                **sv,
+            )
+            sm_path = out_dir / f"{node.name}StateMBase.hh"
+            sm_path.write_text(rendered_sm)
+            written.append(sm_path)
     return written
+
+
+# ---- statem view → template -----------------------------------------------
+
+def _local_msg_name(msg_ref) -> str:
+    """Last segment of a MessageDecl FQN — what's used as a C++ type."""
+    return msg_ref.name
+
+
+def _format_target(target, state_enum: str) -> str:
+    """Render a TransitionTarget AST node as a C++ return expression.
+
+    Mirrors :class:`StateMSpec`'s lowering rules (see statem.py) but
+    works on the textX AST directly so the template gets pre-formatted
+    C++ source strings — keeps the .j2 file readable.
+    """
+    if getattr(target, "halt", False):
+        return f"return demo::runtime::halt<{state_enum}>();"
+    state = target.state
+    timeout = getattr(target, "timeout", None)
+    if timeout:
+        ms = _duration_to_ms(timeout)
+        return (
+            f"return demo::runtime::transition_to<{state_enum}>("
+            f"{state_enum}::{state}, {ms});"
+        )
+    return (
+        f"return demo::runtime::transition_to<{state_enum}>("
+        f"{state_enum}::{state});"
+    )
+
+
+def _duration_to_ms(text: str) -> int:
+    """Mirror of statem.py:_parse_duration_to_ms — kept local to avoid a
+    cross-module import cycle (artheia.generators must not depend on
+    artheia.manifest)."""
+    for suffix, mul in (("ms", 1), ("s", 1000), ("m", 60_000), ("h", 3_600_000)):
+        if text.endswith(suffix):
+            return int(text[: -len(suffix)]) * mul
+    raise ValueError(f"unrecognised duration {text!r}")
+
+
+def _statem_view(node) -> dict:
+    """Build the template context for ``statem_base.hh.j2``.
+
+    The view is intentionally template-shaped (not a dataclass) — the
+    template uses ~10 fields and a couple of nested record lists, so a
+    plain dict keeps the j2 file readable.
+    """
+    body = node.statem
+    state_enum = f"{node.name}State"
+    class_name = node.name
+    base_class = f"{node.name}StateMBase"
+
+    states = list(body.states)
+    initial = body.initial
+
+    data_struct_is_synthetic = body.data_type is None
+    data_struct = (
+        f"{node.name}Data" if data_struct_is_synthetic
+        else body.data_type.name
+    )
+
+    # Walk the on-blocks once, building two parallel lists:
+    #   * event_rules — one entry per (state, event_type) pair, with
+    #     the pre-formatted return body. The template emits one
+    #     handle_event overload per UNIQUE event_type, branching on
+    #     state. We dedupe by event_type below.
+    #   * timeout_rules — one entry per state that has a `timeout → ...`
+    #     rule. The template wraps these in a single switch on state.
+    event_rules: list[dict] = []
+    timeout_rules: list[dict] = []
+    for blk in body.on_blocks:
+        state = blk.state
+        for rule in blk.rules:
+            target_expr = _format_target(rule.target, state_enum)
+            target_desc = (
+                "halt" if getattr(rule.target, "halt", False)
+                else (f"{rule.target.state}" + (
+                    f" after {rule.target.timeout}"
+                    if getattr(rule.target, "timeout", None) else ""))
+            )
+            if getattr(rule, "event", None) is not None:
+                event_rules.append({
+                    "state": state,
+                    "event_local": _local_msg_name(rule.event),
+                    "body": target_expr,
+                    "target_desc": target_desc,
+                })
+            else:
+                # timeout rule
+                timeout_rules.append({
+                    "state": state,
+                    "body": target_expr,
+                    "target_desc": target_desc,
+                })
+
+    # Collapse event rules: one overload per event_type. Each rule
+    # becomes an `if (s == State::X) { return ...; }` branch inside
+    # that overload. Multiple states sharing the same event type
+    # cascade as `if-if-if` (not `else if` — we want each branch's
+    # return to terminate cleanly; the fallthrough to keep_state at
+    # the bottom of the overload is in the template).
+    events_by_type: dict[str, list[dict]] = {}
+    for r in event_rules:
+        events_by_type.setdefault(r["event_local"], []).append(r)
+
+    collapsed_event_rules: list[dict] = []
+    for event_local, rules in events_by_type.items():
+        branches = " ".join(
+            f"if (s == {state_enum}::{r['state']}) {{ {r['body']} }}"
+            for r in rules
+        )
+        target_desc = " | ".join(
+            f"{r['state']} → {r['target_desc']}" for r in rules
+        )
+        collapsed_event_rules.append({
+            "event_local": event_local,
+            "body": branches,
+            "target_desc": target_desc,
+        })
+
+    # Includes: every event type + the data type (if user-declared).
+    # Sort so the output is stable across runs.
+    used = set(events_by_type.keys())
+    if not data_struct_is_synthetic:
+        used.add(data_struct)
+    messages_used = sorted(used)
+
+    # Namespace: derive from the parsed model's package, fall back to
+    # `artheia_gen` if the model is unpackaged. Use the last segment
+    # so the generated header stays succinct.
+    pkg = _model_package(node)
+    namespace = "artheia_gen" if pkg is None else pkg.replace(".", "_")
+
+    return dict(
+        node_name=node.name,
+        namespace=namespace,
+        class_name=class_name,
+        base_class=base_class,
+        state_enum=state_enum,
+        data_struct=data_struct,
+        data_struct_is_synthetic=data_struct_is_synthetic,
+        states=states,
+        initial=initial,
+        event_rules=collapsed_event_rules,
+        timeout_rules=timeout_rules,
+        messages_used=messages_used,
+    )
+
+
+def _model_package(node) -> str | None:
+    """Walk up to the parsed Model to find its package qualifier."""
+    parent = getattr(node, "parent", None)
+    while parent is not None and type(parent).__name__ != "Model":
+        parent = getattr(parent, "parent", None)
+    if parent is None:
+        return None
+    name = getattr(parent, "name", None)
+    return name if name else None
 
 
