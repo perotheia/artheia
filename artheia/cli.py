@@ -861,6 +861,11 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
 
     rows: list[dict] = []
     for m in rig.machines:
+        # HOST machines (admin consoles) don't run a supervisor —
+        # the GUI is what's running on THEM. Skip them so the
+        # machines.yaml only lists targets to observe.
+        if getattr(m, "kind", "target") == "host":
+            continue
         ep = getattr(m, "com_endpoint", None)
         if ep is None:
             continue
