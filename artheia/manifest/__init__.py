@@ -37,6 +37,7 @@ from artheia.manifest.layer import Layer, apply_layer, merge_layers  # noqa: F40
 from artheia.manifest.machine import (  # noqa: F401
     CpuArchitecture,
     HardwareResource,
+    MachineKind,
     MachineManifest,
 )
 # PlatformBase / PlatformApplication / PlatformServices are resolved
@@ -80,6 +81,7 @@ __all__ = [
     "Identifiable",
     "InetEndpoint",
     "Layer",
+    "MachineKind",
     "MachineManifest",
     "Override",
     "Remove",

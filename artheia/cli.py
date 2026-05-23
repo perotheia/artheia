@@ -940,6 +940,29 @@ def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
 
     rig = _resolve_rig(target, rig_attr)
 
+    # Convert AUTOSAR CpuArchitecture → the dpkg-style token Bazel +
+    # downstream packaging want ("amd64" / "arm64" / "armhf").
+    # Kept local to this function — only consumers of rig.json need it,
+    # and the CpuArchitecture enum has its own canonical names ("x86_64",
+    # "aarch64") which dpkg renames.
+    _DPKG_ARCH = {
+        "x86_64":  "amd64",
+        "aarch64": "arm64",
+        "armv7":   "armhf",
+        "riscv64": "riscv64",
+    }
+
+    def _arch_token(m) -> str:
+        arch_str = ""
+        try:
+            arch_str = str(m.hardware.cpu.architecture.value)
+        except AttributeError:
+            try:
+                arch_str = str(m.hardware.cpu.architecture)
+            except AttributeError:
+                pass
+        return _DPKG_ARCH.get(arch_str, "amd64")
+
     # Build a per-machine grouping of components. Each ApplicationManifest's
     # host_machine field binds it to a specific machine; default to the
     # first machine if no binding is set (single-machine rigs).
@@ -973,6 +996,8 @@ def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
             })
         machines_json.append({
             "name": m.name,
+            "kind": getattr(m, "kind", "target"),
+            "arch": _arch_token(m),
             "applications": apps_json,
         })
 

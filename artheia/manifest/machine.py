@@ -280,9 +280,51 @@ class Machine(Identifiable):
         )
     )
 
+    # Local etcd endpoint when this machine runs a supervisor-state
+    # publisher. The supervisor reads it via ``THEIA_ETCD_ENDPOINTS``
+    # (docker compose wires it from here; on a real target board,
+    # this points at the same box). HostMachine sets this per-target
+    # in its ``observed_machines`` table (see below) rather than
+    # using its own field.
+    etcd_endpoint: IpEndpoint = field(
+        default_factory=lambda: IpEndpoint(
+            address=IPv4Address("127.0.0.1"),
+            port=2379,
+        )
+    )
+
+    # TARGET vs HOST classification — controls .ipk vs .deb branching
+    # in ``rules/rig.bzl`` and what ``executor emit`` / ``gui emit``
+    # produce for this machine.
+    #
+    # * TARGET: runs a supervisor + FCs + apps; gets a deploy bundle.
+    # * HOST:   admin console (supervisor-gui + supdbg); no supervisor
+    #           of its own; its manifest records the target machines
+    #           it observes.
+    #
+    # Defined as a string here so this module doesn't need a forward
+    # reference to MachineKind (defined below). Compared by value
+    # against ``MachineKind.TARGET.value`` etc. in downstream code.
+    kind: str = "target"
+
 
 # Legacy alias — keep existing callers compiling.
 MachineManifest = Machine
+
+
+class MachineKind(str, Enum):
+    """Project-local: classifies a Machine for deploy/packaging.
+
+    See :attr:`Machine.kind`. Defaults to ``TARGET`` (the string
+    value, stored on Machine.kind as ``"target"``) so existing rigs
+    keep building unchanged.
+
+    Use as: ``MachineManifest(..., kind=MachineKind.HOST.value)``
+    when declaring a HostMachine.
+    """
+
+    TARGET = "target"
+    HOST = "host"
 
 
 # Project-local enum kept for backwards compatibility (older docs used
