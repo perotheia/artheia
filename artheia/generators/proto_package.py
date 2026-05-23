@@ -24,6 +24,11 @@ from typing import Iterable, List
 
 from textx import metamodel_from_file
 
+# Shared with proto.py: rewrite leading .art package segments that
+# would collide with libc identifiers when protoc maps them to C++
+# namespaces (see proto.py's docstring for the full rationale).
+from .proto import _proto_package_name
+
 
 _GRAMMAR = (Path(__file__).resolve().parent.parent /
             "grammar" / "artheia.tx")
@@ -124,7 +129,12 @@ def generate_package_proto(art_path: str | Path,
     mm = metamodel_from_file(str(_GRAMMAR))
     model = mm.model_from_file(str(art_path))
 
-    package = model.name or "artheia"
+    # Run the same rename pass as proto.py so the package path lands
+    # in a libc-safe C++ namespace ("system.*" → "services.*"). The
+    # on-disk layout (out_dir = out_root / pkg_parts) follows the
+    # *renamed* path so consumers of the .proto find it where the
+    # `package` line says it is.
+    package = _proto_package_name(model.name or "")
     pkg_parts = package.split(".")
     # File-on-disk leaf: use the last segment of the package as the
     # filename. demo.system → demo/system/system.proto.

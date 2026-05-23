@@ -77,6 +77,46 @@ def _env() -> Environment:
     )
 
 
+# Top-level .art package names that would collide with libc / POSIX
+# identifiers when protoc maps the proto package to a C++ namespace.
+# The .art's `package system.supervisor` is the canonical FQN in the
+# Theia DSL (mirrors the directory layout under `platform/system/`),
+# but protoc would emit `namespace system { namespace supervisor`
+# which collides with libc's `int system(const char*)` from
+# <stdlib.h>. Anywhere a .pb.cc file includes <stdlib.h> (which is
+# nearly always — protobuf's own runtime does), the
+# fully-qualified `::system::supervisor::*` qualifier on protoc's
+# generated code parses as a reference to libc `system()` instead.
+#
+# Fix: rewrite the leading segment to a non-colliding alias. Keep
+# the rest of the path so message names + import paths stay
+# intuitive ("services.supervisor.ChildState" reads cleanly).
+#
+# The mapping is intentionally narrow: we only redirect leading
+# segments that ARE known C/POSIX identifiers. New collisions can
+# be added here as needed.
+_PROTO_PACKAGE_LEAD_RENAMES: dict[str, str] = {
+    "system": "services",   # libc system()
+    # Add more as needed: e.g. "time": "services" if a `time.*`
+    # package ever gets coined.
+}
+
+
+def _proto_package_name(art_package: str) -> str:
+    """Map an .art package name to a proto package name that won't
+    collide with libc / POSIX identifiers when protoc emits a C++
+    namespace. See ``_PROTO_PACKAGE_LEAD_RENAMES`` for the table.
+
+    Empty / missing names fall through to "artheia".
+    """
+    if not art_package:
+        return "artheia"
+    head, dot, rest = art_package.partition(".")
+    if head in _PROTO_PACKAGE_LEAD_RENAMES:
+        head = _PROTO_PACKAGE_LEAD_RENAMES[head]
+    return head + (dot + rest if dot else "")
+
+
 def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +124,7 @@ def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Pa
     env = _env()
     msg_tpl = env.get_template("message.proto.j2")
     enum_tpl = env.get_template("enum.proto.j2")
-    package = model.name or "artheia"
+    package = _proto_package_name(model.name or "")
 
     written: list[Path] = []
 
