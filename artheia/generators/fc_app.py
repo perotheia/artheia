@@ -197,7 +197,8 @@ def _messages_used(nodes: list[_NodeView]) -> list[str]:
     return sorted(seen)
 
 
-def _build_model_view(art_path: Path) -> _ModelView:
+def _build_model_view(art_path: Path,
+                       cxx_namespace_override: Optional[str] = None) -> _ModelView:
     model = parse_file(str(art_path))
     art_package = model.name or "artheia"
     parts = art_package.split(".")
@@ -208,7 +209,14 @@ def _build_model_view(art_path: Path) -> _ModelView:
     # via _proto_package_name → "services.services.sm" → flatten to
     # "services_services_sm". That's the prefix glued to every typedef.
     proto_pkg = _proto_package_name(art_package).replace(".", "_")
-    cxx_ns = art_package.replace(".", "_")
+    # User-facing C++ namespace. Defaults to the .art-package as one
+    # underscore-flat identifier (so `system.services.sm` ⇒ the single
+    # symbol `system_services_sm`); user override accepts nested
+    # colon-colon segments — e.g. ``--ns ara::sm`` emits
+    # ``namespace ara::sm { ... }`` directly. The flag is the
+    # single point of conformity for AUTOSAR-style FC names and for
+    # vendor-app namespaces (e.g. ``--ns vendor::tornado``).
+    cxx_ns = cxx_namespace_override or art_package.replace(".", "_")
     daemon_class = ""
 
     nodes: list[_NodeView] = []
@@ -268,6 +276,7 @@ def generate_fc(
     *,
     manifest_out: Optional[str | Path] = None,
     proto_out: Optional[str | Path] = None,
+    cxx_namespace: Optional[str] = None,
     force: bool = False,
 ) -> dict[str, list[str]]:
     """Generate the FC scaffold for a single .art file.
@@ -291,7 +300,7 @@ def generate_fc(
     art_path = Path(art_path)
     out_dir = Path(out_dir)
 
-    mv = _build_model_view(art_path)
+    mv = _build_model_view(art_path, cxx_namespace_override=cxx_namespace)
     env = _env()
 
     results: dict[str, list[str]] = {

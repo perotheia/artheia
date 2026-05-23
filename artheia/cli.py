@@ -1036,6 +1036,13 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
 @click.option("--force", is_flag=True, default=False,
               help="(fc mode) Overwrite write-once slices (impl + "
               "executor.py).")
+@click.option("--ns", "cxx_namespace", default=None,
+              help="(fc mode) C++ namespace for the generated daemon, "
+              "accepts nested colon-colon segments. Examples: "
+              "`--ns ara::sm` for AUTOSAR Adaptive FC conformity, "
+              "`--ns vendor::myapp` for vendor scaffolding. Default: "
+              "the .art package as one underscore-flat identifier "
+              "(e.g. `system_services_sm`).")
 def gen_app(kind: str,
             out_dir: str,
             vendor_root: str | None,
@@ -1046,7 +1053,8 @@ def gen_app(kind: str,
             art_file: str | None,
             manifest_out: str | None,
             proto_out: str | None,
-            force: bool) -> None:
+            force: bool,
+            cxx_namespace: str | None) -> None:
     if kind == "psp":
         if not vendor_root:
             click.secho("error: --vendor-root is required for --kind psp",
@@ -1067,6 +1075,7 @@ def gen_app(kind: str,
         results = generate_fc(art_file, out_dir,
                               manifest_out=manifest_out,
                               proto_out=proto_out,
+                              cxx_namespace=cxx_namespace,
                               force=force)
     for path in results.get("wrote", []):
         click.echo(f"  wrote:      {path}")
