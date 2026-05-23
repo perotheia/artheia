@@ -92,29 +92,30 @@ def _application_payload(rig, machine_name: str) -> dict:
 
 
 def _service_payload(rig, machine_name: str) -> dict:
-    """Service instances local to or hosted on *machine_name*.
+    """Service instances pinned to *machine_name*.
 
-    Strict reading: an instance's ``remote_machine`` either matches
-    this machine or is empty (= here by default). Loose fallback for
-    rigs that haven't filled in ``remote_machine``: include every
-    service manifest. Today we do strict-then-fallback per service
-    manifest: if any instance pins to *this* machine, only those are
-    included; otherwise the full manifest is.
+    **Strict filter:** an instance ships in this machine's
+    ``service.yaml`` if and only if its ``remote_machine == machine_name``.
+    Empty ``remote_machine`` means "not pinned" — those instances are
+    dropped entirely (operator must pin them to surface them anywhere).
+    See ``docs/tasks/DONE/04-service-instance-remote-machine.md`` for
+    the migration that switched the filter from loose to strict.
+
+    Rationale: the loose fallback (include-everywhere when no pin)
+    silently spreads compute-only services like ``shwa`` to every
+    machine's service.yaml in a multi-machine rig. Strict mode forces
+    the rig author to be explicit; the Phase 0 audit will catch
+    omissions.
     """
     payload_services = []
     for sm in rig.service_manifests:
         local_instances = [
             i for i in sm.instances
-            if getattr(i, "remote_machine", "") in ("", machine_name)
+            if getattr(i, "remote_machine", "") == machine_name
         ]
-        # If the instances declared explicit remote_machines and none of
-        # them is THIS machine, skip the manifest entirely.
-        if not local_instances and any(
-            getattr(i, "remote_machine", "")
-            for i in sm.instances
-        ):
+        if not local_instances:
             continue
-        copy = dataclasses.replace(sm, instances=local_instances or list(sm.instances))
+        copy = dataclasses.replace(sm, instances=local_instances)
         payload_services.append(_serialize(copy))
     return {
         "kind": "ServiceManifest",
