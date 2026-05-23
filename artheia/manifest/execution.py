@@ -238,6 +238,21 @@ class Process(Identifiable):
         default_factory=list
     )
 
+    # Supervisor-facing exec command. The OTP-style supervisor in
+    # platform/supervisor/ consumes this as ChildSpec.start_cmd via the
+    # generated executor.yaml. Empty = "no binary built for this FC
+    # yet" — build_supervisor_tree emits an empty start_cmd and the
+    # supervisor's child entry refuses to launch (honest signal that
+    # the FC is .art-only).
+    #
+    # Earlier revisions synthesized `services/<short>/daemon.sh` here
+    # automatically; that pretended every FC had a binary. The current
+    # contract is explicit: a rig that wants this FC supervised must
+    # set start_cmd to the real path (e.g.
+    # ``["bazel-bin/services/system/sm/sm"]`` for the dev tree, or the
+    # installed path for a .deb / .ipk).
+    start_cmd: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Legacy aliases

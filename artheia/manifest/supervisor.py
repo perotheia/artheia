@@ -373,13 +373,32 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         return out
 
     def _fc_child(short: str) -> ChildSpec | None:
-        """Build a leaf ChildSpec for an FC (Process in execution_manifests)."""
+        """Build a leaf ChildSpec for an FC (Process in execution_manifests).
+
+        ``start_cmd`` comes from ``Process.start_cmd`` on the matching
+        execution manifest entry. Empty is OK — emitted as an empty
+        list in executor.yaml, which the C++ supervisor rejects at
+        load with a clear "no start command for child <name>" error.
+        Setting start_cmd is the rig layer's job (or the FC's own
+        manifest/executor.py).
+        """
         if short not in process_by_short:
             return None
+        proc = process_by_short[short]
         ptm = ptm_by_process.get(short)
+        start_cmd = list(getattr(proc, "start_cmd", []) or [])
+        if not start_cmd:
+            import warnings
+            warnings.warn(
+                f"FC {short!r} has no start_cmd set on its Process — "
+                f"the supervisor will refuse to launch it. Set "
+                f"start_cmd in the rig overlay or in "
+                f"manifest/services/{short}/executor.py.",
+                stacklevel=3,
+            )
         return ChildSpec(
             name=short,
-            start_cmd=[f"services/{short}/daemon.sh"],
+            start_cmd=start_cmd,
             restart=RestartType.PERMANENT,
             shutdown=5000,
             type=ChildType.WORKER,
