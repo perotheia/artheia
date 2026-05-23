@@ -119,7 +119,24 @@ def _render_proto(model, package: str, source_file: str) -> str:
 def generate_package_proto(art_path: str | Path,
                             out_root: str | Path) -> Path:
     """Parse a .art file, emit ONE .proto per package at the path
-    mirroring the package name (dot → slash).
+    mirroring the **source** .art package name.
+
+    Two distinct names are at play:
+
+    * **File path** uses the source .art package verbatim
+      (``system.services.sm`` → ``system/services/sm/sm.proto``)
+      so the on-disk layout mirrors what the user wrote in .art.
+      Apps include ``"system/services/sm/sm.pb.h"``.
+    * **Proto ``package`` declaration** uses the libc-safe rewrite
+      (``services.services.sm``) so protoc's generated C++ namespace
+      doesn't collide with libc's ``system()``. See
+      :data:`artheia.generators.proto._PROTO_PACKAGE_LEAD_RENAMES`.
+
+    The file ends up at::
+
+        <out_root>/<art-package-as-path>/<leaf>.proto
+
+    where ``leaf`` is the last segment of the source package.
 
     Returns the written .proto path.
     """
@@ -129,23 +146,20 @@ def generate_package_proto(art_path: str | Path,
     mm = metamodel_from_file(str(_GRAMMAR))
     model = mm.model_from_file(str(art_path))
 
-    # Run the same rename pass as proto.py so the package path lands
-    # in a libc-safe C++ namespace ("system.*" → "services.*"). The
-    # on-disk layout (out_dir = out_root / pkg_parts) follows the
-    # *renamed* path so consumers of the .proto find it where the
-    # `package` line says it is.
-    package = _proto_package_name(model.name or "")
-    pkg_parts = package.split(".")
-    # File-on-disk leaf: use the last segment of the package as the
-    # filename. demo.system → demo/system/system.proto.
-    leaf = pkg_parts[-1]
-    out_dir = out_root.joinpath(*pkg_parts)
+    # Source spec name for the filesystem; rewritten name for the
+    # proto package decl. The two are deliberately divergent.
+    src_package = model.name or ""
+    src_parts = src_package.split(".") if src_package else ["artheia"]
+    proto_package = _proto_package_name(src_package)
+
+    leaf = src_parts[-1]
+    out_dir = out_root.joinpath(*src_parts)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"{leaf}.proto"
 
     rendered = _render_proto(
         model,
-        package=package,
+        package=proto_package,
         source_file=str(art_path),
     )
     out_file.write_text(rendered)

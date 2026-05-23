@@ -117,6 +117,27 @@ def _proto_package_name(art_package: str) -> str:
     return head + (dot + rest if dot else "")
 
 
+def package_subdir(art_package: str) -> Path:
+    """Map an .art package to its filesystem subdir under proto-root.
+
+    The .art ``system.services.sm`` lays out at
+    ``system/services/sm/`` — mirrors the source-tree layout
+    (``services/system/sm/package.art``) verbatim.
+
+    Note: the .proto file's ``package`` declaration is the
+    libc-safe rewrite (``services.services.sm``), not this dir
+    name. They're independent — the filesystem mirrors the .art
+    spec name, the C++ namespace is what protoc emits from the
+    rewritten declaration. See :data:`_PROTO_PACKAGE_LEAD_RENAMES`
+    for why.
+
+    Empty/missing names land at ``artheia/``.
+    """
+    if not art_package:
+        return Path("artheia")
+    return Path(*art_package.split("."))
+
+
 def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
