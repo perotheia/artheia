@@ -31,19 +31,595 @@ def main() -> None:
     pass
 
 
-@main.command(help="Parse and validate an .art file. Prints a short summary.")
+@main.command(
+    help="Parse and print an .art file as a tree.\n\n"
+         "Walks the merged model (package.art + component.art) and prints\n"
+         "clusters → compositions → nodes → ports → messages, tree(1)-style.\n\n"
+         "By default, empty-body forward-decls (`cluster Services { }`,\n"
+         "`composition Supervisor { }`) are resolved RECURSIVELY: the parser\n"
+         "scans the directory containing the input file (following symlinks)\n"
+         "for the real definition and substitutes it in. Unresolved\n"
+         "forward-decls are an error.\n\n"
+         "Flags mirror the unix `tree` command:\n"
+         "  -L <depth>     cap recursion depth (1 = top-level elements only)\n"
+         "  -d             only show 'container' nodes — clusters, compositions, nodes\n"
+         "  -f <FQN>       show only the subtree rooted at FQN\n"
+         "  --no-recurse   leave forward-decls unresolved (single-file view)"
+)
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-def parse(art_file: str) -> None:
+@click.option("-L", "depth", type=int, default=None,
+              help="Max tree depth (1 = top-level only). Default: unlimited.")
+@click.option("-d", "only_containers", is_flag=True, default=False,
+              help="Container-only mode: hide leaf details (ports, fields, "
+                   "connects, operations).")
+@click.option("-f", "fqn_filter", type=str, default=None,
+              help="Filter: print only the subtree rooted at this FQN. "
+                   "Match is against `<package>.<element-name>`.")
+@click.option("--no-recurse", "no_recurse", is_flag=True, default=False,
+              help="Leave forward-decls unresolved (single-file view).")
+def parse(art_file: str, depth, only_containers: bool, fqn_filter,
+          no_recurse: bool) -> None:
     model = _parse(art_file)
-    click.echo(f"package: {model.name or '<unnamed>'}")
-    click.echo(f"elements ({len(model.elements)}):")
+    resolved = {} if no_recurse else _resolve_forward_decls(art_file, model)
+    _print_tree(model, max_depth=depth, only_containers=only_containers,
+                fqn_filter=fqn_filter, resolved=resolved)
+
+
+# ---------------------------------------------------------------------------
+# Forward-decl resolver: scan the workspace for real definitions.
+# ---------------------------------------------------------------------------
+
+
+def _workspace_root_for(entry: "Path", model) -> "Path":
+    """Derive the workspace root from the entry file's location and
+    declared package.
+
+    The directory layout mirrors the package FQN: a file declaring
+    ``package system.demo`` lives in a directory named ``demo/``
+    inside a parent named ``system/``. Walk up from the entry file's
+    directory, popping FQN segments as we go; the first ancestor that
+    DOESN'T match the next-up segment is the root.
+
+    Examples:
+      entry = platform/system/system.art, package = system
+        dir = platform/system/  (name 'system' = pkg segment 'system')
+        walk up → platform/  (no more segments) → root
+      entry = services/system/log/package.art, package = system.services.log
+        dir = services/system/log/ (name 'log' = pkg seg 'log')
+        up → services/system/      (name 'system' = pkg seg 'services'? NO)
+        actually: dir names walked = [log, system, services] but pkg
+        segments in tail order are [log, services, system]. The
+        platform tree uses `services/system/` not `services/`, so the
+        cleanest rule for our convention is: root = first ancestor
+        whose name is NOT a package segment.
+    """
+    from pathlib import Path
+
+    pkg_name = getattr(model, "name", None) or ""
+    segments = pkg_name.split(".") if pkg_name else []
+
+    # Walk up from entry's dir; pop segments from the FQN tail until
+    # mismatch.
+    d = entry.parent
+    tail = list(reversed(segments))
+    while tail and d.name == tail[0]:
+        tail.pop(0)
+        d = d.parent
+
+    return d
+
+
+def _package_dir(root: "Path", fqn: str) -> "Path | None":
+    """Map a package FQN to its directory under *root*.
+
+    ``system.demo`` + root=``platform`` → ``platform/system/demo``.
+    """
+    parts = fqn.split(".")
+    p = root
+    for seg in parts:
+        p = p / seg
+    return p
+
+
+def _is_stub(el) -> bool:
+    """True if *el* is an empty-body cluster or composition (= forward-decl).
+
+    The user's convention: stubs at the top of an aggregator file
+    declare names that live in some other component's component.art.
+    Any non-empty body means this IS the real definition.
+    """
+    kind = type(el).__name__
+    if kind == "ClusterDecl":
+        return not list(getattr(el, "elements", []))
+    if kind == "CompositionDecl":
+        return not list(getattr(el, "elements", []))
+    return False
+
+
+def _resolve_forward_decls(art_file: str, model) -> dict:
+    """Resolve every forward-decl in *model* by following the
+    ``import`` statements at the top of the file (and transitively).
+    Returns ``{id(stub) -> real_element}``. Strict: any unresolved
+    stub raises.
+
+    Resolution strategy — *no* workspace scan, *no* grep heuristic:
+
+    1. The model's ``import system.x.y.*`` lines name packages we
+       expect to find definitions in.
+    2. Package FQN maps one-to-one to a directory under the
+       *workspace root*: ``system.x.y`` → ``<root>/x/y/``.
+    3. Workspace root is derived from *art_file* by walking up the
+       parent chain while the directory name matches the package
+       FQN's segments. For ``platform/system/system.art`` (package
+       ``system``), root is ``platform/`` (the dir whose child
+       ``system/`` matches the package's first segment).
+    4. Each imported directory's ``package.art`` is parsed (the
+       merged loader auto-includes its sibling ``component.art``).
+    5. Each imported file's own ``import`` lines are followed
+       transitively.
+
+    Only files reachable from the entry file's import graph are
+    parsed — irrelevant workspace neighbours (e.g. AUTOSAR vendor
+    PSP catalogs) are never touched.
+    """
+    from pathlib import Path
+
+    entry = Path(art_file).resolve()
+    root = _workspace_root_for(entry, model)
+
+    by_name: dict[str, list[tuple[Path, object]]] = {}
+    visited_packages: set[str] = set()
+
+    def _absorb(other_model, other_path: Path) -> None:
+        """Add other_model's non-stub clusters/compositions to the
+        index, then follow ITS imports too."""
+        for e in getattr(other_model, "elements", []):
+            kind = type(e).__name__
+            if kind not in ("ClusterDecl", "CompositionDecl"):
+                continue
+            if _is_stub(e):
+                continue
+            by_name.setdefault(e.name, []).append((other_path, e))
+        for imp in getattr(other_model, "imports", []) or []:
+            _follow(imp.name)
+
+    def _follow(import_fqn: str) -> None:
+        """Resolve an ``import <FQN>`` to a file and absorb it."""
+        # Drop the trailing `.*` wildcard if present — the FQN
+        # always names a package (= directory) for us.
+        pkg = import_fqn[:-2] if import_fqn.endswith(".*") else import_fqn
+        if pkg in visited_packages:
+            return
+        visited_packages.add(pkg)
+
+        pkg_dir = _package_dir(root, pkg)
+        if pkg_dir is None or not pkg_dir.is_dir():
+            click.secho(
+                f"error: import {import_fqn!r}: no directory "
+                f"{root}/{pkg.replace('.', '/')}",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+
+        # File-name priority within the package dir:
+        #   - system.art       (aggregator: top-of-subtree files like
+        #                       platform/system/services/system.art)
+        #   - package.art      (schema layer; loader auto-merges
+        #                       sibling component.art)
+        #   - component.art    (wiring layer; loader auto-merges
+        #                       sibling package.art)
+        candidate = None
+        for fname in ("system.art", "package.art", "component.art"):
+            if (pkg_dir / fname).exists():
+                candidate = pkg_dir / fname
+                break
+        if candidate is None:
+            click.secho(
+                f"error: import {import_fqn!r}: no system.art / "
+                f"package.art / component.art under {pkg_dir}",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+
+        if candidate.resolve() == entry:
+            return  # already loaded — that's the entry model itself
+        try:
+            other = _parse(str(candidate))
+        except SystemExit:
+            return  # diagnostic already printed
+        _absorb(other, candidate)
+
+    # Seed the recursion with the entry file's imports.
+    for imp in getattr(model, "imports", []) or []:
+        _follow(imp.name)
+
+    # 4. Walk the input model and resolve every stub against the index.
+    resolved: dict = {}
+    unresolved: list[tuple[str, str]] = []
+    ambiguous: list[tuple[str, list[str]]] = []
+
+    def _resolve(stub):
+        if not _is_stub(stub):
+            return
+        candidates = by_name.get(stub.name, [])
+        if not candidates:
+            unresolved.append((type(stub).__name__, stub.name))
+            return
+        if len(candidates) > 1:
+            ambiguous.append(
+                (stub.name, [str(p) for p, _ in candidates])
+            )
+            return
+        _path, real = candidates[0]
+        resolved[id(stub)] = real
+
+    # Top-level forward-decls.
     for e in model.elements:
-        kind = e.__class__.__name__
-        if kind == "GatewayRouteDecl":
-            label = f"-> node {e.node.name}"
-        else:
-            label = getattr(e, "name", "?")
-        click.echo(f"  - {kind}: {label}")
+        _resolve(e)
+
+    # Cluster members may reference stub compositions. The
+    # ClusterMember.type is the cross-ref to a CompositionDecl.
+    # Walk transitively: substituting a cluster reveals new
+    # ClusterMembers whose .type refs may themselves be stubs in some
+    # other file (e.g. services/system/system.art's `composition Com
+    # { }` stubs that `cluster Services` references).
+    visited_clusters: set[int] = set()
+    queue: list = []
+    for e in model.elements:
+        if type(e).__name__ == "ClusterDecl":
+            queue.append(e)
+
+    while queue:
+        cluster = queue.pop()
+        # Use the resolved version if we already substituted it.
+        cluster = resolved.get(id(cluster), cluster)
+        if id(cluster) in visited_clusters:
+            continue
+        visited_clusters.add(id(cluster))
+        for member in getattr(cluster, "elements", []):
+            if type(member).__name__ != "ClusterMember":
+                continue
+            comp = member.type
+            _resolve(comp)
+            # The composition we just resolved (or the in-tree one)
+            # may itself contain CompositionRefDecls or nested
+            # clusters in future grammars — not today, but the queue
+            # is here for that. For now, just descend into nested
+            # ClusterDecls inside the real composition (defensive).
+            real = resolved.get(id(comp), comp)
+            for sub in getattr(real, "elements", []):
+                if type(sub).__name__ == "ClusterDecl":
+                    queue.append(sub)
+
+    if ambiguous:
+        msg = ["ambiguous forward-decls (multiple real definitions found):"]
+        for name, paths in ambiguous:
+            msg.append(f"  {name}:")
+            for p in paths:
+                msg.append(f"    {p}")
+        click.secho("\n".join(msg), fg="red", err=True)
+        sys.exit(2)
+
+    if unresolved:
+        msg = ["unresolved forward-decls (no real definition found):"]
+        for kind, name in unresolved:
+            tag = "cluster" if kind == "ClusterDecl" else "composition"
+            msg.append(f"  {tag} {name}")
+        msg.append(
+            f"\nsearched under: {root}\n"
+            f"hint: add the missing component to the workspace, or use "
+            f"`--no-recurse` to print the file standalone."
+        )
+        click.secho("\n".join(msg), fg="red", err=True)
+        sys.exit(2)
+
+    return resolved
+
+
+# ---------------------------------------------------------------------------
+# Tree printer for `artheia parse`.
+# ---------------------------------------------------------------------------
+
+
+# tree(1)-style box drawing.
+_BRANCH = "├── "
+_LAST   = "└── "
+_VBAR   = "│   "
+_BLANK  = "    "
+
+
+def _print_tree(model, *, max_depth, only_containers: bool, fqn_filter,
+                resolved: dict):
+    """Walk a parsed Artheia model and print it tree-style.
+
+    *resolved* maps ``id(stub_element) -> real_element`` so the
+    printer can substitute forward-decls with their workspace-wide
+    definitions. Empty dict = no substitution.
+
+    De-duplication rule: a top-level composition/node that is reached
+    via a cluster member or a prototype reference does NOT print at
+    the top level — only inside its consumer. Keeps the tree a tree.
+    """
+    pkg = model.name or "<unnamed>"
+    click.echo(pkg)
+
+    # Filter top-level elements to those that match --fqn (if any).
+    top = list(model.elements)
+    if fqn_filter:
+        # FQN := "<package>.<name>" — match either fully-qualified or
+        # bare-name form.
+        bare = fqn_filter.split(".")[-1]
+        top = [
+            e for e in top
+            if getattr(e, "name", None) == bare
+            or f"{pkg}.{getattr(e, 'name', '')}" == fqn_filter
+        ]
+        if not top:
+            click.secho(
+                f"(no element matches --fqn {fqn_filter!r})",
+                fg="yellow", err=True,
+            )
+            return
+
+    # Drop leaves when -d.
+    if only_containers:
+        top = [e for e in top if _is_container(e)]
+
+    # Substitute top-level forward-decls with their resolved real defs.
+    top = [resolved.get(id(e), e) for e in top]
+
+    # Build the "referenced elsewhere" set — compositions reached via
+    # ClusterMember.type, nodes reached via PrototypeDecl.type. Those
+    # should not also print at the top level (it would make the tree
+    # a DAG and double-print the same subtree).
+    referenced = _collect_referenced(top, resolved)
+    top = [el for el in top if id(el) not in referenced]
+
+    # Walk.
+    n = len(top)
+    for i, el in enumerate(top):
+        last = (i == n - 1)
+        _print_element(el, prefix="", is_last=last, depth=1,
+                       max_depth=max_depth, only_containers=only_containers,
+                       resolved=resolved)
+
+
+def _collect_referenced(top: list, resolved: dict) -> set:
+    """Return the set of ``id(element)`` for every composition/node
+    that is reached as a child of any cluster member or prototype in
+    the tree rooted at *top*. Caller hides these at top level.
+    """
+    seen: set[int] = set()
+    visited_clusters: set[int] = set()
+    visited_comps: set[int] = set()
+
+    def visit_cluster(cluster):
+        if id(cluster) in visited_clusters:
+            return
+        visited_clusters.add(id(cluster))
+        for sub in getattr(cluster, "elements", []):
+            if type(sub).__name__ != "ClusterMember":
+                continue
+            # The member's referenced composition (after resolution)
+            # is being absorbed into the cluster body — hide it at
+            # top level. Mark both the stub (for the rare case where
+            # someone references the stub) and the real one.
+            real_comp = resolved.get(id(sub.type), sub.type)
+            seen.add(id(real_comp))
+            seen.add(id(sub.type))
+            visit_composition(real_comp)
+
+    def visit_composition(comp):
+        if id(comp) in visited_comps:
+            return
+        visited_comps.add(id(comp))
+        for sub in getattr(comp, "elements", []):
+            if type(sub).__name__ == "PrototypeDecl":
+                seen.add(id(sub.type))
+
+    for el in top:
+        if type(el).__name__ == "ClusterDecl":
+            visit_cluster(el)
+        elif type(el).__name__ == "CompositionDecl":
+            visit_composition(el)
+
+    return seen
+
+
+def _is_container(el) -> bool:
+    """True for cluster/composition/node — the 'directory-like' kinds."""
+    return type(el).__name__ in (
+        "ClusterDecl", "CompositionDecl", "NodeDecl",
+    )
+
+
+def _print_element(el, *, prefix: str, is_last: bool, depth: int,
+                   max_depth, only_containers: bool, resolved: dict) -> None:
+    """Emit one element plus its children."""
+    branch = _LAST if is_last else _BRANCH
+    line = _summarize(el, resolved=resolved)
+    click.echo(f"{prefix}{branch}{line}")
+
+    if max_depth is not None and depth >= max_depth:
+        return
+
+    child_prefix = prefix + (_BLANK if is_last else _VBAR)
+    children = _children(el, only_containers=only_containers,
+                         resolved=resolved)
+    n = len(children)
+    for i, c in enumerate(children):
+        _print_element(c, prefix=child_prefix, is_last=(i == n - 1),
+                       depth=depth + 1, max_depth=max_depth,
+                       only_containers=only_containers, resolved=resolved)
+
+
+def _summarize(el, *, resolved: dict | None = None) -> str:
+    """One-line tree label for an element or sub-element."""
+    kind = type(el).__name__
+    if kind == "ClusterDecl":
+        return f"cluster {el.name}"
+    if kind == "CompositionDecl":
+        return f"composition {el.name}"
+    if kind == "NodeDecl":
+        return f"node atomic {el.name}"
+    if kind == "MessageDecl":
+        return f"message {el.name}"
+    if kind == "EnumDecl":
+        return f"enum {el.name}"
+    if kind == "SenderReceiverInterface":
+        return f"interface senderReceiver {el.name}"
+    if kind == "ClientServerInterface":
+        return f"interface clientServer {el.name}"
+    if kind == "BusDecl":
+        return f"bus {el.name} kind={el.kind}"
+    if kind == "GatewayRouteDecl":
+        return f"gateway_route -> node {el.node.name}"
+    # Inside-element kinds.
+    if kind == "ClusterMember":
+        return f"composition {_qualify(el.type)} {el.name}"
+    if kind == "ClusterConnect":
+        return _connect_summary(el)
+    if kind == "PrototypeDecl":
+        proc = f" on process {el.process}" if el.process else ""
+        return f"prototype {el.type.name} {el.name}{proc}"
+    if kind == "ConnectDecl":
+        return _connect_summary(el)
+    if kind == "TipcAddress":
+        return f"tipc type={_hex(el.type)} instance={_hex(el.instance)}"
+    if kind in ("SenderPort", "ReceiverPort", "ServerPort", "ClientPort"):
+        return _port_summary(el)
+    if kind == "MessageField":
+        rep = "repeated " if el.repeated else ""
+        type_str = _field_type(el.type)
+        return f"{rep}{type_str} {el.name}"
+    if kind == "EnumValue":
+        return f"{el.name} = {el.number}"
+    if kind == "DataElement":
+        return f"data {el.type.name} {el.name}"
+    if kind == "OperationDecl":
+        params = ", ".join(
+            f"{p.direction} {p.name}:{p.type.name}" for p in el.params
+        )
+        ret = f" returns {el.returns.name}" if el.returns else ""
+        return f"operation {el.name}({params}){ret}"
+    if kind == "NodeParam":
+        return f"param {el.name}:{el.type} = {el.default.value}"
+    return f"{kind} {getattr(el, 'name', '?')}"
+
+
+def _connect_summary(el) -> str:
+    s, t = el.source, el.target
+    sp = s.proto.name if hasattr(s.proto, "name") else str(s.proto)
+    tp = t.proto.name if hasattr(t.proto, "name") else str(t.proto)
+    return f"connect {sp}.{s.port} -> {tp}.{t.port}"
+
+
+def _port_summary(el) -> str:
+    kind = type(el).__name__
+    iface_name = getattr(el.iface, "name", "?")
+    rel = ""
+    if hasattr(el, "reliability") and el.reliability:
+        rel = f" {el.reliability}"
+    if kind == "SenderPort":
+        return f"sender {el.name} provides {iface_name}{rel}"
+    if kind == "ReceiverPort":
+        return f"receiver {el.name} requires {iface_name}{rel}"
+    if kind == "ServerPort":
+        return f"server {el.name} provides {iface_name}"
+    if kind == "ClientPort":
+        return f"client {el.name} requires {iface_name}"
+    return kind
+
+
+def _field_type(ft) -> str:
+    if getattr(ft, "kind", None):
+        return ft.kind
+    return getattr(ft.ref, "name", "?")
+
+
+def _hex(v) -> str:
+    """Format an int as 0x… (textX gives us the parsed string already)."""
+    if isinstance(v, str):
+        return v
+    try:
+        return f"0x{int(v):x}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _qualify(comp_decl) -> str:
+    """Reconstruct `<package>.<name>` from a CompositionDecl ref."""
+    name = comp_decl.name
+    parent = getattr(comp_decl, "parent", None)
+    while parent is not None and type(parent).__name__ != "Model":
+        parent = getattr(parent, "parent", None)
+    if parent is None or not getattr(parent, "name", None):
+        return name
+    return f"{parent.name}.{name}"
+
+
+def _children(el, *, only_containers: bool, resolved: dict | None = None):
+    """Return the sub-elements to descend into for this element.
+
+    *resolved* (id → real_element) lets us walk into the real
+    definition of a forward-decl: a ClusterMember pointing at a stub
+    composition descends into the real composition's body instead.
+    """
+    resolved = resolved or {}
+    kind = type(el).__name__
+    out: list = []
+    if kind == "ClusterDecl":
+        # Cluster's body: ClusterMembers + ClusterConnects (mixed in
+        # source order, accessible via .elements).
+        for sub in getattr(el, "elements", []):
+            t = type(sub).__name__
+            if only_containers and t == "ClusterConnect":
+                continue
+            out.append(sub)
+    elif kind == "ClusterMember":
+        # Descend into the referenced composition's body — using the
+        # resolved (real) composition if the in-tree one is a stub.
+        comp = resolved.get(id(el.type), el.type)
+        for sub in getattr(comp, "elements", []):
+            t = type(sub).__name__
+            if only_containers and t in ("ConnectDecl", "CompositionRefDecl"):
+                continue
+            out.append(sub)
+    elif kind == "PrototypeDecl":
+        # A prototype IS a node — descend into the node's body so the
+        # tree reaches ports/tipc/params at deep -L levels.
+        out.append(el.type)
+    elif kind == "CompositionDecl":
+        for sub in getattr(el, "elements", []):
+            t = type(sub).__name__
+            if only_containers and t in ("ConnectDecl", "CompositionRefDecl"):
+                continue
+            out.append(sub)
+    elif kind == "NodeDecl":
+        if not only_containers and getattr(el, "tipc", None):
+            out.append(el.tipc)
+        if not only_containers:
+            for p in getattr(el, "ports", []) or []:
+                out.append(p)
+            for p in getattr(el, "params", []) or []:
+                out.append(p)
+    elif kind == "MessageDecl":
+        if not only_containers:
+            for f in getattr(el, "fields", []) or []:
+                out.append(f)
+    elif kind == "EnumDecl":
+        if not only_containers:
+            for v in getattr(el, "values", []) or []:
+                out.append(v)
+    elif kind in ("SenderReceiverInterface",):
+        if not only_containers:
+            for d in getattr(el, "data", []) or []:
+                out.append(d)
+    elif kind == "ClientServerInterface":
+        if not only_containers:
+            for op in getattr(el, "operations", []) or []:
+                out.append(op)
+    return out
 
 
 @main.command("gen-proto", help="Emit .proto files (one per message).")
@@ -695,12 +1271,203 @@ def _resolve_rig(target: str, rig_attr: str | None):
 
 
 @main.command(
+    "audit-manifest",
+    help="Left-join an .art system tree against a vendor rig.py and "
+    "report manifest gaps. Walks every cluster/composition declared "
+    "in ART_FILE (transitively via `import` statements) and checks "
+    "that the rig.py module declares matching SwComponent/Application/"
+    "Process entries.\n\n"
+    "RIG_TARGET is a dotted module path, like `demo.manifest.rig`.",
+)
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("rig_target")
+@click.option(
+    "--rig",
+    "rig_attr",
+    default=None,
+    help="Name of the Rig / SoftwareSpecification attribute in the module.",
+)
+def audit_manifest_cmd(art_file: str, rig_target: str,
+                       rig_attr: str | None) -> None:
+    """Report what the rig.py is missing relative to .art declarations.
+
+    Three checks, in left-join shape (.art → rig.py):
+
+    1. **Cluster member → ApplicationManifest**: every
+       ``composition <CompFQN> <ident>`` line inside a cluster expects
+       an ``ApplicationManifest(name=<ident>)`` in the rig — or at
+       minimum a ``SwComponent`` whose ``art_node`` points at the
+       composition. Otherwise the cluster's .ipk has no manifest
+       counterpart and Puppet won't know where to deploy it.
+
+    2. **Composition → SwComponent**: every non-stub
+       ``composition X { ... }`` should have at least one
+       ``SwComponent`` whose ``art_node`` ends with ``/X`` — that
+       SwComponent's bazel_target is what gets built into the binary.
+
+    3. **Prototype-with-process → Process**: every
+       ``prototype NodeT name on process P#`` annotation should have
+       a ``Process(name=<name>)`` in the rig (or its supervisor
+       tree). Missing here means the supervisor won't spawn it.
+
+    Exit code: 0 if all present; 1 if gaps found.
+    """
+    model = _parse(art_file)
+    resolved = _resolve_forward_decls(art_file, model)
+
+    # Collect what the .art tree declares.
+    clusters: list = []                      # list of ClusterDecl
+    compositions_by_name: dict[str, object] = {}   # name → CompositionDecl
+    prototypes_with_process: list[tuple[str, str, str]] = []
+    # (composition_name, prototype_ident, process_id)
+
+    def _walk(el, seen: set):
+        if id(el) in seen:
+            return
+        seen.add(id(el))
+        kind = type(el).__name__
+        # Substitute stubs with resolved real defs.
+        real = resolved.get(id(el), el)
+        if id(real) != id(el) and id(real) not in seen:
+            _walk(real, seen)
+            return
+        if kind == "ClusterDecl":
+            clusters.append(el)
+            for sub in getattr(el, "elements", []):
+                if type(sub).__name__ == "ClusterMember":
+                    _walk(sub.type, seen)  # the composition it refers to
+        elif kind == "CompositionDecl":
+            if el.name and getattr(el, "elements", []):
+                compositions_by_name.setdefault(el.name, el)
+            for sub in getattr(el, "elements", []):
+                if type(sub).__name__ == "PrototypeDecl":
+                    proc = getattr(sub, "process", None)
+                    if proc:
+                        prototypes_with_process.append(
+                            (el.name, sub.name, proc),
+                        )
+
+    for el in model.elements:
+        _walk(el, set())
+
+    # Load the rig.
+    try:
+        rig = _resolve_rig(rig_target, rig_attr)
+    except SystemExit:
+        return
+
+    sw_components = [c for app in rig.applications for c in app.components]
+    apps_by_name = {a.name: a for a in rig.applications}
+    processes_by_name = {p.name: p for p in rig.execution_manifests}
+
+    def _has_sw_for_composition(comp_name: str) -> bool:
+        """True if any SwComponent's `art_node` matches this composition
+        — either directly (``.../<CompName>``) or via one of the node
+        types prototyped inside it (``.../<NodeType>``).
+
+        The looser match handles the convention where SwComponents
+        point at the daemon NODE (e.g. ``services.com/ComDaemon``)
+        even though they implement the COMPOSITION (``Com``).
+        """
+        comp = compositions_by_name.get(comp_name)
+        prototype_types: set[str] = set()
+        if comp is not None:
+            for sub in getattr(comp, "elements", []):
+                if type(sub).__name__ == "PrototypeDecl":
+                    t = getattr(sub.type, "name", None)
+                    if t:
+                        prototype_types.add(t)
+        for c in sw_components:
+            art_node = getattr(c, "art_node", "") or ""
+            leaf = art_node.rsplit("/", 1)[-1]
+            if leaf == comp_name or leaf in prototype_types:
+                return True
+        return False
+
+    # Run the three checks and collect gaps.
+    gaps: dict[str, list[str]] = {
+        "cluster_member_without_application_or_swcomponent": [],
+        "composition_without_swcomponent": [],
+        "prototype_process_without_process_entry": [],
+    }
+
+    for cluster in clusters:
+        for sub in getattr(cluster, "elements", []):
+            if type(sub).__name__ != "ClusterMember":
+                continue
+            ident = sub.name
+            comp = resolved.get(id(sub.type), sub.type)
+            comp_name = getattr(comp, "name", "?")
+            has_app = ident in apps_by_name
+            has_sw = _has_sw_for_composition(comp_name)
+            if not has_app and not has_sw:
+                gaps["cluster_member_without_application_or_swcomponent"].append(
+                    f"cluster {cluster.name}.{ident}  (composition {comp_name})",
+                )
+
+    for comp_name in sorted(compositions_by_name):
+        if not _has_sw_for_composition(comp_name):
+            gaps["composition_without_swcomponent"].append(
+                f"composition {comp_name}",
+            )
+
+    # Dedupe (composition, process-id) — one rig Process per process-id,
+    # not per prototype. Multiple prototypes share one Process when they
+    # are pinned `on process P1`.
+    process_groups: dict[tuple[str, str], list[str]] = {}
+    for comp_name, proto_name, proc in prototypes_with_process:
+        process_groups.setdefault((comp_name, proc), []).append(proto_name)
+    for (comp_name, proc), protos in sorted(process_groups.items()):
+        # Look for a Process whose name ends with the process-id token,
+        # case-insensitive (rig names look like `demo_p1`, art proc is `P1`).
+        proc_token = proc.lower()
+        if not any(
+            p.name.lower().endswith(f"_{proc_token}") or p.name.lower() == proc_token
+            for p in rig.execution_manifests
+        ):
+            gaps["prototype_process_without_process_entry"].append(
+                f"process {proc} in {comp_name}  (prototypes: {', '.join(protos)})",
+            )
+
+    # Report.
+    total = sum(len(v) for v in gaps.values())
+    click.echo(f"art: {art_file}")
+    click.echo(f"rig: {rig_target} -> {rig.vehicle.name!r}")
+    click.echo("")
+    click.echo(
+        f"clusters: {len(clusters)}  "
+        f"compositions: {len(compositions_by_name)}  "
+        f"prototypes-with-process: {len(prototypes_with_process)}",
+    )
+    click.echo(
+        f"rig: applications={len(rig.applications)}  "
+        f"sw_components={len(sw_components)}  "
+        f"processes={len(rig.execution_manifests)}",
+    )
+    click.echo("")
+    if total == 0:
+        click.secho("✓ no gaps — rig is aligned with art", fg="green")
+        return
+    click.secho(f"✗ {total} gaps:", fg="yellow")
+    for category, items in gaps.items():
+        if not items:
+            continue
+        click.echo(f"\n  {category}:")
+        for it in items:
+            click.echo(f"    - {it}")
+    sys.exit(1)
+
+
+@main.command(
     "generate-manifest",
-    help="Generate the full deploy manifest YAML for a vehicle rig. TARGET "
-    "is a dotted import path to a module exporting a Rig "
-    "or SoftwareSpecification "
-    "(e.g. vendor.vehicles.tornado.arsyscomp). Distinct from "
-    "`executor emit`, which only emits the supervisor tree.",
+    help="Emit the per-machine deploy manifest set for a vehicle rig. "
+    "TARGET is a dotted import path to a module exporting a Rig or "
+    "SoftwareSpecification (e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
+    "Writes <out>/<machine>/{machine,application,service,execution}.yaml "
+    "plus an <out>/index.yaml. Each ECU's Puppet flow reads its own "
+    "directory.\n\n"
+    "Use --flat to emit the legacy single-YAML view to stdout (or to "
+    "--out FILE) for inspection / debugging.",
 )
 @click.argument("target")
 @click.option(
@@ -712,48 +1479,67 @@ def _resolve_rig(target: str, rig_attr: str | None):
 )
 @click.option(
     "--out",
-    "out_file",
-    type=click.Path(dir_okay=False),
-    default=None,
-    help="Write the YAML manifest here. Defaults to stdout.",
+    "out_path",
+    type=click.Path(),
+    default="dist/manifest",
+    show_default=True,
+    help="Output directory (per-machine mode) or file (--flat mode).",
+)
+@click.option(
+    "--flat",
+    "flat",
+    is_flag=True,
+    default=False,
+    help="Emit the legacy single-YAML view of the whole rig instead of "
+    "per-machine directories. Goes to stdout when --out is the "
+    "default directory.",
 )
 def generate_manifest_cmd(
     target: str,
     rig_attr: str | None,
-    out_file: str | None,
+    out_path: str,
+    flat: bool,
 ) -> None:
-    """Run a vendor rig module and emit the full deploy manifest as YAML."""
-    import dataclasses
-    from enum import Enum
-    from ipaddress import IPv4Address, IPv6Address
-
-    import yaml
-
+    """Run a vendor rig module and emit the deploy manifest set."""
     rig = _resolve_rig(target, rig_attr)
 
-    # Recursive dataclass→dict that also unwraps Enums and IPvN to strings.
-    # asdict() can't be used directly: it doesn't know how to render Enum or
-    # IPv4Address into YAML-safe scalars.
-    def _serialize(v):
-        if dataclasses.is_dataclass(v) and not isinstance(v, type):
-            return {f.name: _serialize(getattr(v, f.name)) for f in dataclasses.fields(v)}
-        if isinstance(v, Enum):
-            return v.value
-        if isinstance(v, (IPv4Address, IPv6Address)):
-            return str(v)
-        if isinstance(v, (list, tuple)):
-            return [_serialize(x) for x in v]
-        if isinstance(v, dict):
-            return {k: _serialize(x) for k, x in v.items()}
-        return v
+    if flat:
+        import dataclasses
+        from enum import Enum
+        from ipaddress import IPv4Address, IPv6Address
 
-    doc = _serialize(rig)
-    yaml_text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
-    if out_file is None:
-        click.echo(yaml_text, nl=False)
-    else:
-        Path(out_file).write_text(yaml_text)
-        click.echo(out_file)
+        import yaml
+
+        def _serialize(v):
+            if dataclasses.is_dataclass(v) and not isinstance(v, type):
+                return {f.name: _serialize(getattr(v, f.name))
+                        for f in dataclasses.fields(v)}
+            if isinstance(v, Enum):
+                return v.value
+            if isinstance(v, (IPv4Address, IPv6Address)):
+                return str(v)
+            if isinstance(v, (list, tuple)):
+                return [_serialize(x) for x in v]
+            if isinstance(v, dict):
+                return {k: _serialize(x) for k, x in v.items()}
+            return v
+
+        doc = _serialize(rig)
+        yaml_text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+        # If --out was left at the default dir, write to stdout in --flat.
+        if out_path == "dist/manifest":
+            click.echo(yaml_text, nl=False)
+        else:
+            Path(out_path).write_text(yaml_text)
+            click.echo(out_path)
+        return
+
+    # Per-machine mode (default).
+    from .generators.dist_manifest import emit_dist_manifest
+
+    written = emit_dist_manifest(rig, Path(out_path))
+    for p in written:
+        click.echo(str(p))
 
 
 @main.group("executor", help="Erlang-style executor commands.")

@@ -239,6 +239,59 @@ class HardwareResource:
 
 
 # ---------------------------------------------------------------------------
+# Deploy-time provisioning (project-local; outside AUTOSAR's scope).
+# ---------------------------------------------------------------------------
+#
+# Puppet runs two phases per ECU:
+#
+#   1. Provisioning  — installs OS-level deps (apt/opkg packages) and
+#                      drops Theia opkg artifacts (gateway, supervisor)
+#                      under /opt/theia/, registering their systemd
+#                      units. Full reprovisioning includes services/db
+#                      offline migration.
+#   2. Orchestration — replaces application .ipks under /opt/theia/apps/
+#                      and reloads systemd. Doesn't touch gateway /
+#                      supervisor.
+#
+# `Machine.os_packages` and `Machine.opkg_artifacts` declare the
+# provisioning inputs; the orchestration view (per-application .ipks)
+# lives in `ApplicationManifest`.
+
+
+@dataclass
+class OsPackage:
+    """An OS-level package the provisioning phase installs.
+
+    Used for both Ubuntu apt (.deb) on HostMachines and opkg on
+    TargetMachines. ``source`` distinguishes which package manager.
+    """
+
+    name: str
+    version: str = ""               # optional pin; empty = "latest"
+    source: str = "apt"             # "apt" | "opkg" | "pip" | ...
+
+
+@dataclass
+class OpkgArtifact:
+    """A Theia-built opkg artifact dropped on the ECU.
+
+    Distinct from :class:`OsPackage` — these aren't in any distro's
+    repository; they're our own opkg files built from the rig and
+    pushed by Puppet. Each carries a systemd unit so it starts under
+    init.
+
+    Conventionally landed under ``/opt/theia/<name>/`` with a
+    matching systemd service ``theia-<name>.service``.
+    """
+
+    name: str                            # e.g. "supervisor", "gateway"
+    bazel_target: str = ""               # e.g. "//platform/supervisor:ipk"
+    target_dir: str = ""                 # default /opt/theia/<name>/
+    systemd_unit: str = ""               # path or inline unit text
+    enable_on_boot: bool = True
+
+
+# ---------------------------------------------------------------------------
 # Machine (root, §9.1)
 # ---------------------------------------------------------------------------
 
@@ -306,6 +359,17 @@ class Machine(Identifiable):
     # reference to MachineKind (defined below). Compared by value
     # against ``MachineKind.TARGET.value`` etc. in downstream code.
     kind: str = "target"
+
+    # Provisioning inputs (project-local, see OsPackage / OpkgArtifact
+    # docstrings above). Both default to empty lists so existing rigs
+    # build unchanged.
+    #
+    # `os_packages` — apt or opkg packages from the distro/feed.
+    #   Example: [OsPackage("etcd-server"), OsPackage("libsystemd0")]
+    # `opkg_artifacts` — our own Theia ipks (supervisor, gateway, …)
+    #   dropped under /opt/theia/ by Puppet.
+    os_packages: list[OsPackage] = field(default_factory=list)
+    opkg_artifacts: list[OpkgArtifact] = field(default_factory=list)
 
 
 # Legacy alias — keep existing callers compiling.

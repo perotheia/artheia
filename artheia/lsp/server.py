@@ -57,7 +57,11 @@ _KEYWORDS = [
     "ports", "sender", "receiver", "client", "server",
     "provides", "requires",
     "composition", "prototype", "connect", "to",
+    "cluster",
     "params",
+    "reliable", "best_effort",
+    "kick_off", "requires_timers", "config",
+    "on", "process",
     "bus", "kind", "channels",
     "gateway_route", "can", "flexray", "id", "slot", "channel",
     "channel_idx", "dlc", "extended_id", "rtr", "cycle", "pdu_offset",
@@ -74,6 +78,85 @@ _KEYWORDS = [
 def _uri_to_path(uri: str) -> Path:
     parsed = urlparse(uri)
     return Path(unquote(parsed.path))
+
+
+def _line_prefix(source: str, pos: "lsp.Position") -> str:
+    """Slice of *source* from the start of *pos*'s line up to the cursor."""
+    line_no = pos.line
+    # find the offset of line `line_no`
+    start = 0
+    cur = 0
+    for _ in range(line_no):
+        nl = source.find("\n", start)
+        if nl == -1:
+            return ""
+        start = nl + 1
+        cur = start
+    # advance up to `pos.character` columns within this line
+    line_end = source.find("\n", start)
+    if line_end == -1:
+        line_end = len(source)
+    return source[start:start + pos.character]
+
+
+_IMPORT_RE = re.compile(r"^\s*import\s+([\w.*]*)$")
+
+# Identifier characters at the END of the line prefix. We only suggest
+# completions when this is non-empty (or completion is explicitly
+# invoked). Matches the trailing run of [A-Za-z0-9_].
+_TRAILING_IDENT_RE = re.compile(r"([A-Za-z_][\w]*)$")
+
+
+def _identifier_prefix(line_prefix: str) -> str:
+    """Return the trailing identifier on this line, or '' if none.
+
+    Examples:
+      'cluster Pla'       → 'Pla'
+      'cluster '          → ''
+      ''                  → ''
+      'foo.bar'           → 'bar'  (after the dot)
+      'connect a.b to c'  → 'c'
+    """
+    m = _TRAILING_IDENT_RE.search(line_prefix)
+    return m.group(1) if m else ""
+
+
+def _import_prefix(line_prefix: str) -> "str | None":
+    """If *line_prefix* looks like an in-progress `import …`, return
+    the dotted FQN typed so far (possibly empty); else None.
+
+    Examples:
+      'import '                       → ''
+      'import system.'                → 'system.'
+      'import system.autosar.mlb'     → 'system.autosar.mlb'
+      'import system.demo.* // ...'   → None (matched a comment / extra)
+      'cluster Platform {'            → None
+    """
+    m = _IMPORT_RE.match(line_prefix)
+    if m is None:
+        return None
+    return m.group(1)
+
+
+def _workspace_root_for_doc(doc_path: Path) -> "Path | None":
+    """Walk up from *doc_path*'s directory looking for a `platform/system/`
+    sibling — that's our conventional workspace root marker. The
+    *workspace root* is the directory that CONTAINS `platform/system/`
+    (so imports like `system.demo` resolve under
+    ``<root>/system/demo/`` via the symlinked tree under
+    ``platform/system/``).
+
+    Falls back to the directory containing doc_path if no marker is
+    found (best-effort — still gives reasonable completion).
+    """
+    d = doc_path.parent
+    for _ in range(20):  # bounded walk
+        if (d / "platform" / "system").is_dir():
+            return d / "platform" / "system"
+        if d.parent == d:
+            break
+        d = d.parent
+    return doc_path.parent
 
 
 def _offset_to_position(text: str, offset: int) -> lsp.Position:
@@ -329,28 +412,164 @@ def create_server() -> LanguageServer:
 
     @ls.feature(
         lsp.TEXT_DOCUMENT_COMPLETION,
-        lsp.CompletionOptions(trigger_characters=[".", " ", "\n"]),
+        # ONLY '.' is a trigger character. Whitespace must NOT be a
+        # trigger — typing a space or pressing Enter must not pop the
+        # menu (and risk auto-insertion as the cursor moves).
+        lsp.CompletionOptions(trigger_characters=["."]),
     )
     def _completion(params: lsp.CompletionParams):
         state = ws.docs.get(params.text_document.uri)
+        doc = ls.workspace.get_text_document(params.text_document.uri)
+        line_prefix = _line_prefix(doc.source, params.position)
+
+        # Context-sensitive: on an `import` line, suggest sibling
+        # subpackages (file-system directories) instead of dumping
+        # every keyword + workspace symbol.
+        import_path = _import_prefix(line_prefix)
+        if import_path is not None:
+            return _import_path_completions(
+                params.text_document.uri, import_path,
+            )
+
+        # Anti-noise rule: outside of explicit invocation (Ctrl+Space),
+        # only offer completions when the user has actually typed an
+        # identifier prefix at the cursor. This prevents the menu from
+        # popping (and auto-inserting) on arrow-key navigation or after
+        # whitespace.
+        trigger_kind = None
+        if params.context is not None:
+            trigger_kind = params.context.trigger_kind
+        invoked = trigger_kind == lsp.CompletionTriggerKind.Invoked
+        partial = _identifier_prefix(line_prefix)
+        if not invoked and not partial:
+            return lsp.CompletionList(is_incomplete=False, items=[])
+
         items: list[lsp.CompletionItem] = []
         for kw in _KEYWORDS:
+            if partial and not kw.lower().startswith(partial.lower()):
+                continue
             items.append(lsp.CompletionItem(
                 label=kw,
                 kind=lsp.CompletionItemKind.Keyword,
             ))
         for sym in _workspace_symbols():
+            if partial and not sym.lower().startswith(partial.lower()):
+                continue
             items.append(lsp.CompletionItem(
                 label=sym,
                 kind=lsp.CompletionItemKind.Class,
                 detail="(workspace symbol)",
             ))
         for sym in sorted(ws.catalog_messages):
+            if partial and not sym.lower().startswith(partial.lower()):
+                continue
             items.append(lsp.CompletionItem(
                 label=sym,
                 kind=lsp.CompletionItemKind.Struct,
                 detail="(gateway message)",
             ))
+        return lsp.CompletionList(is_incomplete=False, items=items)
+
+    def _import_path_completions(
+        doc_uri: str, prefix: str,
+    ) -> lsp.CompletionList:
+        """Suggest subpackage names for an `import <prefix>` line.
+
+        *prefix* is the dotted FQN typed so far, ending in either a
+        dot (descend into) or a partial segment (filter siblings).
+        Examples:
+          ""                        → top-level packages reachable from root
+          "system."                 → subdirs of <root>/system/
+          "system.autosar."         → subdirs of <root>/system/autosar/
+          "system.autosar.mlb"      → siblings of <root>/system/autosar/
+                                       starting with "mlb"
+        File-system-only: no parsing, no model state.
+        """
+        # Determine the workspace root for the `system.*` package
+        # namespace. By convention root points at `<...>/platform/system/`
+        # — the directory itself IS the `system` package. So an
+        # `import system.foo.bar` resolves to root/foo/bar, NOT
+        # root/system/foo/bar (we strip the leading `system` segment).
+        doc_path = _uri_to_path(doc_uri)
+        root = _workspace_root_for_doc(doc_path)
+        if root is None:
+            return lsp.CompletionList(is_incomplete=False, items=[])
+
+        # Split: "system.autosar." → dir part "autosar", partial = ""
+        #        "system.autosar.mlb" → dir part "autosar", partial = "mlb"
+        if prefix.endswith("."):
+            dir_parts = prefix[:-1].split(".") if prefix[:-1] else []
+            partial = ""
+        elif "." in prefix:
+            head, _, partial = prefix.rpartition(".")
+            dir_parts = head.split(".")
+        else:
+            dir_parts = []
+            partial = prefix
+
+        # Strip the leading namespace segment (the package the root dir
+        # already represents). Empty prefix → suggest the namespace
+        # itself (so the user can start with `import system.`).
+        root_seg = root.name  # 'system'
+        if dir_parts and dir_parts[0] == root_seg:
+            dir_parts = dir_parts[1:]
+        elif not dir_parts and not partial:
+            # Empty prefix — suggest the namespace.
+            return lsp.CompletionList(
+                is_incomplete=False,
+                items=[lsp.CompletionItem(
+                    label=root_seg,
+                    kind=lsp.CompletionItemKind.Module,
+                    detail=f"(namespace · {root})",
+                )],
+            )
+        elif not dir_parts and partial and root_seg.startswith(partial):
+            # User typed a partial first segment.
+            return lsp.CompletionList(
+                is_incomplete=False,
+                items=[lsp.CompletionItem(
+                    label=root_seg,
+                    kind=lsp.CompletionItemKind.Module,
+                )],
+            )
+
+        target = root
+        for seg in dir_parts:
+            target = target / seg
+            if not target.is_dir():
+                return lsp.CompletionList(is_incomplete=False, items=[])
+
+        items: list[lsp.CompletionItem] = []
+        try:
+            for child in sorted(target.iterdir()):
+                if not child.is_dir():
+                    continue
+                name = child.name
+                if name.startswith("."):
+                    continue
+                if partial and not name.startswith(partial):
+                    continue
+                items.append(lsp.CompletionItem(
+                    label=name,
+                    kind=lsp.CompletionItemKind.Module,
+                    detail=f"(package · {target}/{name})",
+                ))
+            # If the partial-typed path resolves to an actual leaf
+            # package (no further subdirs but contains .art), offer
+            # `*` as the final segment.
+            leaf_dir = target if not partial else target / partial
+            if leaf_dir.is_dir() and not any(
+                c.is_dir() and not c.name.startswith(".")
+                for c in leaf_dir.iterdir()
+            ):
+                # Leaf package — wildcard hint.
+                items.append(lsp.CompletionItem(
+                    label="*",
+                    kind=lsp.CompletionItemKind.Constant,
+                    detail="(import every symbol from this package)",
+                ))
+        except OSError:
+            pass
         return lsp.CompletionList(is_incomplete=False, items=items)
 
     return ls

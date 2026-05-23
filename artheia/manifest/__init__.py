@@ -19,6 +19,8 @@ Plus three supporting modules:
   :class:`Override` primitives the layer system runs on.
 - :mod:`.clusters` — :data:`CLUSTERS` catalogue of the 18 Adaptive
   Platform Functional Clusters by short name.
+- :mod:`.cluster` — :class:`Cluster` / :class:`ClusterMember` for the
+  artheia ``cluster Foo { ... }`` deployment-bundle primitive.
 
 See ``docs/autosar/manifest.md`` for the conceptual model.
 """
@@ -26,6 +28,13 @@ See ``docs/autosar/manifest.md`` for the conceptual model.
 from artheia.manifest.application import (  # noqa: F401
     ApplicationManifest,
     SwComponent,
+)
+from artheia.manifest.cluster import (  # noqa: F401
+    Cluster,
+    ClusterConnect,
+    ClusterMember,
+    ClusterPort,
+    cluster_from_ast,
 )
 from artheia.manifest.clusters import (  # noqa: F401
     BY_SHORT as CLUSTER_BY_SHORT,
@@ -39,6 +48,8 @@ from artheia.manifest.machine import (  # noqa: F401
     HardwareResource,
     MachineKind,
     MachineManifest,
+    OpkgArtifact,
+    OsPackage,
 )
 # PlatformBase / PlatformApplication / PlatformServices are resolved
 # lazily inside artheia.manifest.platform (services.manifest.fc imports
@@ -74,6 +85,9 @@ __all__ = [
     "ApplicationManifest",
     "CLUSTERS",
     "CLUSTER_BY_SHORT",
+    "Cluster",
+    "ClusterMember",
+    "cluster_from_ast",
     "CpuArchitecture",
     "ExecutionManifest",
     "FunctionalCluster",
@@ -83,6 +97,8 @@ __all__ = [
     "Layer",
     "MachineKind",
     "MachineManifest",
+    "OpkgArtifact",
+    "OsPackage",
     "Override",
     "Remove",
     "RestartStrategy",

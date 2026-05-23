@@ -23,6 +23,7 @@ TopLevelElement:
     | InterfaceDecl
     | NodeDecl
     | CompositionDecl
+    | ClusterDecl
     | BusDecl
     | GatewayRouteDecl
 ;
@@ -214,6 +215,54 @@ ConnectDecl:
 
 PortRef:
     proto=[PrototypeDecl] '.' port=ID
+;
+
+// ---- 4b. Clusters (deployment / packaging unit) ---------------------------
+//
+// A cluster is a bundle of compositions deployed together. The cluster
+// name maps to a *Distribution* (multi-machine tar bundle, e.g.
+// Platform_central.tar + Platform_compute.tar). Each composition
+// member becomes a separate package (.ipk / .deb), keyed by the
+// instance name (e.g. `composition system.services.Services services`
+// produces services.ipk).
+//
+// Grammar stays minimal: a cluster is just a list of composition
+// references. Per-member deploy attributes (package_name override,
+// machine_kind assignment, etc.) live in the Python manifest layer
+// (`artheia/manifest/cluster.py`), not in .art. This keeps the .art
+// architectural-only and lets rig.py do the actual machine binding.
+//
+// node = thread; composition = executable; cluster = package bundle
+// (distribution). Composition-of-composition was the old shape; this
+// is the replacement.
+
+ClusterDecl:
+    'cluster' name=ID '{'
+        elements*=ClusterElement
+    '}'
+;
+
+ClusterElement:
+    ClusterMember | ClusterConnect
+;
+
+ClusterMember:
+    'composition' type=[CompositionDecl|FQN] name=ID
+;
+
+// Cross-composition wiring lives in the cluster (the deployment unit
+// owns the inter-process topology). Connects inside a cluster are
+// EXTERNAL messages — TIPC across processes — while connects inside
+// a composition are INTERNAL actor-mailbox messages.
+//
+// The PortRef shape is identical in both: `<prototype>.<port>`.
+// Prototype names are globally unique across the model (textX scope),
+// so a prototype name uniquely identifies one node, and one node has
+// one TIPC endpoint. The cluster connect doesn't need to qualify the
+// prototype with its composition.
+
+ClusterConnect:
+    'connect' source=PortRef 'to' target=PortRef
 ;
 
 // ---- 5. Params (ROS2-style, etcd-backed; no migrations) -------------------

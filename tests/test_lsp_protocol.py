@@ -227,20 +227,73 @@ def test_broken_file_surfaces_diagnostic(lsp_client: _LspClient, tmp_path: Path)
 
 
 def test_completion_returns_keywords_and_symbols(lsp_client: _LspClient, tmp_path: Path):
+    """The LSP's completion contract has three branches:
+
+      1. Cursor on whitespace with no identifier prefix and no
+         explicit invocation → empty list. This prevents the menu
+         from popping (and auto-inserting) on arrow-key navigation;
+         see `docs/tasks/BACKLOG/vscode-art-premature-completion.md`.
+      2. Identifier prefix typed → keywords + symbols filtered to
+         those starting with that prefix (case-insensitive).
+      3. Explicit invocation (Ctrl+Space, TriggerKind=Invoked) →
+         full keyword + symbol list.
+    """
     f = tmp_path / "doc.art"
     f.write_text(_GOOD_SRC)
     uri = f.as_uri()
     _did_open(lsp_client, uri, _GOOD_SRC)
     lsp_client.wait_notification("textDocument/publishDiagnostics")
+
+    # Branch 1: empty line with no prefix and no explicit invocation.
+    # Cursor at line 6 col 0 (the trailing empty line after `}`).
     resp = lsp_client.request("textDocument/completion", {
         "textDocument": {"uri": uri},
         "position": {"line": 6, "character": 0},
     })
-    items = resp["result"]["items"]
-    labels = {item["label"] for item in items}
-    # keywords present
+    assert resp["result"]["items"] == [], (
+        "premature completion: arrow-key cursor movement must NOT pop the menu"
+    )
+
+    # Branch 2: identifier prefix at the cursor. Simulate by sending
+    # a didChange that adds `mes` on a fresh line, then completion at
+    # the end of that line.
+    src_with_prefix = _GOOD_SRC + "mes"
+    lsp_client.notify("textDocument/didChange", {
+        "textDocument": {"uri": uri, "version": 2},
+        "contentChanges": [{"text": src_with_prefix}],
+    })
+    lsp_client.wait_notification("textDocument/publishDiagnostics")
+    typed_line = src_with_prefix.count("\n")  # last (incomplete) line
+    typed_col = len(src_with_prefix.split("\n")[-1])
+    resp = lsp_client.request("textDocument/completion", {
+        "textDocument": {"uri": uri},
+        "position": {"line": typed_line, "character": typed_col},
+    })
+    labels = {item["label"] for item in resp["result"]["items"]}
+    assert "message" in labels, (
+        f"prefix `mes` should match keyword `message`; got {labels!r}"
+    )
+    # And it should be FILTERED — `composition` doesn't start with `mes`.
+    assert "composition" not in labels, (
+        f"prefix `mes` must NOT match `composition`; got {labels!r}"
+    )
+
+    # Branch 3: explicit invocation → full list regardless of prefix.
+    # Restore the file to the original good source first.
+    lsp_client.notify("textDocument/didChange", {
+        "textDocument": {"uri": uri, "version": 3},
+        "contentChanges": [{"text": _GOOD_SRC}],
+    })
+    lsp_client.wait_notification("textDocument/publishDiagnostics")
+    resp = lsp_client.request("textDocument/completion", {
+        "textDocument": {"uri": uri},
+        "position": {"line": 6, "character": 0},
+        "context": {"triggerKind": 1},  # 1 = Invoked (Ctrl+Space)
+    })
+    labels = {item["label"] for item in resp["result"]["items"]}
     assert {"node", "composition", "message", "gateway_route"}.issubset(labels)
-    # workspace symbols from the parsed file present
+    # Workspace symbols from the parsed file are also present on
+    # explicit invocation.
     assert {"M", "If", "N"}.issubset(labels)
 
 
