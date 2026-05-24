@@ -20,7 +20,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <mutex>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -126,6 +128,25 @@ public:
     static constexpr const char* kNodeName = "{{ n.snake }}";
     static constexpr uint32_t kTipcType     = {{ n.tipc_type }}u;
     static constexpr uint32_t kTipcInstance = {{ n.tipc_instance }}u;
+
+    // AUTOSAR Reporting / Non-Reporting flag (per .art `reporting`
+    // field). See doc on the non-statem Daemon template for full
+    // semantics. statem-flavour FCs use the same per-(node, msg_type)
+    // filter map as plain GenServer ones.
+    static constexpr bool kReporting = {{ "true" if n.reporting else "false" }};
+
+{% if n.reporting %}
+    // ---- Trace config (reporting=true only) -----------------------
+    void trace_enable(const char* msg_type, bool enabled);
+    bool trace_enabled(const char* msg_type) const;
+    void trace_clear_all();
+
+private:
+    std::mutex trace_filter_mu_;
+    std::map<std::string, bool> trace_filter_;
+
+public:
+{% endif %}
 
     {{ n.name }}State init({{ n.name }}Data& /*d*/) {
         return {{ n.name }}State::{{ n.statem.initial }};
@@ -287,6 +308,35 @@ inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}&
 {% endfor -%}
 {% endfor %}
 {%- endif %}{# end if n.statem #}
+
+{% if n.reporting %}
+// ---- Trace config inline impls (reporting=true) -----------------
+//
+// Same filter-map shape as the GenServer-flavour template. The
+// statem-side emit path consults this map via Tracer.hh (#355).
+inline void {{ n.name }}::trace_enable(const char* msg_type, bool enabled) {
+    if (msg_type == nullptr) return;
+    std::lock_guard<std::mutex> lk(trace_filter_mu_);
+    if (enabled) {
+        trace_filter_[msg_type] = true;
+    } else {
+        trace_filter_.erase(msg_type);
+    }
+}
+
+inline bool {{ n.name }}::trace_enabled(const char* msg_type) const {
+    if (msg_type == nullptr) return false;
+    std::lock_guard<std::mutex> lk(
+        const_cast<std::mutex&>(trace_filter_mu_));
+    auto it = trace_filter_.find(msg_type);
+    return it != trace_filter_.end() && it->second;
+}
+
+inline void {{ n.name }}::trace_clear_all() {
+    std::lock_guard<std::mutex> lk(trace_filter_mu_);
+    trace_filter_.clear();
+}
+{% endif %}
 {% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}

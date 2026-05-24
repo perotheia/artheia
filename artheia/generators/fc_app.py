@@ -101,6 +101,12 @@ class _NodeView:
     upper: str             # uppercase + underscore (SM_DAEMON)
     tipc_type: str
     tipc_instance: str
+    # AUTOSAR Reporting/Non-Reporting flag. True (default) means
+    # gen-app emits per-(node, msg_type) trace_enable / trace_enabled
+    # / trace_clear_all methods on the daemon (#363). The Tracer-hh
+    # emit path consults the filter map (#355). reporting=false
+    # nodes have no trace API.
+    reporting: bool = True
     ports: list[_Port] = field(default_factory=list)
     # When the .art's NodeDecl has a `statem { ... }` block, this is
     # the validated StateMSpec lowered from the AST. None for plain
@@ -241,12 +247,17 @@ def _to_snake(name: str) -> str:
 
 
 def _node_view(node) -> _NodeView:
+    # model/inherit's _apply_node_defaults guarantees reporting is
+    # always populated as the string "true" or "false" by the time
+    # we see it. Default-true: missing/empty is treated as reporting.
+    reporting_raw = (getattr(node, "reporting", "") or "true").lower()
     nv = _NodeView(
         name=node.name,
         snake=_to_snake(node.name),
         upper=node.name.upper(),
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
+        reporting=(reporting_raw == "true"),
         statem=statem_from_ast(node),  # None when node has no statem block
     )
     for p in (node.ports or []):
