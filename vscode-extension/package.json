@@ -2,7 +2,7 @@
   "name": "artheia",
   "displayName": "Artheia DSL",
   "description": "Language support for Artheia — host-side DSL for Adaptive-AUTOSAR-style components.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "artheia",
   "license": "MIT",
   "engines": {
@@ -51,7 +51,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch":   "tsc -watch -p ./",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
