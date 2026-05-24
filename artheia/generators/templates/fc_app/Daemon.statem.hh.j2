@@ -137,15 +137,19 @@ public:
 
 {% if n.reporting %}
     // ---- Trace config (reporting=true only) -----------------------
-    void trace_enable(const char* msg_type, bool enabled);
-    bool trace_enabled(const char* msg_type) const;
-    void trace_clear_all();
-
-private:
-    std::mutex trace_filter_mu_;
-    std::map<std::string, bool> trace_filter_;
-
-public:
+    // Delegates to the process-wide Tracer per #355; see the
+    // non-statem Daemon template for full semantics.
+    void trace_enable(const char* msg_type, bool enabled) {
+        ::demo::runtime::tracer_for(kNodeName).trace_enable(
+            msg_type, enabled);
+    }
+    bool trace_enabled(const char* msg_type) const {
+        return ::demo::runtime::tracer_for(kNodeName)
+            .trace_filter_passes(msg_type);
+    }
+    void trace_clear_all() {
+        ::demo::runtime::tracer_for(kNodeName).trace_clear_all();
+    }
 {% endif %}
 
     {{ n.name }}State init({{ n.name }}Data& /*d*/) {
@@ -309,34 +313,8 @@ inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}&
 {% endfor %}
 {%- endif %}{# end if n.statem #}
 
-{% if n.reporting %}
-// ---- Trace config inline impls (reporting=true) -----------------
-//
-// Same filter-map shape as the GenServer-flavour template. The
-// statem-side emit path consults this map via Tracer.hh (#355).
-inline void {{ n.name }}::trace_enable(const char* msg_type, bool enabled) {
-    if (msg_type == nullptr) return;
-    std::lock_guard<std::mutex> lk(trace_filter_mu_);
-    if (enabled) {
-        trace_filter_[msg_type] = true;
-    } else {
-        trace_filter_.erase(msg_type);
-    }
-}
-
-inline bool {{ n.name }}::trace_enabled(const char* msg_type) const {
-    if (msg_type == nullptr) return false;
-    std::lock_guard<std::mutex> lk(
-        const_cast<std::mutex&>(trace_filter_mu_));
-    auto it = trace_filter_.find(msg_type);
-    return it != trace_filter_.end() && it->second;
-}
-
-inline void {{ n.name }}::trace_clear_all() {
-    std::lock_guard<std::mutex> lk(trace_filter_mu_);
-    trace_filter_.clear();
-}
-{% endif %}
+{# Trace config impls are inline in the class body (delegate to
+   tracer_for(kNodeName)) — no out-of-class definitions needed. #}
 {% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}
