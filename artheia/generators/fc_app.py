@@ -48,6 +48,7 @@ from typing import Iterable, Optional
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ..model import parse_file
+from ..manifest.statem import StateMSpec, statem_from_ast
 from .proto import _proto_package_name
 
 
@@ -87,6 +88,11 @@ class _NodeView:
     tipc_type: str
     tipc_instance: str
     ports: list[_Port] = field(default_factory=list)
+    # When the .art's NodeDecl has a `statem { ... }` block, this is
+    # the validated StateMSpec lowered from the AST. None for plain
+    # GenServer-shaped FCs. Templates branch on `node.statem` being
+    # truthy / None to pick GenStateM-vs-GenServer skeleton.
+    statem: Optional[StateMSpec] = None
 
 
 @dataclass
@@ -176,6 +182,7 @@ def _node_view(node) -> _NodeView:
         upper=node.name.upper(),
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
+        statem=statem_from_ast(node),  # None when node has no statem block
     )
     for p in (node.ports or []):
         nv.ports.append(_port_view(p))
@@ -312,10 +319,20 @@ def generate_fc(
         "source_file": str(art_path),
     }
 
+    # Template-pair selection. `.statem.` templates derive from
+    # demo::runtime::GenStateM<T,S,D>, emit a per-event handle_event
+    # table + on_enter user-hook. Plain templates derive from
+    # demo::runtime::GenServer<T,S> with handle_cast/handle_call only.
+    # The .art's `statem { ... }` block on ANY node trips the
+    # statem-variant for the whole FC (single-node FCs are the common
+    # case; multi-node FCs with mixed statem/non-statem aren't a
+    # shape we ship yet).
+    statem_suffix = ".statem" if mv.has_statem else ""
+
     # --- lib slice (regen) -------------------------------------------------
     lib_dir = out_dir / "lib"
     p = lib_dir / f"{mv.daemon_class}.hh"
-    results[_write(p, env.get_template("Daemon.hh.j2").render(**ctx),
+    results[_write(p, env.get_template(f"Daemon{statem_suffix}.hh.j2").render(**ctx),
                     overwrite=True)].append(str(p))
     p = lib_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.lib.bazel.j2").render(**ctx),
@@ -324,7 +341,7 @@ def generate_fc(
     # --- main slice (regen) ------------------------------------------------
     main_dir = out_dir / "main"
     p = main_dir / "main.cc"
-    results[_write(p, env.get_template("main.cc.j2").render(**ctx),
+    results[_write(p, env.get_template(f"main{statem_suffix}.cc.j2").render(**ctx),
                     overwrite=True)].append(str(p))
     p = main_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.main.bazel.j2").render(**ctx),
@@ -333,7 +350,7 @@ def generate_fc(
     # --- impl slice (write-once unless --force) ---------------------------
     impl_dir = out_dir / "impl"
     p = impl_dir / f"{mv.daemon_class}_handlers.cc"
-    results[_write(p, env.get_template("handlers.cc.j2").render(**ctx),
+    results[_write(p, env.get_template(f"handlers{statem_suffix}.cc.j2").render(**ctx),
                     overwrite=force)].append(str(p))
     p = impl_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.impl.bazel.j2").render(**ctx),
