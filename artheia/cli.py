@@ -725,6 +725,50 @@ def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
 
 
 @main.command(
+    "gen-trace-decoder-subset",
+    help="Emit the per-rig trace-decoder subset .cc. Walks the cluster "
+    "netgraph + PSP netgraph for the union of message types this rig "
+    "actually uses; emits a registration table that drives "
+    "libtrace_decoder.so. PSP has ~4500 messages but a real rig uses ~100 — "
+    "this slims the .so accordingly. Consumed by supdbg + supervisor-gui's "
+    "trace panel; the rf-theia Robot trace adapter uses py-proto reflection "
+    "directly and does NOT need this output.",
+)
+@click.option(
+    "--cluster-netgraph",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Cluster netgraph JSON (output of `artheia gen-netgraph`).",
+)
+@click.option(
+    "--psp-netgraph",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="PSP / gateway netgraph JSON (output of `artheia gen-psp-netgraph`).",
+)
+@click.option(
+    "--out",
+    "out_file",
+    required=True,
+    type=click.Path(dir_okay=False),
+    help="Where to write the generated .cc (e.g. "
+    "platform/runtime/trace_decoder/generated/decoders.cc).",
+)
+def gen_trace_decoder_subset(
+    cluster_netgraph: str | None,
+    psp_netgraph: str | None,
+    out_file: str,
+) -> None:
+    from .generators.trace_decoder_subset import generate as _gen
+    p = _gen(
+        cluster_netgraph=cluster_netgraph,
+        psp_netgraph=psp_netgraph,
+        out_file=out_file,
+    )
+    click.echo(str(p))
+
+
+@main.command(
     "gen-rig",
     help="Bootstrap a vendor rig.py from a top-level .art composition. "
     "Walks `prototype <Node> name on process <P>` lines, groups by "
