@@ -221,6 +221,70 @@ def _walk_connects(model) -> Iterable:
                 yield el
 
 
+def _iface_directional_messages(iface, src_port_kind: str
+                                  ) -> list[tuple[str, str]]:
+    """Return [(direction, msg_name), ...] for every message on the
+    interface, FROM THE PERSPECTIVE OF THE SOURCE PORT OF A CONNECT.
+
+    The connect arrow is `src.port → tgt.port`. The source port has a
+    kind (sender/receiver/client/server) that fixes how messages flow:
+
+      - **SenderPort**   → ReceiverPort: every `data` element on the
+        SR interface flows source→target. All msgs are direction="out"
+        on the source side.
+      - **ReceiverPort** → SenderPort: same data elements, opposite
+        sense — source receives them. (Unusual: connects normally go
+        sender→receiver. Still surfaced for completeness.)
+      - **ClientPort**   → ServerPort: per CS operation, the `in`
+        request param flows source→target ("out" on source); the
+        `returns` reply flows target→source ("in" on source).
+      - **ServerPort**   → ClientPort: same operations, opposite —
+        reqs come "in", reps go "out".
+
+    Distinct from :func:`_iface_messages` (which flattens for proto
+    include enumeration). This one preserves direction so the
+    netgraph routing tables are right for clientServer too — a Reply
+    message should NOT be in the client's outbound destinations, and
+    a Request should NOT be in the server's outbound destinations.
+    """
+    cls = iface.__class__.__name__
+    if cls == "SenderReceiverInterface":
+        # Sender→Receiver: data flows in connect-arrow direction.
+        # The connect arrow being SenderPort→ReceiverPort is the
+        # normal shape (an ad-hoc Receiver→Sender connect is rare
+        # but legal in textX; treat it as a back-arrow).
+        if src_port_kind == "SenderPort":
+            return [("out", d.type.name) for d in iface.data]
+        if src_port_kind == "ReceiverPort":
+            return [("in", d.type.name) for d in iface.data]
+        return []
+    # ClientServerInterface
+    out: list[tuple[str, str]] = []
+    for op in iface.operations:
+        for p in op.params:
+            if src_port_kind == "ClientPort":
+                # Client sends request out; reply comes in (handled
+                # via the `returns` clause below).
+                out.append(("out", p.type.name))
+            elif src_port_kind == "ServerPort":
+                # Server receives request; reply goes out.
+                out.append(("in", p.type.name))
+        if op.returns is not None:
+            if src_port_kind == "ClientPort":
+                out.append(("in", op.returns.name))
+            elif src_port_kind == "ServerPort":
+                out.append(("out", op.returns.name))
+    # Dedup preserving order — same message appearing on multiple ops
+    # collapses to one entry per direction.
+    seen: set[tuple[str, str]] = set()
+    deduped: list[tuple[str, str]] = []
+    for entry in out:
+        if entry not in seen:
+            seen.add(entry)
+            deduped.append(entry)
+    return deduped
+
+
 def _signals_by_node(model) -> dict[str, dict]:
     """Transpose composition + cluster connects into per-node signal
     routing tables.
@@ -241,13 +305,22 @@ def _signals_by_node(model) -> dict[str, dict]:
             }
         }
 
+    Direction is per-msg from this node's perspective. For a
+    senderReceiver interface every data element flows source→target.
+    For a clientServer interface the request flows source→target and
+    the reply flows target→source — so a `clientServer Status`
+    connect produces a per-node table where the client has the
+    Request as "out" + the Response as "in", and the server has
+    them mirrored. **Service replies are never broadcast** — they
+    travel only to the originating client (the connect endpoint),
+    so this projection is point-to-point at the operation level.
+
     Multiple connects from the same source port (fan-out: sm →
-    exec/com/ucm/per) produce multiple `destinations[]` entries.
-    Incoming-side signals get `direction: "in"` with the source
-    node's tipc as their `destinations[0]` (the address whose
-    Subscribe message the consumer would route to, if subscribe
-    were used — kept for symmetry, not used by the in-process
-    routing).
+    exec/com/ucm/per on a sender port) produce multiple
+    `destinations[]` entries. For clientServer connects, fan-out is
+    typically unusual (one client typically targets one server) but
+    nothing in the grammar prevents it; the projection still works
+    by simply listing every destination.
 
     TIPC is a cluster protocol — the kernel discovers nodes over
     Ethernet — so a destination tipc address resolves transparently
@@ -258,33 +331,47 @@ def _signals_by_node(model) -> dict[str, dict]:
     for conn in _walk_connects(model):
         src_proto = conn.source.proto
         tgt_proto = conn.target.proto
-        # `proto.type` is the resolved NodeDecl. PortRefs in the
-        # grammar carry the prototype reference; we go through it
-        # to find the node + its tipc address.
         src_node = src_proto.type
         tgt_node = tgt_proto.type
         src_port = _port_on_node(src_node, conn.source.port)
-        if src_port is None:
+        tgt_port = _port_on_node(tgt_node, conn.target.port)
+        if src_port is None or tgt_port is None:
             continue   # bad connect — surfaced elsewhere (audit-manifest)
-        # Every message the source port carries is a "signal" that
-        # flows along this connect.
-        for msg in _iface_messages(src_port.iface):
+        src_kind = src_port.__class__.__name__
+        # The target port's kind is the inverse — if src is "out" for
+        # msg M, tgt is "in" for M, and the address pair flips.
+        # We compute per-direction msgs from src perspective, then
+        # mirror to the tgt entry with flipped direction + flipped
+        # peer.
+        for direction, msg in _iface_directional_messages(src_port.iface,
+                                                            src_kind):
+            # The SOURCE side: msg with `direction` toward the
+            # TARGET node.
             entry_src = out.setdefault(src_node.name, {}).setdefault(msg, {
-                "direction": "out",
+                "direction": direction,
                 "destinations": [],
             })
+            # If a prior connect on this node already classified the
+            # msg in the opposite direction, prefer the new one (real
+            # connects shouldn't conflict; if they do, the latest
+            # write wins — audit-manifest is the place that catches
+            # genuinely conflicting topologies).
+            if entry_src["direction"] != direction:
+                entry_src["direction"] = direction
             entry_src["destinations"].append({
                 "node": tgt_node.name,
                 "tipc_type": tgt_node.tipc.type,
                 "tipc_instance": tgt_node.tipc.instance,
             })
-            # Receiving side gets the symmetric inbound entry; the
-            # destinations[] points BACK at the source — useful for
-            # discovery / debug but apps cast outbound only.
+            # The TARGET side: same msg, flipped direction, peer is
+            # the SOURCE node.
+            opposite = "in" if direction == "out" else "out"
             entry_tgt = out.setdefault(tgt_node.name, {}).setdefault(msg, {
-                "direction": "in",
+                "direction": opposite,
                 "destinations": [],
             })
+            if entry_tgt["direction"] != opposite:
+                entry_tgt["direction"] = opposite
             entry_tgt["destinations"].append({
                 "node": src_node.name,
                 "tipc_type": src_node.tipc.type,
