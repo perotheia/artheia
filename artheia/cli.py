@@ -1122,8 +1122,10 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
     "existing three-slice cpp_app generator). Targets vendor-root "
     "trees like vendor/odd_path_client/system/components/.\n\n"
     "  --kind fc: single-file Adaptive Functional Cluster. Targets a "
-    "single services/system/<fc>/package.art. Emits the lib / main / "
-    "impl slices for a GenServer-derived daemon plus manifest.py + "
+    "single services/system/<fc>/package.art (the spec layer). Emits "
+    "the lib / main / impl slices into a separate impl-layer dir "
+    "(convention: services/<fc>/, KEPT DISTINCT from the spec dir to "
+    "avoid mixing .art with generated code) plus manifest.py + "
     "executor.py + the .proto under platform/proto/.",
 )
 @click.option("--kind", type=click.Choice(["psp", "fc"]), default="psp",
@@ -1131,7 +1133,8 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
 # --- shared --
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
               help="Output dir. For psp mode: applications/<vendor>/. "
-              "For fc mode: services/system/<fc>/.")
+              "For fc mode: services/<fc>/ (the impl layer — keep "
+              "DISTINCT from the .art spec at services/system/<fc>/).")
 # --- psp-mode flags --
 @click.option("--vendor-root", default=None,
               type=click.Path(exists=True, file_okay=False),

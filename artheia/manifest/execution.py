@@ -249,7 +249,7 @@ class Process(Identifiable):
     # automatically; that pretended every FC had a binary. The current
     # contract is explicit: a rig that wants this FC supervised must
     # set start_cmd to the real path (e.g.
-    # ``["bazel-bin/services/system/sm/sm"]`` for the dev tree, or the
+    # ``["bazel-bin/services/sm/main/sm"]`` for the dev tree, or the
     # installed path for a .deb / .ipk).
     start_cmd: list[str] = field(default_factory=list)
 
