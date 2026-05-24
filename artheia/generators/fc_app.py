@@ -28,7 +28,11 @@ User's flow::
     manifest/services/<fc>/
       __init__.py                     ← regen header
       manifest.py                     ← regen: SwComponent + Executable
-      executor.py                     ← gen-once: Process + start_cmd
+
+    Note: ``executor.py`` (Process + start_cmd + supervision policy)
+    is HAND-EDITED, not generated. Lives next to manifest.py and
+    survives every regen. ``services/manifest/service.py`` imports
+    ``PROCESS`` from each FC's executor.py via dynamic discovery.
 
     platform/proto/<art-pkg-as-path>/
       <leaf>.proto                    ← regen via gen-proto-package
@@ -392,15 +396,18 @@ def generate_fc(
     :param art_path:     ``.art`` file. The package name drives the
                          filesystem layout and the C++ namespace.
     :param out_dir:      Where the lib/main/impl slices land (typically
-                         ``services/system/<fc>/``).
-    :param manifest_out: Where manifest.py + executor.py land
-                         (typically ``manifest/services/<fc>/``).
-                         ``None`` skips manifest emission.
+                         ``services/<fc>/``).
+    :param manifest_out: Where manifest.py lands (typically
+                         ``manifest/services/<fc>/``). ``None`` skips
+                         manifest emission. NOTE: executor.py is
+                         hand-edited next door — gen-app no longer
+                         writes it.
     :param proto_out:    Where .proto lands (typically
                          ``platform/proto/``). ``None`` skips proto
                          emission. The proto goes under
                          ``<proto_out>/<art-pkg-as-path>/<leaf>.proto``.
-    :param force:        Overwrite write-once slices (impl + executor.py).
+    :param force:        Overwrite the impl slice (write-once after
+                         first emit).
 
     Returns ``{status: [path,...]}`` for "wrote", "overwrote",
     "skipped-exists".
@@ -472,11 +479,13 @@ def generate_fc(
         p = manifest_dir / "manifest.py"
         results[_write(p, env.get_template("manifest.py.j2").render(**ctx),
                         overwrite=True)].append(str(p))
-        # executor.py — gen-once (carries supervision strategy + start_cmd,
-        # both hand-drafted by the rig integrator)
-        p = manifest_dir / "executor.py"
-        results[_write(p, env.get_template("executor.py.j2").render(**ctx),
-                        overwrite=force)].append(str(p))
+        # executor.py — INTENTIONALLY NOT EMITTED. The Process /
+        # start_cmd / supervision policy is a deployment choice, not
+        # a .art projection, so it's hand-edited and lives next to
+        # manifest.py outside gen-app's territory. services/manifest/
+        # service.py imports `PROCESS` from each FC's executor.py
+        # via dynamic discovery, falling back to an empty-start_cmd
+        # placeholder for FCs without one.
         # __init__.py so it's a Python package
         p = manifest_dir / "__init__.py"
         results[_write(

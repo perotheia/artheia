@@ -7,8 +7,9 @@ every gen-app run; rig overlays patch by name via the existing
 Override mechanism in artheia.manifest.
 
 The supervision strategy (RestartType, shutdown_ms, start_cmd) lives
-next door in ``executor.py`` so a regen of this file doesn't squash
-the rig integrator's hand-drafted supervision choices.
+in HAND-EDITED ``executor.py`` next door. That file is NOT generated
+by gen-app and survives every regen. ``services/manifest/service.py``
+imports its ``PROCESS`` via dynamic discovery.
 """
 from artheia.manifest.application import (
     BuildTypeEnum,
@@ -21,7 +22,7 @@ from artheia.manifest.application import (
 
 COMPONENT = SwComponent(
     name="{{ model.fc_short }}",
-    bazel_target="//services/system/{{ model.fc_short }}:{{ model.fc_short }}",
+    bazel_target="//services/{{ model.fc_short }}/main:{{ model.fc_short }}",
     owner="platform",
     art_node="{{ model.art_package }}/{{ model.daemon_class }}",
 )
