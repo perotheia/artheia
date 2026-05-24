@@ -934,22 +934,27 @@ def gen_codec_dispatch(
 
 
 @main.command(
-    "gen-gateway-netgraph",
+    "gen-psp-netgraph",
     help="Emit a per-bus PSP netgraph (PDU -> bus address LUT) from "
-    "an AUTOSAR catalog.json. The SUPERVISOR consumes this — it's the "
-    "per-machine authority on PSP signal routing, and provisions its "
-    "gateway daemon at startup from this LUT. Renamed from the older "
-    "`gen-netgraph-partition` to reflect the role: this is one of two "
-    "netgraphs (PSP=supervisor, cluster=gateway), not a partition of a "
-    "single one.",
+    "an AUTOSAR catalog.json. The GATEWAY daemon consumes this at "
+    "startup — it's the authority on CAN/FlexRay routing (translates "
+    "TIPC ↔ bus wire). Loaded as JSON, not compiled in, so partial "
+    "orchestration ships a new netgraph.json without reinstalling "
+    "the gateway binary.\n\n"
+    "Two netgraphs total in the system:\n"
+    "  - PSP netgraph (this command) → gateway daemon (active routing)\n"
+    "  - Cluster netgraph (`gen-netgraph`) → supervisor (passive, GUI/stats)\n\n"
+    "Previously called `gen-gateway-netgraph` / `gen-netgraph-partition` — "
+    "renamed to reflect the format (PSP = bus-side address table) rather "
+    "than the consumer.",
 )
 @click.option("--catalog", "catalog_path", required=True,
               type=click.Path(exists=True, dir_okay=False),
               help="Per-bus catalog.json (output of import-dbc / import-fibex).")
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
               help="Output netgraph.json (typically alongside the catalog).")
-def gen_gateway_netgraph(catalog_path: str, out_path: str) -> None:
-    from .generators.gateway_netgraph import generate
+def gen_psp_netgraph(catalog_path: str, out_path: str) -> None:
+    from .generators.psp_netgraph import generate
     generate(catalog_path, out_path)
 
 

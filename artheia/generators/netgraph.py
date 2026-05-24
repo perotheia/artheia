@@ -1,11 +1,32 @@
-"""Netgraph generator.
+"""Cluster netgraph generator.
 
-Given a parsed Artheia model (and optionally a gateway catalog), emit a JSON
-document the runtime uses to route TIPC traffic between nodes plus describe
-which nodes terminate vehicle-bus signals via the gateway.
+One of TWO netgraphs in the system (see
+docs/tasks/PROGRESS/netgraph-signal-routing/README.md):
 
-Each node entry can carry `gateway_routes: [...]` whose entries match the
-GwCanMeta / GwFlexRayMeta layout from gw_proto.h. Three input forms:
+  - **Cluster netgraph** (this file): per-node TIPC address map for
+    the whole cluster + each node's signal routing slice. Consumed
+    by the **SUPERVISOR** — passive observer, surfaces topology in
+    the GUI plus TIPC stats. Supervisor does NOT do active routing
+    (TIPC kernel handles transport transparently); it just visualises.
+    Loaded as JSON at supervisor startup; partial orchestration ships
+    a new file without reinstalling the supervisor.
+
+  - **PSP netgraph** (artheia/generators/psp_netgraph.py): per-bus
+    PDU → bus-side address (CAN id, FlexRay slot/cycle/channel).
+    Consumed by the **GATEWAY daemon** which does active CAN/FR
+    routing.
+
+Apps + services don't consume this JSON. Each FC binary instead gets
+a per-node SLICE as `lib/<Node>_netgraph.hh` (constexpr TipcAddr per
+reachable peer) at codegen time — that's the only routing info an
+app needs at runtime.
+
+This generator's output:
+  - per-node entries: name, tipc, ports, signal routing (signals[]
+    dict from compositions/clusters)
+  - per-node `gateway_routes: [...]` for nodes that terminate
+    vehicle-bus signals via the gateway. Entries match the
+    GwCanMeta / GwFlexRayMeta layout from gw_proto.h. Three forms:
 
   1. `gateway_route N { signal=Foo direction=in }` — catalog-driven; bus and
       address are filled in from the catalog by message name.

@@ -378,8 +378,8 @@ def generate(
     """Walk a vendor system tree, emit a C++14 application scaffold.
 
     `netgraph_paths` — list of netgraph.json files (typically from
-    `artheia gen-gateway-netgraph`, one per bus). These are the PSP
-    netgraphs consumed by the supervisor at runtime; this generator
+    `artheia gen-psp-netgraph`, one per bus). These are the PSP
+    netgraphs the GATEWAY daemon consumes at runtime; this generator
     joins each receiver port with its bus address (can_id or slot_id)
     so the emitted dispatch loop can route incoming GwMessageHeader
     frames to the right `on_<port>()` callback.
