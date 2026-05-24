@@ -200,13 +200,111 @@ def _routes_by_node(model, catalog: dict | None) -> dict[str, list[dict]]:
     return by_node
 
 
+def _walk_connects(model) -> Iterable:
+    """Yield every ConnectDecl in the model, regardless of which
+    composition or cluster scope it sits in.
+
+    Cluster ConnectDecls are externally-routed (TIPC across processes);
+    composition ConnectDecls are internally-routed (in-process mailbox).
+    For the netgraph LUT both shapes resolve to the same `signal →
+    destination_tipc_address` answer — the TIPC kernel routes a
+    cast() transparently regardless. Apps don't see the difference.
+    """
+    from artheia.model import flatten_composition
+    for comp in _iter(model, "CompositionDecl"):
+        _, connect_decls = flatten_composition(comp)
+        for c in connect_decls:
+            yield c
+    for cluster in _iter(model, "ClusterDecl"):
+        for el in getattr(cluster, "elements", []) or []:
+            if el.__class__.__name__ == "ClusterConnect":
+                yield el
+
+
+def _signals_by_node(model) -> dict[str, dict]:
+    """Transpose composition + cluster connects into per-node signal
+    routing tables.
+
+    Result shape:
+
+        {
+            "<NodeName>": {
+                "<MsgName>": {
+                    "direction": "out" | "in",
+                    "destinations": [
+                        {"node": "<TargetNode>",
+                         "tipc_type": "0x...",
+                         "tipc_instance": "..."},
+                        ...
+                    ]
+                }
+            }
+        }
+
+    Multiple connects from the same source port (fan-out: sm →
+    exec/com/ucm/per) produce multiple `destinations[]` entries.
+    Incoming-side signals get `direction: "in"` with the source
+    node's tipc as their `destinations[0]` (the address whose
+    Subscribe message the consumer would route to, if subscribe
+    were used — kept for symmetry, not used by the in-process
+    routing).
+
+    TIPC is a cluster protocol — the kernel discovers nodes over
+    Ethernet — so a destination tipc address resolves transparently
+    regardless of which machine hosts the target node. There's no
+    host-vs-cluster distinction at this layer.
+    """
+    out: dict[str, dict] = {}
+    for conn in _walk_connects(model):
+        src_proto = conn.source.proto
+        tgt_proto = conn.target.proto
+        # `proto.type` is the resolved NodeDecl. PortRefs in the
+        # grammar carry the prototype reference; we go through it
+        # to find the node + its tipc address.
+        src_node = src_proto.type
+        tgt_node = tgt_proto.type
+        src_port = _port_on_node(src_node, conn.source.port)
+        if src_port is None:
+            continue   # bad connect — surfaced elsewhere (audit-manifest)
+        # Every message the source port carries is a "signal" that
+        # flows along this connect.
+        for msg in _iface_messages(src_port.iface):
+            entry_src = out.setdefault(src_node.name, {}).setdefault(msg, {
+                "direction": "out",
+                "destinations": [],
+            })
+            entry_src["destinations"].append({
+                "node": tgt_node.name,
+                "tipc_type": tgt_node.tipc.type,
+                "tipc_instance": tgt_node.tipc.instance,
+            })
+            # Receiving side gets the symmetric inbound entry; the
+            # destinations[] points BACK at the source — useful for
+            # discovery / debug but apps cast outbound only.
+            entry_tgt = out.setdefault(tgt_node.name, {}).setdefault(msg, {
+                "direction": "in",
+                "destinations": [],
+            })
+            entry_tgt["destinations"].append({
+                "node": src_node.name,
+                "tipc_type": src_node.tipc.type,
+                "tipc_instance": src_node.tipc.instance,
+            })
+    return out
+
+
 def build_netgraph(model, catalog: dict | None = None) -> dict:
     routes = _routes_by_node(model, catalog)
+    signals = _signals_by_node(model)
     nodes = []
     for n in _iter(model, "NodeDecl"):
         d = _node_dict(n)
         if routes.get(n.name):
             d["gateway_routes"] = routes[n.name]
+        # Signal routing table — what the runtime LUT consumes.
+        # Empty dict if this node has no connects in any composition
+        # / cluster the model walked.
+        d["signals"] = signals.get(n.name, {})
         nodes.append(d)
     return {
         "package": model.name or "",
