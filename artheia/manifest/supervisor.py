@@ -82,6 +82,33 @@ ShutdownSpec = Union[int, str]
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class NodeInfo:
+    """One artheia node hosted inside a child process.
+
+    A child process can host one OR more nodes (the latter via a
+    composition). The supervisor needs per-node metadata to:
+
+    - synthesise ``<child>.node_sup`` rows in TreeSnapshot (#364)
+    - decide which nodes to watchdog (only reporting=true ones
+      send HeartbeatReport)
+    - locate each node's NodeTraceCtl TIPC server (#363) for the
+      trace config push
+
+    Fields:
+      name           artheia node-type-name ("SmDaemon", "CounterNode")
+      reporting      AUTOSAR Reporting/Non-Reporting (true = expects
+                     heartbeat + can receive trace push)
+      tipc_type      "0x...." hex string, copied from the NodeDecl
+      tipc_instance  "0" / "1" / ..., copied from the NodeDecl
+    """
+
+    name: str
+    reporting: bool = True
+    tipc_type: str = ""
+    tipc_instance: str = "0"
+
+
 @identifiable_dataclass
 class ChildSpec(Identifiable):
     """One supervised child.
@@ -100,6 +127,10 @@ class ChildSpec(Identifiable):
     - :attr:`modules` — informational. OTP uses this for hot code
       upgrades; we surface it as a free-form list of source paths or
       package names for debuggability.
+    - :attr:`nodes` — per-artheia-node metadata for the C++ supervisor's
+      node_sup synthesis (#364) and trace push (#361). Populated by
+      :func:`build_supervisor_tree` from the FC's package.art. Empty
+      for non-FC children (vendor apps with no .art declaration).
     """
 
     name: str
@@ -114,6 +145,7 @@ class ChildSpec(Identifiable):
     # AUTOSAR ProcessToMachineMapping flavour (§9.4). Mutually exclusive.
     shall_run_on: list[int] = field(default_factory=list)
     shall_not_run_on: list[int] = field(default_factory=list)
+    nodes: list[NodeInfo] = field(default_factory=list)
 
 
 @identifiable_dataclass
@@ -372,6 +404,57 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 continue
         return out
 
+    def _collect_nodes_for_fc(short: str) -> list[NodeInfo]:
+        """Read services/<short>/system/package.art and return its
+        NodeDecls' per-node metadata.
+
+        Used by `_fc_child` to populate ChildSpec.nodes so the C++
+        supervisor can:
+          - synthesise <child>.node_sup rows (#364)
+          - decide which nodes to watchdog (reporting=true only)
+          - locate each node's NodeTraceCtl TIPC server (#363)
+
+        Returns [] if the .art file doesn't exist (e.g. an early
+        bring-up FC that's not yet declared) or contains no nodes.
+        The C++ supervisor treats an empty nodes list as "single
+        opaque worker, no node-level supervision".
+        """
+        from pathlib import Path as _Path
+        from artheia.manifest.platform import (
+            PLATFORM_SERVICES_ROOT as _SVCS_ROOT,
+        )
+        from artheia.model.loader import parse_file as _parse_file
+
+        path = _Path(_SVCS_ROOT) / short / "package.art"
+        if not path.exists():
+            return []
+        try:
+            model = _parse_file(path)
+        except Exception:
+            # Tolerant: a malformed .art shouldn't block the whole
+            # manifest emit. Caller's other paths still report.
+            return []
+
+        out: list[NodeInfo] = []
+        for el in model.elements:
+            if type(el).__name__ != "NodeDecl":
+                continue
+            tipc = getattr(el, "tipc", None)
+            tipc_type = getattr(tipc, "type", "") if tipc else ""
+            tipc_instance = getattr(tipc, "instance", "0") if tipc else "0"
+            # model/inherit.py defaults reporting to the string
+            # "true" / "false" (textX BoolLit). Coerce to a Python
+            # bool so the executor.yaml emit + downstream consumers
+            # don't have to deal with both shapes.
+            reporting_raw = (getattr(el, "reporting", "") or "true").lower()
+            out.append(NodeInfo(
+                name=el.name,
+                reporting=(reporting_raw == "true"),
+                tipc_type=tipc_type,
+                tipc_instance=tipc_instance,
+            ))
+        return out
+
     def _fc_child(short: str) -> ChildSpec | None:
         """Build a leaf ChildSpec for an FC (Process in execution_manifests).
 
@@ -405,6 +488,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             modules=[f"services/{short}"],
             shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
             shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
+            nodes=_collect_nodes_for_fc(short),
         )
 
     def _auto_app_children() -> list[ChildSpec]:

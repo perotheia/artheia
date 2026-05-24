@@ -222,6 +222,19 @@ def _supervisor_spec_to_dict(node) -> dict:
             d["shall_run_on"] = list(node.shall_run_on)
         if getattr(node, "shall_not_run_on", None):
             d["shall_not_run_on"] = list(node.shall_not_run_on)
+        # Per-node reporting metadata (#366). Empty for non-FC
+        # children (vendor apps with no .art declaration).
+        nodes = getattr(node, "nodes", None) or []
+        if nodes:
+            d["nodes"] = [
+                {
+                    "name": ni.name,
+                    "reporting": ni.reporting,
+                    "tipc_type": ni.tipc_type,
+                    "tipc_instance": ni.tipc_instance,
+                }
+                for ni in nodes
+            ]
     return d
 
 

@@ -1727,6 +1727,20 @@ def executor_emit(
                 d["shall_run_on"] = list(node.shall_run_on)
             if node.shall_not_run_on:
                 d["shall_not_run_on"] = list(node.shall_not_run_on)
+            # Per-node metadata for the supervisor's node_sup
+            # synthesis (#364) + trace push routing (#361). Empty
+            # for non-FC children (vendor apps without .art decl).
+            nodes = getattr(node, "nodes", None) or []
+            if nodes:
+                d["nodes"] = [
+                    {
+                        "name": ni.name,
+                        "reporting": ni.reporting,
+                        "tipc_type": ni.tipc_type,
+                        "tipc_instance": ni.tipc_instance,
+                    }
+                    for ni in nodes
+                ]
         return d
 
     out = yaml.safe_dump(_to_dict(tree), sort_keys=False, default_flow_style=False)
