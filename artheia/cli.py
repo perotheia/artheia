@@ -136,6 +136,71 @@ def _is_stub(el) -> bool:
     return False
 
 
+def _collect_imported_models(art_file: str, model) -> list:
+    """Follow the entry model's ``import system.x.*`` graph and return
+    a list of additional ``(Path, model)`` tuples — every reachable
+    file's parsed model, NOT including the entry model itself.
+
+    Uses the same package→directory rules and file-name priority as
+    :func:`_resolve_forward_decls`. Errors out the same way on a
+    missing import target so a recursive walk fails loudly rather
+    than silently skipping nodes.
+    """
+    from pathlib import Path
+
+    entry = Path(art_file).resolve()
+    root = _workspace_root_for(entry, model)
+
+    visited_packages: set[str] = set()
+    visited_files: set[Path] = {entry}
+    out: list = []
+
+    def _follow(import_fqn: str) -> None:
+        pkg = import_fqn[:-2] if import_fqn.endswith(".*") else import_fqn
+        if pkg in visited_packages:
+            return
+        visited_packages.add(pkg)
+
+        pkg_dir = _package_dir(root, pkg)
+        if pkg_dir is None or not pkg_dir.is_dir():
+            click.secho(
+                f"error: import {import_fqn!r}: no directory "
+                f"{root}/{pkg.replace('.', '/')}",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+
+        candidate = None
+        for fname in ("system.art", "package.art", "component.art"):
+            if (pkg_dir / fname).exists():
+                candidate = pkg_dir / fname
+                break
+        if candidate is None:
+            click.secho(
+                f"error: import {import_fqn!r}: no system.art / "
+                f"package.art / component.art under {pkg_dir}",
+                fg="red", err=True,
+            )
+            sys.exit(2)
+
+        resolved_path = candidate.resolve()
+        if resolved_path in visited_files:
+            return
+        visited_files.add(resolved_path)
+        try:
+            other = _parse(str(candidate))
+        except SystemExit:
+            return
+        out.append((resolved_path, other))
+        for imp in getattr(other, "imports", []) or []:
+            _follow(imp.name)
+
+    for imp in getattr(model, "imports", []) or []:
+        _follow(imp.name)
+
+    return out
+
+
 def _resolve_forward_decls(art_file: str, model) -> dict:
     """Resolve every forward-decl in *model* by following the
     ``import`` statements at the top of the file (and transitively).
@@ -698,11 +763,22 @@ def gen_app_composition(art_file: str, composition: str,
     "`artheia import-fibex`). When "
     "supplied, gateway_route signal=Foo refs are resolved to bus + addresses.",
 )
-def gen_netgraph(art_file: str, out_file: str, catalog: str | None) -> None:
+@click.option(
+    "--recursive", "-R", is_flag=True, default=False,
+    help="Follow `import system.x.*` statements and union nodes + "
+    "compositions from every reachable file. Use for aggregator files "
+    "like platform/system/system.art that declare no nodes themselves.",
+)
+def gen_netgraph(
+    art_file: str, out_file: str, catalog: str | None, recursive: bool,
+) -> None:
     import json as _json
     model = _parse(art_file)
     cat = _json.loads(Path(catalog).read_text()) if catalog else None
-    path = generate_netgraph(model, out_file, catalog=cat)
+    extras = None
+    if recursive:
+        extras = [m for _p, m in _collect_imported_models(art_file, model)]
+    path = generate_netgraph(model, out_file, catalog=cat, extra_models=extras)
     click.echo(str(path))
 
 

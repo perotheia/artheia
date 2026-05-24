@@ -401,28 +401,72 @@ def _signals_by_node(model) -> dict[str, dict]:
     return out
 
 
-def build_netgraph(model, catalog: dict | None = None) -> dict:
-    routes = _routes_by_node(model, catalog)
-    signals = _signals_by_node(model)
-    nodes = []
-    for n in _iter(model, "NodeDecl"):
-        d = _node_dict(n)
-        if routes.get(n.name):
-            d["gateway_routes"] = routes[n.name]
-        # Signal routing table — what the runtime LUT consumes.
-        # Empty dict if this node has no connects in any composition
-        # / cluster the model walked.
-        d["signals"] = signals.get(n.name, {})
-        nodes.append(d)
+def build_netgraph(
+    model,
+    catalog: dict | None = None,
+    *,
+    extra_models: list | None = None,
+) -> dict:
+    all_models = [model] + list(extra_models or [])
+
+    # Per-node maps from every reachable model. Later definitions
+    # don't overwrite earlier ones — a non-stub appearance of NodeX
+    # in any model wins, and gateway routes / signals get unioned.
+    routes_by_node: dict[str, list[dict]] = {}
+    signals_by_node: dict[str, dict] = {}
+    for m in all_models:
+        for k, v in _routes_by_node(m, catalog).items():
+            routes_by_node.setdefault(k, []).extend(v)
+        for k, sigs in _signals_by_node(m).items():
+            dst = signals_by_node.setdefault(k, {})
+            for msg, entry in sigs.items():
+                cur = dst.get(msg)
+                if cur is None:
+                    dst[msg] = {
+                        "direction": entry["direction"],
+                        "destinations": list(entry["destinations"]),
+                    }
+                else:
+                    cur["destinations"].extend(entry["destinations"])
+
+    nodes_by_name: dict[str, dict] = {}
+    for m in all_models:
+        for n in _iter(m, "NodeDecl"):
+            if n.name in nodes_by_name:
+                continue
+            d = _node_dict(n)
+            if routes_by_node.get(n.name):
+                d["gateway_routes"] = routes_by_node[n.name]
+            d["signals"] = signals_by_node.get(n.name, {})
+            nodes_by_name[n.name] = d
+
+    compositions_by_name: dict[str, dict] = {}
+    for m in all_models:
+        for c in _iter(m, "CompositionDecl"):
+            if c.name in compositions_by_name:
+                continue
+            compositions_by_name[c.name] = _composition_dict(c)
+
     return {
         "package": model.name or "",
-        "nodes": nodes,
-        "compositions": [_composition_dict(c) for c in _iter(model, "CompositionDecl")],
+        "nodes": list(nodes_by_name.values()),
+        "compositions": list(compositions_by_name.values()),
     }
 
 
-def generate_netgraph(model, out_file: str | Path, *, catalog: dict | None = None) -> Path:
+def generate_netgraph(
+    model,
+    out_file: str | Path,
+    *,
+    catalog: dict | None = None,
+    extra_models: list | None = None,
+) -> Path:
     out_file = Path(out_file)
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    out_file.write_text(json.dumps(build_netgraph(model, catalog=catalog), indent=2) + "\n")
+    out_file.write_text(
+        json.dumps(
+            build_netgraph(model, catalog=catalog, extra_models=extra_models),
+            indent=2,
+        ) + "\n"
+    )
     return out_file
