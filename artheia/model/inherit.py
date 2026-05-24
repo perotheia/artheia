@@ -70,6 +70,10 @@ def resolve_inheritance(model) -> None:
     Raises :class:`ValueError` on cycles. textX has already resolved
     the cross-reference (so `node.base` is either None or a
     NodeDecl object) — we just need to flatten the chain.
+
+    After the flatten, applies field-level defaults (currently
+    only ``reporting``: default = "true" when omitted) so generators
+    don't have to special-case the None/missing form.
     """
     nodes = _iter_nodes(model)
 
@@ -97,6 +101,24 @@ def resolve_inheritance(model) -> None:
     for n in nodes:
         _resolve(n, chain=[])
 
+    # Default-fill ANY field that the grammar makes optional but
+    # generators should be able to treat as always-set. Run AFTER
+    # inheritance so a base's explicit value still wins.
+    for n in nodes:
+        _apply_node_defaults(n)
+
+
+def _apply_node_defaults(node) -> None:
+    """Fill optional NodeDecl fields with their conventional defaults.
+
+    Current defaults:
+      ``reporting`` — defaults to ``"true"``. AUTOSAR Reporting
+                       process is the common case; explicit
+                       ``reporting=false`` is the opt-out.
+    """
+    if not node.reporting:
+        node.reporting = "true"
+
 
 def _name_at(node_id: int, nodes: list) -> str:
     for n in nodes:
@@ -115,6 +137,15 @@ def _copy_inherited_fields(*, src, dst) -> None:
         dst.kick_off = src.kick_off
     if not _is_present(dst.requires_timers) and _is_present(src.requires_timers):
         dst.requires_timers = src.requires_timers
+
+    # reporting — non-default BOOL field. textX stores the matched
+    # BoolLit verbatim ("true" / "false") and leaves it as an empty
+    # string when the production didn't match. Inherit ONLY when
+    # dst's value is empty (the production didn't trigger). A
+    # derived node that wrote `reporting=false` explicitly keeps
+    # its own value even if the base said true.
+    if not dst.reporting and src.reporting:
+        dst.reporting = src.reporting
 
     # Object refs.
     if not _is_present(dst.config) and _is_present(src.config):

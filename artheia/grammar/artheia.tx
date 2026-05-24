@@ -150,6 +150,19 @@ NodeDecl:
         // we'd save by compile-time gating.
         (kick_off?='kick_off')?
         (requires_timers?='requires_timers')?
+        // AUTOSAR Reporting/Non-Reporting (at per-node-thread
+        // granularity). Default = true: HeartbeatPublisher emits,
+        // supervisor watchdogs the node, NodeTraceCtl port is
+        // synthesised by gen-app, supervisor can push trace config.
+        // `reporting=false` opts out: no heartbeat, no watchdog row,
+        // no trace push. Best-effort, AUTOSAR Non-Reporting
+        // semantics.
+        //
+        // Defaults true through the model loader (see
+        // model/inherit.py and model/loader.py post-process);
+        // omitting the field is equivalent to writing
+        // `reporting=true`.
+        ('reporting' '=' reporting=BoolLit)?
         ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?
