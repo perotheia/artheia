@@ -114,6 +114,51 @@ class _NodeView:
     # referencing this node.
     signals: list[_SignalEntry] = field(default_factory=list)
 
+    def unique_handler_ops(self) -> list[_IfaceOp]:
+        """Server-port operations, deduplicated by (req_msg, rep_msg).
+
+        When two server ports share the same interface (e.g.
+        ``ctl_supdbg`` + ``ctl_com`` both ``provides TraceControl``)
+        their ops have identical signatures. handle_call dispatches by
+        message type, so emitting one handler per duplicate signature
+        would not compile. Templates iterate this method instead of
+        the raw ports×ops nested loop.
+
+        Order is stable: first appearance wins.
+        """
+        seen: set[tuple[str, Optional[str]]] = set()
+        out: list[_IfaceOp] = []
+        for p in self.ports:
+            if p.kind != "server":
+                continue
+            for op in p.ops:
+                key = (op.req_msg, op.rep_msg)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(op)
+        return out
+
+    def unique_receiver_data(self) -> list[_DataEl]:
+        """Receiver-port data elements, deduplicated by message type.
+
+        Same rationale as :meth:`unique_handler_ops`: if two receiver
+        ports require the same senderReceiver interface, both produce
+        a ``handle_cast(const X&, ...)`` declaration. Duplicates fail
+        to compile.
+        """
+        seen: set[str] = set()
+        out: list[_DataEl] = []
+        for p in self.ports:
+            if p.kind != "receiver":
+                continue
+            for d in p.data:
+                if d.msg in seen:
+                    continue
+                seen.add(d.msg)
+                out.append(d)
+        return out
+
 
 @dataclass
 class _ModelView:

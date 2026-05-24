@@ -105,17 +105,18 @@ public:
     void terminate(const char* /*reason*/, {{ n.name }}State& /*s*/) noexcept {}
 
     // ---- handle_cast / handle_call — declared here, body in impl
-{% for p in n.ports %}
-{%- if p.kind == "receiver" %}
-{%- for d in p.data %}
+    //
+    // Deduplicated by message type: if two ports share the same
+    // interface (e.g. ctl_supdbg + ctl_com both providing
+    // TraceControl) the handler signature is identical and only
+    // gets emitted once. handle_call/handle_cast dispatch by
+    // request type, not by port.
+{% for d in n.unique_receiver_data() %}
     void handle_cast(const {{ d.msg }}& msg, {{ n.name }}State& s);
 {% endfor %}
-{%- elif p.kind == "server" %}
-{%- for op in p.ops %}
+{% for op in n.unique_handler_ops() %}
     {{ op.rep_msg or "void" }} handle_call(const {{ op.req_msg }}& req,
                                             {{ n.name }}State& s);
-{% endfor %}
-{%- endif -%}
 {% endfor %}
 
     // ---- send helpers — bodies in impl (the broadcast fan-out)

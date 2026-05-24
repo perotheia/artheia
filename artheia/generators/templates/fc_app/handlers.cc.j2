@@ -16,33 +16,33 @@
 namespace {{ model.cxx_namespace }} {
 
 {% for n in model.nodes %}
-{# ---- handle_cast (one per receiver-port data element) ---- #}
-{%- for p in n.ports if p.kind == "receiver" %}
-{%- for d in p.data %}
+{# ---- handle_cast (one per unique receiver-data message type) ---- #}
+{%- for d in n.unique_receiver_data() %}
 void {{ n.name }}::handle_cast(const {{ d.msg }}& /*msg*/,
                                  {{ n.name }}State& /*s*/) {
-    // TODO: react to {{ p.name }}.{{ d.name }} ({{ p.iface }}).
-    std::fprintf(stderr, "[%s] received {{ p.iface }}::{{ d.name }}\n",
+    // TODO: react to {{ d.msg }} (dispatched by message type; one
+    // or more receiver ports may deliver it).
+    std::fprintf(stderr, "[%s] received {{ d.msg }}\n",
                  kNodeName);
 }
 {% endfor %}
-{%- endfor -%}
 
-{# ---- handle_call (one per server-port operation) ---- #}
-{%- for p in n.ports if p.kind == "server" %}
-{%- for op in p.ops %}
+{# ---- handle_call (one per unique handler signature) ---- #}
+{%- for op in n.unique_handler_ops() %}
 {{ op.rep_msg or "void" }} {{ n.name }}::handle_call(
         const {{ op.req_msg }}& /*req*/,
         {{ n.name }}State& /*s*/) {
-    // TODO: implement {{ p.iface }}::{{ op.name }}.
-    std::fprintf(stderr, "[%s] {{ p.iface }}::{{ op.name }} called\n",
+    // TODO: implement {{ op.name }} ({{ op.req_msg }} →
+    //                                 {{ op.rep_msg or "void" }}).
+    // Dispatched by request type; one or more server ports may
+    // expose this operation.
+    std::fprintf(stderr, "[%s] {{ op.name }} called\n",
                  kNodeName);
     {%- if op.rep_msg %}
     return {{ op.rep_msg }}{};
     {%- endif %}
 }
 {% endfor %}
-{%- endfor -%}
 {% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}
