@@ -934,18 +934,22 @@ def gen_codec_dispatch(
 
 
 @main.command(
-    "gen-netgraph-partition",
-    help="Emit a per-bus netgraph partition (PDU -> bus address LUT) from "
-    "an AUTOSAR catalog.json. Output is the routing layer the gateway "
-    "runtime joins with symbolic port names to fill the transport header.",
+    "gen-gateway-netgraph",
+    help="Emit a per-bus PSP netgraph (PDU -> bus address LUT) from "
+    "an AUTOSAR catalog.json. The SUPERVISOR consumes this — it's the "
+    "per-machine authority on PSP signal routing, and provisions its "
+    "gateway daemon at startup from this LUT. Renamed from the older "
+    "`gen-netgraph-partition` to reflect the role: this is one of two "
+    "netgraphs (PSP=supervisor, cluster=gateway), not a partition of a "
+    "single one.",
 )
 @click.option("--catalog", "catalog_path", required=True,
               type=click.Path(exists=True, dir_okay=False),
               help="Per-bus catalog.json (output of import-dbc / import-fibex).")
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
               help="Output netgraph.json (typically alongside the catalog).")
-def gen_netgraph_partition(catalog_path: str, out_path: str) -> None:
-    from .generators.netgraph_partition import generate
+def gen_gateway_netgraph(catalog_path: str, out_path: str) -> None:
+    from .generators.gateway_netgraph import generate
     generate(catalog_path, out_path)
 
 

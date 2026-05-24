@@ -1,18 +1,37 @@
-"""Generate per-bus netgraph partitions from an AUTOSAR catalog.json.
+"""Per-bus PSP netgraph: PDU → bus-level address LUT.
 
-A **netgraph partition** is the routing LUT that maps a symbolic PDU
-name (the unit declared by `autosar gen-autosar-system`) to its
-bus-level address(es): a CAN can_id+dlc, or a FlexRay
-(slot, cycle, channel, byte_offset) tuple.
+One of TWO netgraphs in the system (see
+docs/tasks/PROGRESS/netgraph-signal-routing/README.md):
+
+  - **PSP netgraph** (this file): per-bus PDU → bus address (CAN id,
+    FlexRay slot/cycle/channel). Authoritative consumer is the
+    **SUPERVISOR** — it's the per-machine authority on what signals
+    its gateway daemon needs to translate, and provisions the gateway
+    at startup from this LUT.
+
+  - **Cluster netgraph** (artheia/generators/netgraph.py): per-node
+    TIPC address map for the whole cluster. Authoritative consumer
+    is the **GATEWAY daemon** — it's the in-cluster broker for inter-
+    node TIPC traffic.
+
+PSP netgraph maps the symbolic PDU name (the unit declared by
+`autosar gen-autosar-system`) to its bus-level address(es): a CAN
+can_id+dlc, or a FlexRay (slot, cycle, channel, byte_offset) tuple.
 
 We split this off from `catalog.json` so the catalog can stay focused
 on signal layout (bit positions, types, enum companions) and the
 netgraph can stay focused on wire addressing. Downstream consumers:
 
 - The gateway runtime LUT (`pero_cmp_lnx`) joins the host transport
-  header by symbolic port name → bus address via this file.
+  header by symbolic port name → bus address via this file. The
+  supervisor hands the LUT to the gateway daemon at startup.
 - The signal-filter CSV generator (future) joins per-app port lists
   with this LUT to compute which signals the gateway needs to forward.
+
+Generator was previously named `netgraph_partition.py` /
+`gen-netgraph-partition` — renamed in 2026-05 to reflect the role
+clearly: this is a NETGRAPH (one of two), not a partition of a
+single netgraph.
 
 Output schema:
 
