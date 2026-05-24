@@ -60,7 +60,7 @@ _KEYWORDS = [
     "cluster",
     "params",
     "reliable", "best_effort",
-    "kick_off", "requires_timers", "config",
+    "kick_off", "requires_timers", "config", "extends",
     "on", "process",
     "bus", "kind", "channels",
     "gateway_route", "can", "flexray", "id", "slot", "channel",

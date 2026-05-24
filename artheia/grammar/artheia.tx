@@ -115,8 +115,26 @@ ParamDirection:
 
 // ---- 3. Nodes (atomic components on the host) ------------------------------
 
+// NodeDecl — an atomic node (one OS process / one GenServer-derived
+// daemon) addressed by a unique TIPC type/instance pair.
+//
+// Prototype inheritance (`extends`): if a derived node declares the
+// same shape as another with just a different TIPC address, write it
+// as `node atomic Foo extends Base { tipc ... }`. The derived node
+// inherits ports, statem, config, params, kick_off, requires_timers
+// from `Base` UNLESS the derived re-declares them (the derived's
+// declaration replaces the base's wholesale; there's no field-level
+// merging). The flatten step lives in the loader — by the time the
+// model reaches the generators, a derived node looks identical to
+// a hand-rolled equivalent.
+//
+// Common use: two instances of the same node on different machines
+// (TIPC kernel still routes by type/instance — these are DIFFERENT
+// nodes with the same SHAPE). Or: one base node that two specialised
+// daemons share before overriding behaviour. The latter is rare in
+// practice — most "derived" nodes only override tipc.
 NodeDecl:
-    'node' kind=NodeKind name=ID '{'
+    'node' kind=NodeKind name=ID ('extends' base=[NodeDecl|FQN])? '{'
         tipc=TipcAddress
         // Lifecycle / dependency annotations. Each is independently
         // optional; the generator uses them to drop hand-tables

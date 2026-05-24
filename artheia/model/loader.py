@@ -109,15 +109,32 @@ def _strip_package_line(src: str) -> str:
     return "\n".join(out)
 
 
+def _postprocess(model):
+    """Hook for transforms that have to run AFTER textX cross-refs
+    resolve. Currently:
+
+      - :mod:`artheia.model.inherit` flattens ``node extends Base``
+        so generators see standalone-looking NodeDecls — the derived
+        node absorbs the base's ports/params/statem/config/flags
+        unless it overrode them.
+
+    In-place mutation; returns the same model object."""
+    from .inherit import resolve_inheritance
+    resolve_inheritance(model)
+    return model
+
+
 def parse_file(path: str | Path):
     """Parse a .art file, optionally merging package.art + component.art."""
     p = Path(path)
     primary, sibling = _sibling_split(p)
     if sibling is None:
-        return load_metamodel().model_from_file(str(primary))
+        return _postprocess(load_metamodel().model_from_file(str(primary)))
     merged, anchor = _merged_source(primary, sibling)
-    return load_metamodel().model_from_str(merged, file_name=str(anchor))
+    return _postprocess(
+        load_metamodel().model_from_str(merged, file_name=str(anchor)))
 
 
 def parse_string(src: str, file_name: Optional[str] = None):
-    return load_metamodel().model_from_str(src, file_name=file_name)
+    return _postprocess(
+        load_metamodel().model_from_str(src, file_name=file_name))
