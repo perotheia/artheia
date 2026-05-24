@@ -81,6 +81,20 @@ class _Port:
 
 
 @dataclass
+class _SignalDest:
+    node: str             # target node name (informational)
+    tipc_type: str        # "0x..." string from .art tipc decl
+    tipc_instance: str    # likewise
+
+
+@dataclass
+class _SignalEntry:
+    msg: str              # message type (last segment of FQN)
+    direction: str        # "out" | "in"
+    destinations: list[_SignalDest] = field(default_factory=list)
+
+
+@dataclass
 class _NodeView:
     name: str
     snake: str             # lowercase + underscore (sm_daemon)
@@ -93,6 +107,12 @@ class _NodeView:
     # GenServer-shaped FCs. Templates branch on `node.statem` being
     # truthy / None to pick GenStateM-vs-GenServer skeleton.
     statem: Optional[StateMSpec] = None
+    # Static signal-routing slice projected from
+    # artheia.generators.netgraph.build_netgraph() —
+    # per-(msg) `direction + destinations[]` for the runtime LUT.
+    # Empty when the .art has no compositions/clusters with connects
+    # referencing this node.
+    signals: list[_SignalEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -239,6 +259,31 @@ def _build_model_view(art_path: Path,
             if getattr(el, "statem", None) is not None:
                 has_statem = True
 
+    # Join the netgraph projection — per-node signal routing tables
+    # come from compositions / clusters in the same .art. The
+    # netgraph generator already walks ConnectDecls and produces a
+    # `nodes[].signals` dict keyed by node name; we attach each
+    # node's slice to its _NodeView so the template can emit a
+    # constexpr destinations table.
+    from .netgraph import build_netgraph
+    ng = build_netgraph(model)
+    ng_by_name = {n["name"]: n for n in ng.get("nodes", [])}
+    for nv in nodes:
+        ng_entry = ng_by_name.get(nv.name, {})
+        for msg, info in (ng_entry.get("signals") or {}).items():
+            dests = [
+                _SignalDest(
+                    node=d["node"],
+                    tipc_type=d["tipc_type"],
+                    tipc_instance=d["tipc_instance"],
+                )
+                for d in info.get("destinations", [])
+            ]
+            nv.signals.append(_SignalEntry(
+                msg=msg, direction=info.get("direction", "out"),
+                destinations=dests,
+            ))
+
     return _ModelView(
         art_package=art_package,
         proto_package=proto_pkg,
@@ -333,6 +378,14 @@ def generate_fc(
     lib_dir = out_dir / "lib"
     p = lib_dir / f"{mv.daemon_class}.hh"
     results[_write(p, env.get_template(f"Daemon{statem_suffix}.hh.j2").render(**ctx),
+                    overwrite=True)].append(str(p))
+    # Per-node signal routing table — constexpr destinations[] for
+    # each outbound signal the .art's composition / cluster connects
+    # name. Empty when the node has no out-connects; the file still
+    # gets emitted (with just the namespace shell) so users have a
+    # single include point regardless.
+    p = lib_dir / f"{mv.daemon_class}_netgraph.hh"
+    results[_write(p, env.get_template("Netgraph.hh.j2").render(**ctx),
                     overwrite=True)].append(str(p))
     p = lib_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.lib.bazel.j2").render(**ctx),

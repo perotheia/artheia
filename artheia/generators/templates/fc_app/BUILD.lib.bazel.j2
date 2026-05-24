@@ -12,7 +12,10 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "{{ model.fc_short }}_lib",
-    hdrs = ["{{ model.daemon_class }}.hh"],
+    hdrs = [
+        "{{ model.daemon_class }}.hh",
+        "{{ model.daemon_class }}_netgraph.hh",
+    ],
     includes = [".."],
     copts = [
         "-std=c++17",
