@@ -125,10 +125,12 @@ def test_platform_fabric_not_in_supervised_tree(emitted):
 
 def test_demo_binaries_pinned_to_compute(emitted):
     """The three demo per-process binaries (compute_app) all land on
-    compute_host and on NO other machine."""
+    compute_host and on NO other machine. Idents come from `cluster
+    Applications` in the .art (p1/p2/p3 — the generated applications.py
+    drives them now, no longer the hand-written demo_p* names)."""
     compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute_host"))
     central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central_host"))
-    for demo in ("demo_p1", "demo_p2", "demo_p3"):
+    for demo in ("p1", "p2", "p3"):
         assert demo in compute_leaves, (
             f"{demo!r} must be on compute_host; got {sorted(compute_leaves)}"
         )

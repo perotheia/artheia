@@ -481,6 +481,16 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         if log_level:
             env["THEIA_LOG_LEVEL"] = log_level
 
+        # Per-node metadata for the C++ supervisor. FCs get rich NodeInfo
+        # from their package.art (_collect_nodes_for_fc); application
+        # leaves carry their hosted prototype names on Process.nodes
+        # (set by the generated applications.py from the composition) —
+        # lift those into minimal NodeInfo so executor.json lists each
+        # app's nodes too.
+        nodes = _collect_nodes_for_fc(short)
+        if not nodes:
+            nodes = [NodeInfo(name=n) for n in getattr(proc, "nodes", []) or []]
+
         return ChildSpec(
             name=short,
             start_cmd=start_cmd,
@@ -491,7 +501,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             env=env,
             shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
             shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
-            nodes=_collect_nodes_for_fc(short),
+            nodes=nodes,
         )
 
     # Detect cycles in the supervisor graph; bail early on detection.

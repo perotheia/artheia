@@ -261,6 +261,13 @@ class Process(Identifiable):
     # RPC (#385). One of: "trace"|"debug"|"info"|"warn"|"error".
     log_level: str = "info"
 
+    # Hosted node (prototype) names — the in-process GenServer instances
+    # this Process runs, derived from the .art composition's prototypes.
+    # Carried into executor.json so the supervisor knows each app's nodes
+    # statically (without parsing .art at runtime). Empty for FC-style
+    # processes whose node set isn't enumerated here.
+    nodes: list[str] = field(default_factory=list)
+
 
 # ---------------------------------------------------------------------------
 # Legacy aliases

@@ -33,29 +33,58 @@ from pathlib import Path
 from artheia.model import parse_file
 
 
-def _cluster_members(art_file: str) -> "list[tuple[str, list[str]]]":
-    """Return ``[(cluster_name, [member_short, ...]), ...]`` for every
-    ``cluster`` declared in *art_file*, in source order.
+# One cluster member, fully derived from the .art:
+#   ident       — the member handle (``p1``), == app dir / target / bin name.
+#   composition — the .art composition it instantiates (member.type.name).
+#   nodes       — the composition's hosted prototype names (its GenServers).
+Member = "tuple[str, str, list[str]]"
 
-    A member's short is ``ClusterMember.name`` (the ``ident`` in
-    ``composition Com com``), with ``instance_name`` as a fallback for
-    older grammars. Empty-body clusters yield an empty member list.
-    Raises ``ValueError`` if the file declares no clusters at all.
+
+def _composition_nodes(model, composition_name: str) -> "list[str]":
+    """Prototype (node) names hosted by *composition_name* in *model*."""
+    for el in getattr(model, "elements", []):
+        if (
+            type(el).__name__ == "CompositionDecl"
+            and el.name == composition_name
+        ):
+            return [
+                p.name
+                for p in getattr(el, "elements", [])
+                if type(p).__name__ == "PrototypeDecl"
+                and getattr(p, "name", None)
+            ]
+    return []
+
+
+def _cluster_members(art_file: str) -> "list[tuple[str, list]]":
+    """Return ``[(cluster_name, [(ident, composition, [nodes]), ...]), ...]``
+    for every ``cluster`` declared in *art_file*, in source order.
+
+    A member's ``ident`` is ``ClusterMember.name`` (the handle in
+    ``composition Demo3WayP1 p1``); ``composition`` is ``member.type.name``;
+    ``nodes`` are that composition's hosted prototype names. All three are
+    read straight from the .art — no guessing. Empty-body clusters yield an
+    empty member list. Raises ``ValueError`` if the file declares no
+    clusters at all.
     """
     model = parse_file(art_file)
-    out: list[tuple[str, list[str]]] = []
+    out: list[tuple[str, list]] = []
     for el in getattr(model, "elements", []):
         if type(el).__name__ != "ClusterDecl":
             continue
-        members: list[str] = []
+        members: list = []
         for mem in getattr(el, "elements", []):
             if type(mem).__name__ != "ClusterMember":
                 continue
-            short = getattr(mem, "name", None) or getattr(
+            ident = getattr(mem, "name", None) or getattr(
                 mem, "instance_name", None
             )
-            if short:
-                members.append(short)
+            if not ident:
+                continue
+            mtype = getattr(mem, "type", None)
+            composition = getattr(mtype, "name", None) or ""
+            nodes = _composition_nodes(model, composition) if composition else []
+            members.append((ident, composition, nodes))
         out.append((el.name, members))
     if not out:
         raise ValueError(
@@ -101,91 +130,18 @@ Upper layers patch this base by name (:class:`Override`) — see
 
 from __future__ import annotations
 
-# Import from submodules directly (not from artheia.manifest) so this
-# module can be imported by artheia.manifest.platform without creating
-# a circular dependency through artheia/manifest/__init__.py.
-from artheia.manifest.application import (
-    BuildTypeEnum,
-    Executable,
-    ExecutionStateReportingBehaviorEnum,
-    RootSwComponentPrototype,
-    SwComponent,
-)
-from artheia.manifest.execution import (
-    Process,
-    SchedulingPolicy,
-    StartupConfig,
-    StateDependentStartupConfig,
-    TerminationBehaviorEnum,
-)
+# The per-cluster section builders live in artheia.manifest.utils so the
+# generated file stays small and the build logic can evolve without
+# regenerating. Imported under the leading-underscore names the sections
+# below call.
 from artheia.manifest.layer import Layer
-
-
-def _component_for(short: str) -> SwComponent:
-    """One bazel-buildable handle per cluster member."""
-    daemon_class = "".join(p.capitalize() for p in short.split("_")) + "Daemon"
-    return SwComponent(
-        name=short,
-        bazel_target=f"//services/{{short}}",
-        owner="platform",
-        art_node=f"services.{{short}}/{{daemon_class}}",
-    )
-
-
-def _executable_for(short: str) -> Executable:
-    """Adaptive Application Manifest Executable entry (§3.18)."""
-    daemon_class = "".join(p.capitalize() for p in short.split("_")) + "Daemon"
-    return Executable(
-        name=short,
-        category="PLATFORM_LEVEL",
-        build_type=BuildTypeEnum.BUILD_TYPE_RELEASE,
-        reporting_behavior=(
-            ExecutionStateReportingBehaviorEnum.REPORTING_BEHAVIOR_INDIVIDUAL
-        ),
-        root_sw_component_prototype=RootSwComponentPrototype(
-            name=f"{{short}}_root",
-            application_type=daemon_class,
-        ),
-    )
-
-
-def _process_for(short: str) -> Process:
-    """Execution Manifest Process (§8.2).
-
-    Tries to import ``PROCESS`` from ``manifest.services.<short>.executor``
-    (hand-edited, survives ``artheia gen-app``). Falls back to an empty
-    start_cmd for members without an executor.py — the supervisor
-    refuses to launch those.
-    """
-    import importlib
-
-    try:
-        mod = importlib.import_module(f"manifest.services.{{short}}.executor")
-    except ImportError:
-        mod = None
-
-    if mod is not None and hasattr(mod, "PROCESS"):
-        return mod.PROCESS
-
-    return Process(
-        name=short,
-        executable=short,
-        function_cluster_affiliation=short,
-        start_cmd=[],
-        state_dependent_startup_config=[
-            StateDependentStartupConfig(
-                function_group_state=["Default.Running"],
-                startup_config=StartupConfig(
-                    name=f"{{short}}_startup",
-                    scheduling_policy=SchedulingPolicy.SCHED_OTHER,
-                    scheduling_priority=0,
-                    termination_behavior=(
-                        TerminationBehaviorEnum.PROCESS_IS_NOT_SELF_TERMINATING
-                    ),
-                ),
-            ),
-        ],
-    )
+from artheia.manifest.utils import (
+    app_component_for,
+    app_process_for,
+    component_for as _component_for,
+    executable_for as _executable_for,
+    process_for as _process_for,
+)
 
 
 '''
@@ -205,53 +161,29 @@ MACHINES: list = []
 # The supervisor hierarchy (restart strategies + child grouping) is
 # hand-authored and has NO .art declaration, so it must survive any
 # regeneration of THIS file. It lives in the executor.py sidecar; we
-# re-export it here so existing consumers keep reading
-# ``service.SUPERVISORS`` unchanged. Edit the tree in executor.py.
+# re-export it here so existing consumers keep reading ``SUPERVISORS``
+# unchanged. Edit the tree in executor.py.
 # ---------------------------------------------------------------------------
 
 from services.manifest.executor import SUPERVISORS  # noqa: E402,F401
 
 
-# The Layer instance upper layers compose against (aggregate of all
-# clusters). A rig layer (demo/manifest/rig.py) wraps it via
-# :func:`merge_layers`; Removals / Overrides reach in by short-name.
-FcLayer = Layer(
-    name="services.fc",
-    add_components=COMPONENTS,
-    add_executions=PROCESSES,
-    add_supervisors=SUPERVISORS,
-)
-
-
 # ---------------------------------------------------------------------------
-# Structured-DSL counterpart — :data:`FcSoftware`.
+# Per-cluster Layer + SoftwareSpecification. One pair per .art cluster,
+# named after the cluster (`<Cluster>Layer` / `<Cluster>Software`). The
+# layer's `name=` is the lowercased cluster name. Upper layers (rig.py)
+# compose against these — e.g. `DemoSoftware = ApplicationsSoftware.
+# squash(DemoSpecLayer)`.
 # ---------------------------------------------------------------------------
 
 from typing import cast
 
 from artheia.manifest.application import ApplicationManifest
+from artheia.manifest.layer import Layer  # noqa: E402,F811
 from artheia.manifest.rig import SoftwareSpecification, VehicleIdentity
 from artheia.manifest.transform import Append, SetTransformTypes  # noqa: E402
 
-_PlatformApplication = ApplicationManifest(
-    name="platform_app",
-    host_machine="",  # rig layers fill in
-    components=list(COMPONENTS),
-)
-
-FcSoftware: SoftwareSpecification = SoftwareSpecification(
-    vehicle=VehicleIdentity(name=""),  # rig layers override
-    applications=cast(set[SetTransformTypes], {{
-        Append(_PlatformApplication),
-    }}),
-    execution_manifests=cast(set[SetTransformTypes], {{
-        Append(p) for p in PROCESSES
-    }}),
-    supervisors=cast(set[SetTransformTypes], {{
-        Append(s) for s in SUPERVISORS
-    }}),
-)
-
+{layers}
 
 __all__ = [
 {exports}
@@ -260,49 +192,118 @@ __all__ = [
     "EXECUTABLES",
     "PROCESSES",
     "SUPERVISORS",
-    "FcLayer",
-    "FcSoftware",
 ]
 '''
 
 
-def _render_sections(clusters: "list[tuple[str, list[str]]]") -> tuple[str, str]:
-    """Render the per-cluster Application sections + the aggregate
-    COMPONENTS/EXECUTABLES/PROCESSES lists.
+def _pascal(cluster_name: str) -> str:
+    """PascalCase, identifier-safe form of a cluster name for the
+    ``<Cluster>Layer`` / ``<Cluster>Software`` symbols. ``Services`` →
+    ``Services``; ``my-apps`` → ``MyApps``."""
+    parts = [p for p in "".join(
+        c if c.isalnum() else " " for c in cluster_name
+    ).split() if p]
+    return "".join(p[:1].upper() + p[1:] for p in parts) or "Cluster"
 
-    Returns ``(sections_block, exports_block)``.
+
+def _render_sections(
+    clusters: "list[tuple[str, list]]",
+    base_dir: str,
+) -> "tuple[str, str, str]":
+    """Render the per-cluster sections + the aggregate lists + the
+    per-cluster Layer/Software definitions.
+
+    *base_dir* is the manifest module's directory (e.g. ``demo``); it +
+    each member ident drive the directory-convention paths (app dir,
+    bazel target, start_cmd) — see :mod:`artheia.manifest.utils`.
+
+    Returns ``(sections_block, exports_block, layers_block)``.
     """
     lines: list[str] = []
     export_names: list[str] = []
     all_prefixes: list[str] = []
+    layer_lines: list[str] = []
 
     for name, members in clusters:
-        pfx = _py_ident(name)
+        pfx = _py_ident(name)          # SERVICES — section var prefix
+        cls = _pascal(name)            # Services — Layer/Software symbol
+        lname = name.lower()           # services — Layer.name= string
         all_prefixes.append(pfx)
-        shorts_lit = ", ".join(f'"{m}"' for m in members)
+        # Each member is (ident, composition, [nodes]) — all from the .art.
+        members_lit = ",\n".join(
+            f"    ({ident!r}, {comp!r}, {nodes!r})"
+            for ident, comp, nodes in members
+        )
         lines.append(
             f"# ---------------------------------------------------------"
             f"------------------\n"
             f"# Application section — cluster `{name}`.\n"
+            f"# Each member: (ident, composition, [hosted node names]) "
+            f"— all from the .art.\n"
+            f"# Build/deploy paths derive from (base_dir={base_dir!r}, "
+            f"ident) via the\n"
+            f"# directory convention (artheia.manifest.utils).\n"
             f"# ---------------------------------------------------------"
             f"------------------\n"
-            f"{pfx}_SHORTS: list[str] = [{shorts_lit}]\n"
-            f"{pfx}_COMPONENTS = [_component_for(s) for s in {pfx}_SHORTS]\n"
-            f"{pfx}_EXECUTABLES = [_executable_for(s) for s in {pfx}_SHORTS]\n"
-            f"{pfx}_PROCESSES = [_process_for(s) for s in {pfx}_SHORTS]\n"
+            f"{pfx}_MEMBERS: list[tuple[str, str, list[str]]] = [\n"
+            f"{members_lit}\n"
+            f"]\n"
+            f"{pfx}_SHORTS = [m[0] for m in {pfx}_MEMBERS]\n"
+            f"{pfx}_COMPONENTS = [\n"
+            f"    app_component_for({base_dir!r}, ident, comp)\n"
+            f"    for ident, comp, _ in {pfx}_MEMBERS\n"
+            f"]\n"
+            f"{pfx}_EXECUTABLES = [_executable_for(ident) "
+            f"for ident, _, _ in {pfx}_MEMBERS]\n"
+            f"{pfx}_PROCESSES = [\n"
+            f"    app_process_for({base_dir!r}, ident, nodes)\n"
+            f"    for ident, _, nodes in {pfx}_MEMBERS\n"
+            f"]\n"
         )
-        for suffix in ("SHORTS", "COMPONENTS", "EXECUTABLES", "PROCESSES"):
+        for suffix in ("MEMBERS", "SHORTS", "COMPONENTS",
+                       "EXECUTABLES", "PROCESSES"):
             export_names.append(f"{pfx}_{suffix}")
 
-    # Aggregate lists span every cluster (consumers import these).
+        # Per-cluster Layer + SoftwareSpecification, named after the
+        # cluster. The supervisor tree is attached to every cluster's
+        # layer (it's package-wide, sidecared in executor.py).
+        layer_lines.append(
+            f"# cluster `{name}` → {cls}Layer / {cls}Software.\n"
+            f"{cls}Layer = Layer(\n"
+            f'    name="{lname}",\n'
+            f"    add_components={pfx}_COMPONENTS,\n"
+            f"    add_executions={pfx}_PROCESSES,\n"
+            f"    add_supervisors=SUPERVISORS,\n"
+            f")\n"
+            f"_{cls}App = ApplicationManifest(\n"
+            f'    name="{lname}_app",\n'
+            f'    host_machine="",  # rig layers fill in\n'
+            f"    components=list({pfx}_COMPONENTS),\n"
+            f")\n"
+            f"{cls}Software: SoftwareSpecification = SoftwareSpecification(\n"
+            f'    vehicle=VehicleIdentity(name=""),  # rig layers override\n'
+            f"    applications=cast(set[SetTransformTypes], {{\n"
+            f"        Append(_{cls}App),\n"
+            f"    }}),\n"
+            f"    execution_manifests=cast(set[SetTransformTypes], {{\n"
+            f"        Append(p) for p in {pfx}_PROCESSES\n"
+            f"    }}),\n"
+            f"    supervisors=cast(set[SetTransformTypes], {{\n"
+            f"        Append(s) for s in SUPERVISORS\n"
+            f"    }}),\n"
+            f")\n"
+        )
+        export_names.append(f"{cls}Layer")
+        export_names.append(f"{cls}Software")
+
+    # Aggregate lists span every cluster (consumers that want everything).
     comp = " + ".join(f"{p}_COMPONENTS" for p in all_prefixes) or "[]"
     exe = " + ".join(f"{p}_EXECUTABLES" for p in all_prefixes) or "[]"
     proc = " + ".join(f"{p}_PROCESSES" for p in all_prefixes) or "[]"
     lines.append(
         "# ---------------------------------------------------------"
         "------------------\n"
-        "# Aggregate across all Application clusters (what consumers "
-        "import).\n"
+        "# Aggregate across all clusters (every component / process).\n"
         "# ---------------------------------------------------------"
         "------------------\n"
         f"COMPONENTS = {comp}\n"
@@ -311,20 +312,33 @@ def _render_sections(clusters: "list[tuple[str, list[str]]]") -> tuple[str, str]
     )
 
     exports = "\n".join(f'    "{n}",' for n in export_names)
-    return "\n".join(lines), exports
+    layers = "\n".join(layer_lines)
+    return "\n".join(lines), exports, layers
 
 
 def generate_manifest_proto(art_file: str, out_file: str) -> Path:
-    """Render ``service.py`` from *art_file*'s clusters and write it to
-    *out_file*. Returns the written path."""
+    """Render the manifest module from *art_file*'s clusters and write
+    it to *out_file*. Returns the written path.
+
+    The application directory-convention is keyed on *base_dir* — the
+    name of the directory holding the manifest module (e.g. ``demo`` for
+    ``demo/manifest/applications.py``). That's the source-tree root each
+    member's ``<base_dir>/<ident>`` app dir hangs off.
+    """
+    out = Path(out_file)
+    # base_dir = the component root: parent of the `manifest/` dir if the
+    # output lives in `<base_dir>/manifest/<file>.py`, else the file's
+    # own parent dir name.
+    parent = out.parent
+    base_dir = parent.parent.name if parent.name == "manifest" else parent.name
+
     clusters = _cluster_members(art_file)
-    sections, exports = _render_sections(clusters)
+    sections, exports, layers = _render_sections(clusters, base_dir)
     rendered = (
         _HEADER.format(source=art_file)
         + sections
-        + _FOOTER.format(exports=exports)
+        + _FOOTER.format(exports=exports, layers=layers)
     )
-    out = Path(out_file)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)
     return out

@@ -22,7 +22,7 @@ The generator emits a Python module exporting:
   edits scheduling / priority / affinity in the Layer.
 - ``<Vehicle>SpecLayer: SoftwareSpecification`` — the structured-DSL
   delta layer.
-- ``<Vehicle>Software = FcSoftware.squash(<Vehicle>SpecLayer)`` — the
+- ``<Vehicle>Software = ServicesSoftware.squash(<Vehicle>SpecLayer)`` — the
   composed spec the CLI consumes.
 
 Bootstrap, not round-trip — once the user edits the generated file,
@@ -187,7 +187,7 @@ TODO markers below flag the deployment-specific decisions the
 generator cannot infer:
 - ``{Vehicle}Host`` hardware + network endpoint
 - per-process CPU affinity / scheduling priority
-- supervisor tree shape (the default inherits ``FcSoftware``'s)
+- supervisor tree shape (the default inherits ``ServicesSoftware``'s)
 """
 
 from __future__ import annotations
@@ -219,7 +219,7 @@ from artheia.manifest.execution import (
 from artheia.manifest.machine import CpuResource, IpEndpoint
 from artheia.manifest.rig import SoftwareSpecification
 from artheia.manifest.transform import Append, SetTransformTypes
-from services.manifest.fc import FcSoftware
+from services.manifest.service import ServicesSoftware
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ def _process_for(name: str) -> Process:
 
 _LAYER_TEMPLATE = '''
 # ---------------------------------------------------------------------------
-# {Vehicle}SpecLayer — structured-DSL delta over FcSoftware.
+# {Vehicle}SpecLayer — structured-DSL delta over ServicesSoftware.
 # Same-identity Append (name="platform_app") merges via Layer.squash,
 # so {Vehicle}'s binaries land alongside FC components on {Vehicle}Host.
 # ---------------------------------------------------------------------------
@@ -348,11 +348,11 @@ _{Vehicle}PlatformApp = ApplicationManifest(
 
 
 # ---------------------------------------------------------------------------
-# Final spec — squash onto FcSoftware. The CLI auto-picks this
+# Final spec — squash onto ServicesSoftware. The CLI auto-picks this
 # (it prefers ``*Software`` exports).
 # ---------------------------------------------------------------------------
 
-{Vehicle}Software: SoftwareSpecification = FcSoftware.squash({Vehicle}SpecLayer)
+{Vehicle}Software: SoftwareSpecification = ServicesSoftware.squash({Vehicle}SpecLayer)
 '''
 
 
