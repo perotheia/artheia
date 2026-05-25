@@ -411,40 +411,45 @@ def test_software_specification_squashes_machines_via_transforms():
     assert names == {"demo_host"}, f"expected {{demo_host}}, got {names}"
 
 
-def test_demo_software_routes_components_to_two_machines():
-    """``DemoSoftware`` is the multi-host shape:
-      - platform_app on central_host (18 FCs from FcSoftware)
-      - compute_app on compute_host (3 demo binaries)
+def test_demo_software_routes_components_to_three_machines():
+    """``DemoSoftware`` is the central/compute multi-host shape:
+      - platform_app on central_host — the platform binaries
+        (gateway + supervisor)
+      - compute_app  on compute_host — the demo apps p1/p2/p3
+      - services_app — the FC services (unpinned host; they're sliced
+        onto machines by the supervisor tree / PTM, not by app host),
+        including shwa
 
-    Same-identity Append of platform_app merges FcSoftware's 18 FC
-    components with DemoSpecLayer's empty list, AND overrides
-    host_machine from "" → "central_host". The compute_app is a
-    separate identity, so it lands on a separate machine.
+    Three machines: admin_host (the HostMachine running the GUI /
+    observability stack), central_host, and compute_host.
     """
     from demo.manifest.rig import DemoSoftware
     rig = DemoSoftware.to_rig()
 
-    # Two machines, two applications.
-    assert {m.name for m in rig.machines} == {"central_host", "compute_host"}
-    assert {a.name for a in rig.applications} == {"platform_app", "compute_app"}
+    assert {m.name for m in rig.machines} == {
+        "admin_host", "central_host", "compute_host",
+    }
+    assert {a.name for a in rig.applications} == {
+        "platform_app", "compute_app", "services_app",
+    }
 
     by_app = {a.name: a for a in rig.applications}
 
-    # platform_app → central, the 18 FC components.
+    # platform_app → central, the platform binaries.
     platform = by_app["platform_app"]
     assert platform.host_machine == "central_host"
-    assert len(platform.components) == 18
-    fc_names = {c.name for c in platform.components}
-    assert {"core", "com", "phm", "log"}.issubset(fc_names)
-    # demo binaries are NOT in platform_app — they're in compute_app.
-    assert "demo_p1" not in fc_names
+    assert {c.name for c in platform.components} == {"gateway", "supervisor"}
 
-    # compute_app → compute, the 3 demo binaries.
+    # compute_app → compute, the three demo apps.
     compute = by_app["compute_app"]
     assert compute.host_machine == "compute_host"
-    assert {c.name for c in compute.components} == {
-        "demo_p1", "demo_p2", "demo_p3",
-    }
+    assert {c.name for c in compute.components} == {"p1", "p2", "p3"}
+
+    # services_app → the FC services (host assigned by the supervisor
+    # slice, not the app), including the compute-only shwa.
+    services = by_app["services_app"]
+    fc_names = {c.name for c in services.components}
+    assert {"com", "log", "per", "sm", "ucm", "shwa"}.issubset(fc_names)
 
 
 def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():

@@ -31,19 +31,20 @@ DEMO_ART = REPO_ROOT / "demo" / "system" / "demo" / "package.art"
 
 
 def test_extract_composition_groups_prototypes_by_process():
-    """``Demo3Way`` has 5 prototypes across 3 process groups; the
-    extractor must collect them in declaration order, deduped per
-    process."""
-    info = _extract_composition_info(DEMO_ART, "Demo3Way")
+    """Post-split (#260): the demo is THREE per-process compositions
+    (Demo3WayP1/P2/P3) bundled by `cluster Applications`, not one
+    monolithic ``Demo3Way``. Demo3WayP1 hosts 3 prototypes on process
+    P1; the extractor collects them in declaration order. Prototype
+    names lost the `_p1` suffix when cluster connects were simplified
+    to bare `<proto>.<port>` (#261)."""
+    info = _extract_composition_info(DEMO_ART, "Demo3WayP1")
     assert info.package == "system.demo"
-    assert info.name == "Demo3Way"
-    # 3 processes — P1, P2, P3 — in declaration order.
-    assert [s.art_process for s in info.processes] == ["P1", "P2", "P3"]
-    # P1 hosts 3 prototypes; P2 / P3 host one each.
-    p1, p2, p3 = info.processes
-    assert p1.prototypes == ["counter_p1", "driver_p1", "ticker_p1"]
-    assert p2.prototypes == ["observer_p2"]
-    assert p3.prototypes == ["incrementer_p3"]
+    assert info.name == "Demo3WayP1"
+    # One process — P1 — since each composition IS a process now.
+    assert [s.art_process for s in info.processes] == ["P1"]
+    (p1,) = info.processes
+    assert p1.prototypes == ["counter", "driver", "ticker"]
+    assert p1.node_types == ["CounterNode", "DriverNode", "TickerNode"]
 
 
 def test_extract_composition_raises_on_missing_name():
@@ -66,12 +67,15 @@ def test_generate_rig_py_emits_runnable_python():
     """The generated source string must:
       - parse and exec without errors
       - expose a ``DemoSoftware: SoftwareSpecification`` symbol
-      - the symbol's ``.to_rig()`` produces 21 components on the
-        platform_app (18 FC + 3 demo)
-    """
+      - the symbol's ``.to_rig()`` squash the FC services in (one exec
+        per FC) and add the composition's single demo binary.
+
+    gen-rig materializes ONE composition; post-split that's a single
+    process (Demo3WayP1 → demo_p1), so the app carries exactly one demo
+    component on top of the squashed FC execution manifests."""
     src = generate_rig_py(
         art_path=DEMO_ART,
-        composition_name="Demo3Way",
+        composition_name="Demo3WayP1",
         vehicle_name="demo",
         machine_name="demo_host",
         bazel_package="//demo",
@@ -93,33 +97,29 @@ def test_generate_rig_py_emits_runnable_python():
 
         assert rig.vehicle.name == "demo"
         assert rig.vehicle.make == "theia"
-        assert rig.vehicle.model == "system.demo.Demo3Way"
+        assert rig.vehicle.model == "system.demo.Demo3WayP1"
 
         machines = {m.name for m in rig.machines}
         assert machines == {"demo_host"}
 
-        # 18 FC processes + 3 demo binaries.
+        # FC services (squashed in) + the one demo binary for this
+        # process. sm/com/per/ucm/log/shwa = the FC set, plus demo_p1.
         execs = {e.name for e in rig.execution_manifests}
-        assert len(execs) == 21
         assert "demo_p1" in execs
-        assert "core" in execs  # came from FcSoftware via squash
+        assert "sm" in execs  # came from the FC services via squash
 
-        # One ApplicationManifest with all 21 components.
-        assert len(rig.applications) == 1
-        app = rig.applications[0]
-        assert app.host_machine == "demo_host"
-        comp_names = {c.name for c in app.components}
-        assert len(comp_names) == 21
-        # Demo's bazel targets match the //demo:<proc>_main convention.
+        # Two ApplicationManifests: platform_app (the demo binary, on
+        # demo_host) and services_app (the squashed FC components).
+        apps = {a.name: a for a in rig.applications}
+        assert "platform_app" in apps
+        platform_app = apps["platform_app"]
+        assert platform_app.host_machine == "demo_host"
         demo_targets = {
-            c.bazel_target for c in app.components
+            c.bazel_target
+            for a in rig.applications for c in a.components
             if c.name.startswith("demo_")
         }
-        assert demo_targets == {
-            "//demo:p1_main",
-            "//demo:p2_main",
-            "//demo:p3_main",
-        }
+        assert demo_targets == {"//demo:p1_main"}
     finally:
         sys.modules.pop("_test_gen_rig_demo", None)
 
@@ -141,7 +141,7 @@ def test_write_rig_py_refuses_to_overwrite(tmp_path: Path):
     # `force=True` bypasses the guard.
     write_rig_py(
         art_path=DEMO_ART,
-        composition_name="Demo3Way",
+        composition_name="Demo3WayP1",
         out_path=target,
         vehicle_name="demo",
         machine_name="demo_host",
