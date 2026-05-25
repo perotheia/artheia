@@ -88,6 +88,12 @@ class _Composition:
     protos: List[_Proto] = field(default_factory=list)
     connects: List[Tuple[str, str, str, str]] = field(default_factory=list)
     # ^ (src_proto_name, src_port, dst_proto_name, dst_port)
+    # Processes this composition OWNS (one project is generated per
+    # entry). Remote peer protos folded in from cluster connects carry
+    # their own `process` tag but are NOT generated here — only their
+    # RemoteRef is emitted into our process. Set in _harvest before the
+    # cluster merge.
+    own_processes: List[str] = field(default_factory=list)
 
 
 def _snake(name: str) -> str:
@@ -222,7 +228,95 @@ def _harvest(art_path: Path, composition_name: str
         comp.connects.append((s.proto.name, s.port,
                               t.proto.name, t.port))
 
+    # The processes this composition owns — captured BEFORE the cluster
+    # merge folds in remote peer protos (which carry their own process
+    # tag we must not generate a project for).
+    comp.own_processes = sorted({p.process for p in comp.protos})
+
+    # ---- cross-composition (cluster) connects (#378) -------------------
+    # A cluster wires prototypes that live in DIFFERENT member
+    # compositions, e.g.:
+    #   cluster Applications {
+    #       composition Demo3WayP1 p1   # owns counter
+    #       composition Demo3WayP2 p2   # owns observer
+    #       connect observer.counter_call to counter.srv
+    #   }
+    # When generating P2, `counter` lives in P1 — it's a REMOTE peer.
+    # The composition-scoped harvest above doesn't see it, so pull in:
+    #   (a) every cluster connect touching one of THIS composition's
+    #       prototypes, and
+    #   (b) the peer prototype it references (from the sibling member
+    #       composition) as a remote proto, so its node_type + tipc
+    #       address are known for the RemoteRef.
+    _merge_cluster_connects(model, composition_name, comp)
+
     return comp, nodes, ifaces, proto_pkg
+
+
+def _all_composition_protos(model) -> "Dict[str, _Proto]":
+    """Index every prototype across all compositions in *model* by name.
+
+    Prototype names are globally unique in the artheia model (a
+    prototype identifies one node / TIPC endpoint), so a flat name→proto
+    map is sufficient to resolve cluster connects that span compositions.
+    """
+    from artheia.model import flatten_composition
+    out: "Dict[str, _Proto]" = {}
+    for el in getattr(model, "elements", []):
+        if el.__class__.__name__ != "CompositionDecl":
+            continue
+        proto_decls, _ = flatten_composition(el)
+        for pd in proto_decls:
+            node = pd.type
+            tt = node.tipc.type
+            tt_hex = f"0x{tt:x}" if isinstance(tt, int) else str(tt)
+            out[pd.name] = _Proto(
+                name=pd.name,
+                node_type=node.name,
+                snake=_snake(node.name),
+                process=getattr(pd, "process", None) or "default",
+                tipc_type_hex=tt_hex,
+                tipc_instance=int(getattr(node.tipc, "instance", 0) or 0),
+            )
+    return out
+
+
+def _merge_cluster_connects(model, composition_name: str,
+                            comp: "_Composition") -> None:
+    """Fold cluster-level connects that touch *comp*'s prototypes into
+    *comp* (connects + the remote peer prototypes they reference)."""
+    own_names = {p.name for p in comp.protos}
+    if not own_names:
+        return
+    all_protos = _all_composition_protos(model)
+    have = set(own_names)
+    have_connects = {(s, sp, d, dp) for s, sp, d, dp in comp.connects}
+
+    for el in getattr(model, "elements", []):
+        if el.__class__.__name__ != "ClusterDecl":
+            continue
+        for c in getattr(el, "elements", []):
+            src = getattr(c, "source", None)
+            tgt = getattr(c, "target", None)
+            if src is None or tgt is None:
+                continue
+            s_proto = getattr(getattr(src, "proto", None), "name", None)
+            t_proto = getattr(getattr(tgt, "proto", None), "name", None)
+            if s_proto is None or t_proto is None:
+                continue
+            # Only connects that touch one of THIS composition's protos.
+            if s_proto not in own_names and t_proto not in own_names:
+                continue
+            edge = (s_proto, src.port, t_proto, tgt.port)
+            if edge not in have_connects:
+                comp.connects.append(edge)
+                have_connects.add(edge)
+            # Bring in the peer proto (the one not owned here) so the
+            # renderer can emit its RemoteRef (node_type + tipc address).
+            for peer in (s_proto, t_proto):
+                if peer not in have and peer in all_protos:
+                    comp.protos.append(all_protos[peer])
+                    have.add(peer)
 
 
 # ---- per-port helpers --------------------------------------------------
@@ -603,7 +697,9 @@ def generate_composition(art_path: str | Path,
     out_root.mkdir(parents=True, exist_ok=True)
 
     comp, nodes, ifaces, proto_pkg = _harvest(art_path, composition_name)
-    processes = sorted({p.process for p in comp.protos})
+    # Only the composition's OWN processes get a project; remote peers
+    # folded in from cluster connects are referenced, not generated.
+    processes = comp.own_processes
 
     written: List[Path] = []
     for proc in processes:
