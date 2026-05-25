@@ -163,6 +163,13 @@ NodeDecl:
         // omitting the field is equivalent to writing
         // `reporting=true`.
         ('reporting' '=' reporting=BoolLit)?
+        // AUTOSAR Log&Trace 3-letter Context ID (e.g. "SMX" for State
+        // Management, "COM" for Communication Management). Stamped
+        // onto every Logger record so a grep across multi-FC logs
+        // filters cleanly. Omitted → gen-app falls back to the node
+        // name itself, so a tag-less node still gets a working
+        // contextual logger.
+        ('tag' '=' tag=STRING)?
         ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?

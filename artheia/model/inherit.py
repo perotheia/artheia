@@ -153,6 +153,12 @@ def _copy_inherited_fields(*, src, dst) -> None:
     if not _is_present(dst.statem) and _is_present(src.statem):
         dst.statem = src.statem
 
+    # AUTOSAR log-context tag (per-node, optional). Inherited only
+    # when dst's value is empty — a derived node that wrote its own
+    # `tag = "..."` keeps it.
+    if not dst.tag and src.tag:
+        dst.tag = src.tag
+
     # Lists — copy wholesale (no element-level merging).
     if not _is_present(dst.ports) and _is_present(src.ports):
         dst.ports = list(src.ports)

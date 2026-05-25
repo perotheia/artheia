@@ -113,6 +113,11 @@ class _NodeView:
     # emit path consults the filter map (#355). reporting=false
     # nodes have no trace API.
     reporting: bool = True
+    # AUTOSAR Log&Trace 3-letter Context ID — stamped onto every log
+    # record. Falls back to the node name itself when the .art has
+    # no `tag = "..."` field, so every node always has a non-empty
+    # contextual tag (per #383 fallback rule).
+    log_tag: str = ""
     ports: list[_Port] = field(default_factory=list)
     # When the .art's NodeDecl has a `statem { ... }` block, this is
     # the validated StateMSpec lowered from the AST. None for plain
@@ -257,6 +262,10 @@ def _node_view(node) -> _NodeView:
     # always populated as the string "true" or "false" by the time
     # we see it. Default-true: missing/empty is treated as reporting.
     reporting_raw = (getattr(node, "reporting", "") or "true").lower()
+    # AUTOSAR Log&Trace tag (#383). The .art's `tag = "..."` is the
+    # canonical source; when absent we fall back to the node name so
+    # the generated logger always has a non-empty context.
+    log_tag = (getattr(node, "tag", "") or "").strip() or node.name
     nv = _NodeView(
         name=node.name,
         snake=_to_snake(node.name),
@@ -264,6 +273,7 @@ def _node_view(node) -> _NodeView:
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
         reporting=(reporting_raw == "true"),
+        log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
     )
     for p in (node.ports or []):
@@ -454,6 +464,13 @@ def generate_fc(
     # single include point regardless.
     p = lib_dir / f"{mv.daemon_class}_netgraph.hh"
     results[_write(p, env.get_template("Netgraph.hh.j2").render(**ctx),
+                    overwrite=True)].append(str(p))
+    # Per-FC logging context (#383). Wraps platform::runtime::Logger
+    # so every log record gets the AUTOSAR context tag prepended.
+    # Tag comes from the daemon-node's .art `tag = "..."` (falling
+    # back to the node name when omitted — see _node_view).
+    p = lib_dir / "Log.hh"
+    results[_write(p, env.get_template("Log.hh.j2").render(**ctx),
                     overwrite=True)].append(str(p))
     p = lib_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.lib.bazel.j2").render(**ctx),
