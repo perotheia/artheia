@@ -227,3 +227,24 @@ inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}&
 {% endfor -%}{# end for n in nodes #}
 
 }  // namespace {{ model.cxx_namespace }}
+
+{# ---- Inbound RemoteCodec specializations (#387) -------------------------
+   register_call/register_cast on a reporting node's config service need a
+   RemoteCodec<T> for every inbound type. One DEMO_DECLARE_REMOTE_CODEC per
+   receiver-port req/rep/data type, deduplicated, at global scope. #}
+{%- set _codecs = [] -%}
+{%- for n in model.nodes if n.reporting -%}
+{%- for op in n.unique_handler_ops() -%}
+{%- if op.req_msg and op.req_msg not in _codecs %}{{ _codecs.append(op.req_msg) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.req_msg }})
+{%- endif -%}
+{%- if op.rep_msg and op.rep_msg not in _codecs %}{{ _codecs.append(op.rep_msg) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.rep_msg }})
+{%- endif -%}
+{%- endfor -%}
+{%- for d in n.unique_receiver_data() -%}
+{%- if d.msg not in _codecs %}{{ _codecs.append(d.msg) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ d.msg }})
+{%- endif -%}
+{%- endfor -%}
+{%- endfor %}

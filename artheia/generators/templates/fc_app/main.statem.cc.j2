@@ -64,10 +64,21 @@ int main() {
             {{ n.name }}::kTipcInstance)) {
         config_mux.register_cast<platform_runtime_LogLevelPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
+        // Receiver ports (#387): register the node's declared inbound
+        // types so a real peer — or a robot-test inject via services/com
+        // — lands on the same handle_call / handle_cast path. clientServer
+        // ops → register_call; senderReceiver `in` data → register_cast.
+{%- for op in n.unique_handler_ops() %}
+        config_mux.register_call<{{ op.req_msg }}, {{ op.rep_msg }}>(
+            {{ n.snake }}_cfg, {{ n.snake }});
+{%- endfor %}
+{%- for d in n.unique_receiver_data() %}
+        config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+{%- endfor %}
     } else {
         std::fprintf(stderr,
                      "[{{ n.snake }}] WARN: config service bind failed; "
-                     "live log-level push disabled\n");
+                     "live log-level push + signal inject disabled\n");
     }
 {% endif %}
 {% endfor %}
