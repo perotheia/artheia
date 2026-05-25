@@ -151,6 +151,16 @@ public:
     void trace_clear_all() {
         ::demo::runtime::tracer_for(kNodeName).trace_clear_all();
     }
+
+    // Keep the framework's config-service handler
+    // (handle_cast(LogLevelPush)) visible (#386) — a derived handle_cast
+    // would otherwise hide the base overload by name, so
+    // register_cast<LogLevelPush> wouldn't resolve. Same name-hiding
+    // guard as the handle_event using-decl below. GenStateM derives
+    // from GenServer, so the handler is inherited.
+    using demo::runtime::GenStateM<{{ n.name }},
+                                    {{ n.name }}State,
+                                    {{ n.name }}Data>::handle_cast;
 {% endif %}
 
     {{ n.name }}State init({{ n.name }}Data& /*d*/) {
