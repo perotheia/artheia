@@ -49,15 +49,17 @@ def _run_gen_app(tmp_path: Path, art: Path) -> Path:
         cxx_namespace="ara::tfc",
         force=True,
     )
-    # gen-app emits TWO headers: the Daemon class (the one we want)
-    # and a sibling <Node>_netgraph.hh (static routing table).
-    # Filter to the Daemon header — it does NOT have the _netgraph suffix.
+    # gen-app emits several headers into lib/: the Daemon class
+    # (<Node>.hh — the one we want), a sibling <Node>_netgraph.hh
+    # (static routing table), and Log.hh (per-FC log helper, #383).
+    # Select the Daemon header by node name rather than by exclusion so
+    # new sidecar headers don't break the count.
     lib_dir = out_dir / "lib"
-    headers = [
-        p for p in lib_dir.glob("*.hh") if not p.stem.endswith("_netgraph")
-    ]
-    assert len(headers) == 1, f"expected 1 Daemon .hh in {lib_dir}, got {headers}"
-    return headers[0]
+    daemon = lib_dir / "Worker.hh"
+    assert daemon.exists(), (
+        f"expected Daemon header {daemon} in {sorted(lib_dir.glob('*.hh'))}"
+    )
+    return daemon
 
 
 def test_reporting_true_emits_trace_api(tmp_path):
@@ -83,12 +85,14 @@ def test_reporting_true_emits_trace_api(tmp_path):
     )
     hh = _run_gen_app(tmp_path, art).read_text()
     assert "kReporting = true" in hh
-    assert "void trace_enable(const char* msg_type, bool enabled);" in hh
-    assert "bool trace_enabled(const char* msg_type) const;" in hh
-    assert "void trace_clear_all();" in hh
+    # The trace control API is emitted as inline in-class definitions
+    # (signature + body), not decl-only — so match the open-brace form.
+    assert "void trace_enable(const char* msg_type, bool enabled) {" in hh
+    assert "bool trace_enabled(const char* msg_type) const {" in hh
+    assert "void trace_clear_all() {" in hh
     assert "trace_filter_" in hh
-    # Inline impl present.
-    assert "Worker::trace_enable" in hh
+    # Bodies delegate to the per-node tracer (the runtime sink #361).
+    assert "::demo::runtime::tracer_for(kNodeName).trace_enable(" in hh
 
 
 def test_reporting_false_omits_trace_api(tmp_path):
