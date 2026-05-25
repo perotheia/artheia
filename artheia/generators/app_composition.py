@@ -705,10 +705,50 @@ def _render_cmakelists(comp: _Composition,
 
 # ---- public API ---------------------------------------------------------
 
+def _emit_proto(art_path: Path, proto_out: Path,
+                run_nanopb: bool) -> List[Path]:
+    """Emit the composition's package .proto under ``proto_out`` and,
+    if ``run_nanopb`` and ``nanopb_generator`` is on PATH, compile it to
+    ``.pb.{c,h}`` in place. Returns the paths written.
+
+    Layout mirrors the source .art package (e.g. ``system.demo`` →
+    ``<proto_out>/system/demo/demo.proto``). The proto ``package`` decl
+    uses the libc-safe rewrite (``services_demo``) — see
+    :func:`artheia.generators.proto._proto_package_name`. This keeps the
+    app and its codec in one ``gen-app-composition`` invocation rather
+    than a separate ``gen-proto-package`` + manual nanopb step.
+    """
+    from .proto_package import generate_package_proto
+    proto_file = generate_package_proto(art_path, proto_out)
+    written: List[Path] = [proto_file]
+    if not run_nanopb:
+        return written
+    import shutil
+    import subprocess
+    if shutil.which("nanopb_generator") is None:
+        # No codec compiler available — leave the .proto; caller's build
+        # (Bazel genrule or a later nanopb run) compiles it.
+        return written
+    proto_dir = proto_file.parent
+    subprocess.run(
+        ["nanopb_generator", "-I", str(proto_out), "-D", str(proto_out),
+         str(proto_file.relative_to(proto_out))],
+        cwd=str(proto_out), check=True,
+    )
+    leaf = proto_file.stem
+    for ext in (".pb.c", ".pb.h"):
+        pb = proto_dir / f"{leaf}{ext}"
+        if pb.exists():
+            written.append(pb)
+    return written
+
+
 def generate_composition(art_path: str | Path,
                           composition_name: str,
                           out_root: str | Path,
-                          runtime_dir: str = "../../demo") -> List[Path]:
+                          runtime_dir: str = "../../demo",
+                          proto_out: str | Path | None = None,
+                          run_nanopb: bool = True) -> List[Path]:
     art_path = Path(art_path).resolve()
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -719,6 +759,11 @@ def generate_composition(art_path: str | Path,
     processes = comp.own_processes
 
     written: List[Path] = []
+    # Codec first: the per-process mains #include the package .pb.h, so
+    # emitting the proto here makes gen-app-composition self-contained.
+    if proto_out is not None:
+        written.extend(_emit_proto(art_path, Path(proto_out), run_nanopb))
+
     for proc in processes:
         proj_dir = out_root / f"{composition_name}_{proc}"
         proj_dir.mkdir(parents=True, exist_ok=True)

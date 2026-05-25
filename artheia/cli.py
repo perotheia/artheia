@@ -761,7 +761,11 @@ def gen_routing(art_file: str, composition: str, out_dir: str) -> None:
                    "dispatch entries, and runs until SIGINT / DEMO_RUN_MS. "
                    "Node implementations are NOT generated — they come from "
                    "the existing demo_runtime; this generator only emits "
-                   "main.cc + CMakeLists per process.")
+                   "main.cc + CMakeLists per process. With --proto-out it "
+                   "ALSO emits the composition's package .proto (and "
+                   "compiles it to .pb.{c,h} when nanopb_generator is on "
+                   "PATH) so one invocation produces both the app and its "
+                   "codec — no separate gen-proto-package step.")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--composition", required=True,
               help="Name of the composition to materialize.")
@@ -769,11 +773,24 @@ def gen_routing(art_file: str, composition: str, out_dir: str) -> None:
 @click.option("--runtime-dir", default="../../demo",
               help="Path to the demo runtime, used by each generated "
                    "CMakeLists as an add_subdirectory target.")
+@click.option("--proto-out", "proto_out", default=None,
+              type=click.Path(file_okay=False),
+              help="When set, also emit the package .proto at "
+                   "<proto-out>/<art-pkg-as-path>/<leaf>.proto (the "
+                   "platform/proto/ layout the generated mains #include). "
+                   "The proto package decl is libc-safe (system→services).")
+@click.option("--no-nanopb", "no_nanopb", is_flag=True, default=False,
+              help="With --proto-out, skip running nanopb_generator — emit "
+                   "only the .proto and let the build (Bazel genrule) "
+                   "compile it.")
 def gen_app_composition(art_file: str, composition: str,
-                         out_root: str, runtime_dir: str) -> None:
+                         out_root: str, runtime_dir: str,
+                         proto_out: str | None, no_nanopb: bool) -> None:
     from .generators.app_composition import generate_composition
     paths = generate_composition(art_file, composition, out_root,
-                                  runtime_dir=runtime_dir)
+                                  runtime_dir=runtime_dir,
+                                  proto_out=proto_out,
+                                  run_nanopb=not no_nanopb)
     for p in paths:
         click.echo(str(p))
 
