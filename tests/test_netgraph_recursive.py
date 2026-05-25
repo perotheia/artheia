@@ -11,9 +11,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from artheia.cli import main
+from artheia.model import parse_file
+from artheia.generators.netgraph import (
+    DuplicateTipcAddress,
+    build_netgraph,
+)
 
 
 def _write_pkg(pkg_dir, name, body):
@@ -149,3 +155,77 @@ def test_recursive_leaf_file_is_noop(tmp_path):
     assert r2.exit_code == 0, r2.output
 
     assert out_norec.read_text() == out_rec.read_text()
+
+
+# ---- TIPC uniqueness (system-wide invariant) -------------------------------
+
+def _write_node_pkg(pkg_dir, pkg_name, node_name, ttype, tinst="0"):
+    """One-package, one-node .art with a given TIPC address."""
+    _write_pkg(
+        pkg_dir,
+        pkg_name,
+        f"""\
+package system.{pkg_name}
+
+interface senderReceiver {node_name}If {{ }}
+
+node atomic {node_name} {{
+    tipc type={ttype} instance={tinst}
+    ports {{ sender out provides {node_name}If }}
+}}
+""",
+    )
+
+
+def test_distinct_tipc_across_files_fails(tmp_path):
+    """Two separately-valid packages whose nodes collide on a TIPC
+    address. Each parses clean on its own (the parse-time per-model
+    validator sees no clash), so the system-wide netgraph union is the
+    ONLY stage that catches it — that's the invariant this guards."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_node_pkg(a, "a", "Alpha", "0x95000001")
+    _write_node_pkg(b, "b", "Beta", "0x95000001")
+
+    model_a = parse_file(str(a / "package.art"))
+    model_b = parse_file(str(b / "package.art"))
+
+    # Each alone: fine.
+    build_netgraph(model_a)
+    build_netgraph(model_b)
+
+    # Unioned (what --recursive does): collision detected.
+    with pytest.raises(DuplicateTipcAddress) as ei:
+        build_netgraph(model_a, extra_models=[model_b])
+    msg = str(ei.value)
+    assert "Alpha" in msg and "Beta" in msg
+    assert "0x95000001" in msg
+
+
+def test_distinct_tipc_hex_decimal_equivalence(tmp_path):
+    """0x10 and 16 are the SAME address — the check must normalize
+    through _parse_hex_or_int before comparing, not compare the raw
+    string forms."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_node_pkg(a, "a", "Alpha", "0x10")
+    _write_node_pkg(b, "b", "Beta", "16")
+
+    model_a = parse_file(str(a / "package.art"))
+    model_b = parse_file(str(b / "package.art"))
+    with pytest.raises(DuplicateTipcAddress):
+        build_netgraph(model_a, extra_models=[model_b])
+
+
+def test_distinct_tipc_different_instance_ok(tmp_path):
+    """Same type, different instance is a DISTINCT address — must pass.
+    The address is the (type, instance) pair, not the type alone."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    _write_node_pkg(a, "a", "Alpha", "0x95000002", tinst="0")
+    _write_node_pkg(b, "b", "Beta", "0x95000002", tinst="1")
+
+    model_a = parse_file(str(a / "package.art"))
+    model_b = parse_file(str(b / "package.art"))
+    doc = build_netgraph(model_a, extra_models=[model_b])
+    assert {n["name"] for n in doc["nodes"]} == {"Alpha", "Beta"}

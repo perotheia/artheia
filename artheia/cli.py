@@ -816,12 +816,19 @@ def gen_netgraph(
     art_file: str, out_file: str, catalog: str | None, recursive: bool,
 ) -> None:
     import json as _json
+
+    from .generators.netgraph import DuplicateTipcAddress
     model = _parse(art_file)
     cat = _json.loads(Path(catalog).read_text()) if catalog else None
     extras = None
     if recursive:
         extras = [m for _p, m in _collect_imported_models(art_file, model)]
-    path = generate_netgraph(model, out_file, catalog=cat, extra_models=extras)
+    try:
+        path = generate_netgraph(model, out_file, catalog=cat,
+                                 extra_models=extras)
+    except DuplicateTipcAddress as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(1)
     click.echo(str(path))
 
 

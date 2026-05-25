@@ -130,6 +130,45 @@ def _parse_hex_or_int(s: str) -> int:
     return int(s, 16) if s.lower().startswith("0x") else int(s)
 
 
+class DuplicateTipcAddress(ValueError):
+    """Raised when two nodes in the system share a TIPC ``(type, instance)``
+    address. TIPC routes a message purely by its destination address, so a
+    collision means traffic for one node would be delivered to the other —
+    a silent mis-wire the runtime can't detect. The netgraph is the
+    system-wide view (it unions every reachable model via ``--recursive``),
+    so it's the right place to assert global uniqueness."""
+
+
+def _verify_distinct_tipc(nodes: list[dict]) -> None:
+    """Assert every node's TIPC ``(type, instance)`` is unique across the
+    whole system. Addresses are normalized through :func:`_parse_hex_or_int`
+    first, so ``0x10`` and ``16`` are recognized as the same address. Raises
+    :class:`DuplicateTipcAddress` naming every colliding group."""
+    by_addr: dict[tuple[int, int], list[str]] = {}
+    for n in nodes:
+        tipc = n.get("tipc") or {}
+        try:
+            addr = (_parse_hex_or_int(str(tipc.get("type"))),
+                    _parse_hex_or_int(str(tipc.get("instance"))))
+        except (TypeError, ValueError):
+            # A node without a parseable TIPC address can't collide on one;
+            # leave shape validation to the grammar/parser.
+            continue
+        by_addr.setdefault(addr, []).append(n["name"])
+
+    clashes = {addr: names for addr, names in by_addr.items() if len(names) > 1}
+    if clashes:
+        lines = [
+            f"  tipc type={hex(t)} instance={hex(i)} shared by: "
+            f"{', '.join(sorted(names))}"
+            for (t, i), names in sorted(clashes.items())
+        ]
+        raise DuplicateTipcAddress(
+            "duplicate TIPC address(es) in the system — each node must have "
+            "a distinct (type, instance):\n" + "\n".join(lines)
+        )
+
+
 def _can_meta(spec, *, catalog_entry: Optional[dict] = None) -> dict:
     """Build a CAN metadata dict matching GwCanMeta field names."""
     out: dict = {}
@@ -439,6 +478,9 @@ def build_netgraph(
                 d["gateway_routes"] = routes_by_node[n.name]
             d["signals"] = signals_by_node.get(n.name, {})
             nodes_by_name[n.name] = d
+
+    # System-wide invariant: no two nodes may share a TIPC address.
+    _verify_distinct_tipc(list(nodes_by_name.values()))
 
     compositions_by_name: dict[str, dict] = {}
     for m in all_models:
