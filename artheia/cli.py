@@ -70,53 +70,55 @@ def parse(art_file: str, depth, only_containers: bool, fqn_filter,
 # ---------------------------------------------------------------------------
 
 
-def _workspace_root_for(entry: "Path", model) -> "Path":
-    """Derive the workspace root from the entry file's location and
-    declared package.
+def _import_dir(entry: "Path", entry_pkg: str, import_pkg: str) -> "Path | None":
+    """Resolve an ``import <import_pkg>`` to a directory, RELATIVE to the
+    entry file's own package + location. Layout-independent: it never
+    reconstructs a global workspace root, so it works whether the entry
+    was reached via the canonical symlinked path or via the symlink
+    target (the real file).
 
-    The directory layout mirrors the package FQN: a file declaring
-    ``package system.demo`` lives in a directory named ``demo/``
-    inside a parent named ``system/``. Walk up from the entry file's
-    directory, popping FQN segments as we go; the first ancestor that
-    DOESN'T match the next-up segment is the root.
+    The rule: the entry's directory IS its own package. An import that
+    extends the entry's package maps to a subdirectory of the entry's
+    directory, dropping the shared prefix.
 
-    Examples:
-      entry = platform/system/system.art, package = system
-        dir = platform/system/  (name 'system' = pkg segment 'system')
-        walk up → platform/  (no more segments) → root
-      entry = services/system/log/package.art, package = system.services.log
-        dir = services/system/log/ (name 'log' = pkg seg 'log')
-        up → services/system/      (name 'system' = pkg seg 'services'? NO)
-        actually: dir names walked = [log, system, services] but pkg
-        segments in tail order are [log, services, system]. The
-        platform tree uses `services/system/` not `services/`, so the
-        cleanest rule for our convention is: root = first ancestor
-        whose name is NOT a package segment.
+      entry  platform/system/system.art   (package system)
+      import system.services.com          → drop "system" → services/com
+                                          → platform/system/services/com
+                                            (the `services` symlink)
+      entry  services/system/system.art   (package system.services)
+      import system.services.com          → drop "system.services"
+                                          → com
+                                          → services/system/com         ✓
+
+    When the import does NOT extend the entry's package (a sibling or
+    unrelated tree), fall back to treating the entry's directory as the
+    mirror of ``entry_pkg`` and mapping the import's full FQN from the
+    common root upward — i.e. strip the longest shared package prefix,
+    ascend that many levels, then descend the import remainder.
     """
-    from pathlib import Path
+    entry_dir = entry.parent
+    e_parts = entry_pkg.split(".") if entry_pkg else []
+    i_parts = import_pkg.split(".") if import_pkg else []
 
-    pkg_name = getattr(model, "name", None) or ""
-    segments = pkg_name.split(".") if pkg_name else []
+    # Longest common package prefix.
+    common = 0
+    for a, b in zip(e_parts, i_parts):
+        if a != b:
+            break
+        common += 1
 
-    # Walk up from entry's dir; pop segments from the FQN tail until
-    # mismatch.
-    d = entry.parent
-    tail = list(reversed(segments))
-    while tail and d.name == tail[0]:
-        tail.pop(0)
-        d = d.parent
+    # Ascend out of the entry's package down to the common root: the
+    # entry's directory mirrors e_parts, so its base (common root dir)
+    # is entry_dir with (len(e_parts) - common) trailing segments
+    # stripped.
+    up = len(e_parts) - common
+    base = entry_dir
+    for _ in range(up):
+        base = base.parent
 
-    return d
-
-
-def _package_dir(root: "Path", fqn: str) -> "Path | None":
-    """Map a package FQN to its directory under *root*.
-
-    ``system.demo`` + root=``platform`` → ``platform/system/demo``.
-    """
-    parts = fqn.split(".")
-    p = root
-    for seg in parts:
+    # Descend the import's remainder past the common prefix.
+    p = base
+    for seg in i_parts[common:]:
         p = p / seg
     return p
 
@@ -149,23 +151,24 @@ def _collect_imported_models(art_file: str, model) -> list:
     from pathlib import Path
 
     entry = Path(art_file).resolve()
-    root = _workspace_root_for(entry, model)
 
     visited_packages: set[str] = set()
     visited_files: set[Path] = {entry}
     out: list = []
 
-    def _follow(import_fqn: str) -> None:
+    def _follow(import_fqn: str, from_path: Path, from_pkg: str) -> None:
+        # Resolve relative to the IMPORTING file's package + location,
+        # so each transitively-imported file maps its own imports
+        # correctly regardless of how the tree was entered.
         pkg = import_fqn[:-2] if import_fqn.endswith(".*") else import_fqn
         if pkg in visited_packages:
             return
         visited_packages.add(pkg)
 
-        pkg_dir = _package_dir(root, pkg)
+        pkg_dir = _import_dir(from_path, from_pkg, pkg)
         if pkg_dir is None or not pkg_dir.is_dir():
             click.secho(
-                f"error: import {import_fqn!r}: no directory "
-                f"{root}/{pkg.replace('.', '/')}",
+                f"error: import {import_fqn!r}: no directory {pkg_dir}",
                 fg="red", err=True,
             )
             sys.exit(2)
@@ -192,11 +195,13 @@ def _collect_imported_models(art_file: str, model) -> list:
         except SystemExit:
             return
         out.append((resolved_path, other))
+        other_pkg = getattr(other, "name", "") or ""
         for imp in getattr(other, "imports", []) or []:
-            _follow(imp.name)
+            _follow(imp.name, candidate, other_pkg)
 
+    entry_pkg = getattr(model, "name", "") or ""
     for imp in getattr(model, "imports", []) or []:
-        _follow(imp.name)
+        _follow(imp.name, entry, entry_pkg)
 
     return out
 
@@ -230,14 +235,14 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
     from pathlib import Path
 
     entry = Path(art_file).resolve()
-    root = _workspace_root_for(entry, model)
+    entry_pkg = getattr(model, "name", "") or ""
 
     by_name: dict[str, list[tuple[Path, object]]] = {}
     visited_packages: set[str] = set()
 
     def _absorb(other_model, other_path: Path) -> None:
         """Add other_model's non-stub clusters/compositions to the
-        index, then follow ITS imports too."""
+        index, then follow ITS imports too (relative to ITS package)."""
         for e in getattr(other_model, "elements", []):
             kind = type(e).__name__
             if kind not in ("ClusterDecl", "CompositionDecl"):
@@ -245,11 +250,17 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
             if _is_stub(e):
                 continue
             by_name.setdefault(e.name, []).append((other_path, e))
+        other_pkg = getattr(other_model, "name", "") or ""
         for imp in getattr(other_model, "imports", []) or []:
-            _follow(imp.name)
+            _follow(imp.name, other_path, other_pkg)
 
-    def _follow(import_fqn: str) -> None:
-        """Resolve an ``import <FQN>`` to a file and absorb it."""
+    def _follow(import_fqn: str, from_path: Path, from_pkg: str) -> None:
+        """Resolve an ``import <FQN>`` to a file and absorb it.
+
+        Resolution is relative to the IMPORTING file (``from_path`` +
+        ``from_pkg``), so the same import maps correctly whether the
+        tree was entered via the canonical symlinked path or via the
+        symlink target (the real file)."""
         # Drop the trailing `.*` wildcard if present — the FQN
         # always names a package (= directory) for us.
         pkg = import_fqn[:-2] if import_fqn.endswith(".*") else import_fqn
@@ -257,11 +268,10 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
             return
         visited_packages.add(pkg)
 
-        pkg_dir = _package_dir(root, pkg)
+        pkg_dir = _import_dir(from_path, from_pkg, pkg)
         if pkg_dir is None or not pkg_dir.is_dir():
             click.secho(
-                f"error: import {import_fqn!r}: no directory "
-                f"{root}/{pkg.replace('.', '/')}",
+                f"error: import {import_fqn!r}: no directory {pkg_dir}",
                 fg="red", err=True,
             )
             sys.exit(2)
@@ -296,7 +306,7 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
 
     # Seed the recursion with the entry file's imports.
     for imp in getattr(model, "imports", []) or []:
-        _follow(imp.name)
+        _follow(imp.name, entry, entry_pkg)
 
     # 4. Walk the input model and resolve every stub against the index.
     resolved: dict = {}
@@ -707,6 +717,22 @@ def gen_proto(art_file: str, out_dir: str) -> None:
 def gen_proto_package(art_file: str, out_root: str) -> None:
     from .generators.proto_package import generate_package_proto
     path = generate_package_proto(art_file, out_root)
+    click.echo(str(path))
+
+
+@main.command("gen-manifest-proto",
+              help="Generate the Functional-Cluster manifest module "
+                   "(services/manifest/service.py) from a system .art. "
+                   "The FC list is taken from `cluster Services` — the "
+                   ".art is the source of truth. SwComponent / Executable "
+                   "/ Process triples are emitted for each cluster member; "
+                   "the hand-authored supervisor tree is sidecared in "
+                   "executor.py and re-exported unchanged.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("out_file", type=click.Path(dir_okay=False))
+def gen_manifest_proto(art_file: str, out_file: str) -> None:
+    from .generators.manifest_proto import generate_manifest_proto
+    path = generate_manifest_proto(art_file, out_file)
     click.echo(str(path))
 
 
