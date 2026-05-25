@@ -1090,7 +1090,10 @@ def gen_psp_netgraph(catalog_path: str, out_path: str) -> None:
 @click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
               help="Output system.art (typically autosar/<psp>/system/system.art).")
 @click.option("--package", "package_name", required=True,
-              help="Package name for the emitted .art (e.g. autosar.mlbevo_gen2_cmp_psp.system).")
+              help="Package name for the emitted .art "
+                   "(e.g. system.autosar.mlbevo_gen2). The output path's directory "
+                   "should match the package, so the file lands at "
+                   "autosar/<psp>/system/mlbevo_gen2/system.art.")
 def gen_autosar_system(
     catalog_paths: tuple[str, ...], out_path: str, package_name: str,
 ) -> None:

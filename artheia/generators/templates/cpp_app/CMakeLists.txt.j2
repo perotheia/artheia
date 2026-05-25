@@ -30,8 +30,8 @@ set(BAZEL_BIN "${WORKSPACE_ROOT}/bazel-bin" CACHE PATH
 # include path below + a direct source-file reference; later, when
 # libgw ships an installed CMake package, this drops to find_package.
 
-set(PSP_PROTO_INC "${BAZEL_BIN}/autosar/mlbevo_gen2_cmp_psp/psp_nanopb_pb" CACHE PATH
-    "nanopb headers (produced by bazel build //autosar/mlbevo_gen2_cmp_psp:psp_nanopb).")
+set(PSP_PROTO_INC "${BAZEL_BIN}/vendor/autosar/mlbevo_gen2_cmp_psp/psp_nanopb_pb" CACHE PATH
+    "nanopb headers (produced by bazel build //vendor/autosar/mlbevo_gen2_cmp_psp:psp_nanopb).")
 
 # Per-PDU .pb.c files (nanopb message field tables) — needed alongside the .pb.h.
 # Globbed from every subtree the PSP emits (shared/, flexray/, can/<bus>/).
