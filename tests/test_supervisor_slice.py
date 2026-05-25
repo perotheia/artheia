@@ -42,8 +42,12 @@ def emitted(tmp_path):
     artheia = _artheia_bin()
     if artheia is None:
         pytest.skip("artheia CLI not on PATH and not in workspace .venv")
+    # --rig DemoSoftware: the central/compute/admin multi-host spec.
+    # Without it the default *Software ranking picks CentralSoftware
+    # (single machine), which has no compute_host/admin_host dirs.
     result = subprocess.run(
-        [artheia, "generate-manifest", RIG_TARGET, "--out", str(tmp_path)],
+        [artheia, "generate-manifest", RIG_TARGET,
+         "--rig", "DemoSoftware", "--out", str(tmp_path)],
         cwd=REPO,
         env=dict(os.environ),
         capture_output=True,

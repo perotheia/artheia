@@ -57,8 +57,14 @@ def test_audit_manifest_demo_rig_is_clean():
     # path turns `artheia` into a namespace package, shadowing the
     # editable-installed real package and breaking
     # `from . import __version__` in artheia/cli.py.
+    # --rig DemoSoftware: the central/compute/admin multi-host spec that
+    # covers every cluster member (incl. compute's p3 + shwa). Without
+    # it the default *Software ranking picks CentralSoftware (single
+    # machine), whose component set omits the compute-pinned members and
+    # the audit reports them as gaps.
     result = subprocess.run(
-        [artheia, "audit-manifest", str(ART_FILE), RIG_TARGET],
+        [artheia, "audit-manifest", str(ART_FILE), RIG_TARGET,
+         "--rig", "DemoSoftware"],
         cwd=REPO,
         env=dict(os.environ),
         capture_output=True,

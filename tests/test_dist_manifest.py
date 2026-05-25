@@ -12,13 +12,13 @@ to exercise the full CLI → emitter → YAML round-trip.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
 RIG_TARGET = "demo.manifest.rig"
@@ -40,8 +40,12 @@ def emitted_manifest(tmp_path):
     artheia = _artheia_bin()
     if artheia is None:
         pytest.skip("artheia CLI not on PATH and not in workspace .venv")
+    # --rig DemoSoftware: the central/compute/admin multi-host spec.
+    # Without it the default *Software ranking picks CentralSoftware
+    # (single machine), so the compute_host/admin_host dirs are absent.
     result = subprocess.run(
-        [artheia, "generate-manifest", RIG_TARGET, "--out", str(tmp_path)],
+        [artheia, "generate-manifest", RIG_TARGET,
+         "--rig", "DemoSoftware", "--out", str(tmp_path)],
         cwd=REPO,
         env=dict(os.environ),
         capture_output=True,
@@ -57,9 +61,10 @@ def emitted_manifest(tmp_path):
 
 
 def _instance_names(manifest_dir: Path, machine: str) -> set[str]:
-    """Return the set of ServiceInstance names in ``<machine>/service.yaml``."""
-    path = manifest_dir / machine / "service.yaml"
-    doc = yaml.safe_load(path.read_text())
+    """Return the set of ServiceInstance names in ``<machine>/service.json``
+    (manifests are JSON-only since #380)."""
+    path = manifest_dir / machine / "service.json"
+    doc = json.loads(path.read_text())
     names: set[str] = set()
     for sm in doc.get("service_manifests", []) or []:
         for inst in sm.get("instances", []) or []:
@@ -113,13 +118,13 @@ def test_strict_filter_no_unpinned_instances_anywhere(emitted_manifest):
     """Every emitted ServiceInstance has a remote_machine matching its
     host. Catches regressions where the loose fallback creeps back in."""
     for machine in ["admin_host", "central_host", "compute_host"]:
-        path = emitted_manifest / machine / "service.yaml"
-        doc = yaml.safe_load(path.read_text())
+        path = emitted_manifest / machine / "service.json"
+        doc = json.loads(path.read_text())
         for sm in doc.get("service_manifests", []) or []:
             for inst in sm.get("instances", []) or []:
                 rm = inst.get("remote_machine", "")
                 assert rm == machine, (
-                    f"strict-filter violation: {machine}/service.yaml "
+                    f"strict-filter violation: {machine}/service.json "
                     f"contains instance {inst['name']!r} with "
                     f"remote_machine={rm!r}"
                 )

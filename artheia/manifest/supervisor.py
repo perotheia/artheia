@@ -367,9 +367,15 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
     # Process-name → machine resolver. Used only when ``machine`` is set.
     # Process→machine resolution order:
     #   1. PTM entry (spec-aligned, strict).
-    #   2. ApplicationManifest.host_machine of the AA that lists the
+    #   2. ServiceInstance.remote_machine — the AUTOSAR service-pinning
+    #      channel. The FC loader synthesises one ServiceInstance per FC;
+    #      the rig pins each instance's remote_machine (e.g. shwa→compute,
+    #      control-plane FCs→central). This is more specific than AA
+    #      membership: a service can be pinned to a machine even when its
+    #      owning ApplicationManifest has no host_machine.
+    #   3. ApplicationManifest.host_machine of the AA that lists the
     #      SwComponent with this Process's name.
-    #   3. None (unpinned).
+    #   4. None (unpinned → included on every machine).
     app_host_by_component: dict[str, str] = {}
     for app in getattr(rig, "applications", []) or []:
         host = getattr(app, "host_machine", "") or ""
@@ -377,10 +383,20 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             if comp.name not in app_host_by_component:
                 app_host_by_component[comp.name] = host
 
+    service_host_by_name: dict[str, str] = {}
+    for sm in getattr(rig, "service_manifests", []) or []:
+        for inst in getattr(sm, "instances", []) or []:
+            host = getattr(inst, "remote_machine", "") or ""
+            if host and inst.name not in service_host_by_name:
+                service_host_by_name[inst.name] = host
+
     def _process_host(name: str) -> "str | None":
         ptm = ptm_by_process.get(name)
         if ptm and ptm.machine:
             return ptm.machine
+        svc_host = service_host_by_name.get(name)
+        if svc_host:
+            return svc_host
         host = app_host_by_component.get(name)
         return host if host else None
 
