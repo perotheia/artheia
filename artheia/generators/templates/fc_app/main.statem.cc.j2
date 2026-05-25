@@ -6,10 +6,13 @@
 
 #include "lib/{{ model.daemon_class }}.hh"
 
+#include "Logger.hh"     // parse_log_level
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 namespace {
@@ -25,6 +28,16 @@ int main() {
     std::signal(SIGTERM, on_signal);
 
     using namespace {{ model.cxx_namespace }};
+
+    // Process-wide logger. Pick up THEIA_LOG_LEVEL from the env
+    // (supervisor sets it from executor.json's per-child env map,
+    // sourced from Process.log_level on the rig). Defaults to Info
+    // when unset or unparseable.
+    auto logger = MakeContextLogger();
+    if (const char* lvl = std::getenv("THEIA_LOG_LEVEL")) {
+        logger->set_level(::platform::runtime::parse_log_level(lvl));
+    }
+    (void)logger;
 
     demo::runtime::TimerService timers;
 {% for n in model.nodes if n.statem is not none %}

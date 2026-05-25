@@ -253,6 +253,14 @@ class Process(Identifiable):
     # installed path for a .deb / .ipk).
     start_cmd: list[str] = field(default_factory=list)
 
+    # Per-process default log level (#384). Serialized into the
+    # child's env map as ``THEIA_LOG_LEVEL=<lvl>`` (executor.json);
+    # the supervisor passes it through setenv before execvp; gen-app's
+    # main.cc.j2 picks it up at boot via parse_log_level + set_level.
+    # Operator can override at runtime via a future ConfigureLogLevel
+    # RPC (#385). One of: "trace"|"debug"|"info"|"warn"|"error".
+    log_level: str = "info"
+
 
 # ---------------------------------------------------------------------------
 # Legacy aliases

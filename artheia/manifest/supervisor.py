@@ -479,6 +479,15 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 f"manifest/services/{short}/executor.py.",
                 stacklevel=3,
             )
+        # Per-process env. THEIA_LOG_LEVEL carries Process.log_level
+        # through to the C++ daemon's main.cc, which calls
+        # logger->set_level(parse_log_level(...)) at boot. Supervisor
+        # already setenvs the whole env map before execvp.
+        env: dict[str, str] = {}
+        log_level = (getattr(proc, "log_level", "") or "info").strip()
+        if log_level:
+            env["THEIA_LOG_LEVEL"] = log_level
+
         return ChildSpec(
             name=short,
             start_cmd=start_cmd,
@@ -486,6 +495,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             shutdown=5000,
             type=ChildType.WORKER,
             modules=[f"services/{short}"],
+            env=env,
             shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
             shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
             nodes=_collect_nodes_for_fc(short),
