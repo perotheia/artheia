@@ -9,18 +9,18 @@ sub-tree for each machine in the demo rig:
   - admin_host gets an empty tree (no supervised processes)
 
 These tests also exercise the dist_manifest's per-machine
-``execution.yaml`` emission (the file the supervisor-gui reads to
+``execution.json`` emission (the file the supervisor-gui reads to
 render each machine's tree side-by-side).
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
 RIG_TARGET = "demo.manifest.rig"
@@ -74,17 +74,20 @@ def _tree_leaf_names(node: dict) -> set[str]:
     return out
 
 
+def _execution_doc(emitted: Path, machine: str) -> dict:
+    """Load ``<machine>/execution.json`` (manifests are JSON-only since
+    #380; the dist emitter no longer writes YAML siblings)."""
+    return json.loads((emitted / machine / "execution.json").read_text())
+
+
 def _supervisor_tree(emitted: Path, machine: str) -> dict:
-    """Read the supervisor sub-tree from ``<machine>/execution.yaml``."""
-    path = emitted / machine / "execution.yaml"
-    doc = yaml.safe_load(path.read_text())
-    return doc.get("supervisor_tree") or {}
+    """Read the supervisor sub-tree from ``<machine>/execution.json``."""
+    return _execution_doc(emitted, machine).get("supervisor_tree") or {}
 
 
 def _process_names(emitted: Path, machine: str) -> set[str]:
     """Read the per-machine Process list."""
-    path = emitted / machine / "execution.yaml"
-    doc = yaml.safe_load(path.read_text())
+    doc = _execution_doc(emitted, machine)
     return {p["name"] for p in (doc.get("processes") or [])}
 
 
@@ -101,20 +104,23 @@ def test_shwa_pinned_to_compute(emitted):
     )
 
 
-def test_platform_fabric_pinned_to_central(emitted):
-    """``supervisor`` and ``gateway`` are platform fabric — both on
-    central, neither on compute. Their PTM entries override the AA's
-    bare host_machine fallback."""
-    central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central_host"))
-    compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute_host"))
-    for fabric in ("supervisor", "gateway"):
-        assert fabric in central_leaves, (
-            f"{fabric!r} must be on central_host; got {sorted(central_leaves)}"
-        )
-        assert fabric not in compute_leaves, (
-            f"{fabric!r} must NOT be on compute_host; got "
-            f"{sorted(compute_leaves)}"
-        )
+def test_platform_fabric_not_in_supervised_tree(emitted):
+    """``supervisor`` and ``gateway`` are platform fabric — managed by
+    systemd as opkg units (see _PLATFORM_OPKG_ARTIFACTS), NOT supervised
+    leaves under app_sup. ``supervisor`` IS the tree root; ``gateway``
+    boots beside it. They must not appear as leaves on any machine.
+
+    (They used to be synthesized as app_sup leaves by the dropped
+    AUTO_APPS_CHILDREN expansion. With apps now resolving through real
+    execution-manifest Processes, only genuine supervised children — the
+    demo binaries — land under app_sup.)"""
+    for machine in ("central_host", "compute_host"):
+        leaves = _tree_leaf_names(_supervisor_tree(emitted, machine))
+        for fabric in ("supervisor", "gateway"):
+            assert fabric not in leaves, (
+                f"{fabric!r} is systemd-managed fabric, not a supervised "
+                f"leaf; found it in {machine} tree: {sorted(leaves)}"
+            )
 
 
 def test_demo_binaries_pinned_to_compute(emitted):
@@ -146,7 +152,7 @@ def test_admin_host_has_empty_supervisor_tree(emitted):
 
 
 def test_processes_list_matches_tree_leaves(emitted):
-    """The ``processes`` list in each machine's execution.yaml is in
+    """The ``processes`` list in each machine's execution.json is in
     lockstep with the surviving leaves of its sliced supervisor tree.
 
     Walks the tree, collects leaf names; compares to the processes list.
@@ -155,11 +161,12 @@ def test_processes_list_matches_tree_leaves(emitted):
         tree = _supervisor_tree(emitted, machine)
         leaves = _tree_leaf_names(tree)
         procs = _process_names(emitted, machine)
-        # Some leaves (AUTO_APPS_CHILDREN expansions) point at
-        # SwComponents that don't have a matching Process — those
-        # appear in the tree but not in processes. So procs is a
-        # subset of (FC) leaves; we don't assert strict equality.
-        # But every Process should appear in the tree.
+        # Every leaf — FC or application — resolves through a Process
+        # in the execution manifest now (no synthetic SwComponent
+        # expansions), so the Process list should appear among the
+        # leaves. We keep the subset assertion (rather than strict
+        # equality) because an FC declared in the tree but with no
+        # built binary still emits a leaf without a matching Process.
         assert procs.issubset(leaves), (
             f"{machine}: processes {sorted(procs - leaves)!r} are in "
             f"the Process list but missing from the supervisor tree"

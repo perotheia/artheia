@@ -66,7 +66,6 @@ from artheia.manifest.service import (  # noqa: F401
     TransportBinding,
 )
 from artheia.manifest.supervisor import (  # noqa: F401
-    AUTO_APPS_CHILDREN,
     RestartStrategy,
     RestartType,
     SupervisorNode,
@@ -80,7 +79,6 @@ from artheia.manifest.transform import (  # noqa: F401
 )
 
 __all__ = [
-    "AUTO_APPS_CHILDREN",
     "Add",
     "ApplicationManifest",
     "CLUSTERS",

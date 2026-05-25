@@ -198,13 +198,11 @@ class SupervisorNode(Identifiable):
     Root inference: the supervisor whose name appears in no other
     supervisor's ``children`` list. Exactly one must qualify.
 
-    Special child names:
-
-    - ``"<auto:apps>"`` — at build time, expand into ``ChildSpec``
-      entries for every non-FC SwComponent on the rig (one
-      ``vendor/apps/<name>/daemon.sh`` per component). Provides the
-      "app_sup gets populated from SwComponents" behaviour without
-      restating every vendor app in the layer file.
+    Every leaf child name (FC or application) resolves to a
+    :class:`Process` in ``rig.execution_manifests``; its ``start_cmd``
+    drives the supervised launch. Application leaves (``app_sup``
+    children) are attached by the rig layer — see the demo rig's
+    ``Override`` of ``app_sup`` — not synthesized from SwComponents.
 
     Per-machine projection:
 
@@ -227,11 +225,6 @@ class SupervisorNode(Identifiable):
     children: list[str] = field(default_factory=list)
     tombstone_dir: str = ""
     machine: "str | None" = None
-
-
-# Sentinel child-name that expands into "every non-FC SwComponent as a
-# leaf ChildSpec" at build time. Used in the canonical FcLayer for app_sup.
-AUTO_APPS_CHILDREN = "<auto:apps>"
 
 
 # ---------------------------------------------------------------------------
@@ -331,10 +324,10 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
 
     - Match against another :class:`SupervisorNode` first.
     - Otherwise match against :class:`Process` in
-      ``rig.execution_manifests`` — emits a leaf :class:`ChildSpec`
-      pointing at ``services/<name>/daemon.sh``.
-    - :data:`AUTO_APPS_CHILDREN` expands into one leaf per non-FC
-      :class:`SwComponent` on the rig (``vendor/apps/<name>/daemon.sh``).
+      ``rig.execution_manifests`` — emits a leaf :class:`ChildSpec` whose
+      ``start_cmd`` comes from ``Process.start_cmd``. This is the single
+      path for BOTH FC leaves and application leaves (app_sup children):
+      every supervised child is a Process in the execution manifest.
     - Unknown names are quietly dropped — a layer can :class:`Remove` a
       Process while leaving a supervisor that listed it untouched.
 
@@ -501,32 +494,6 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             nodes=_collect_nodes_for_fc(short),
         )
 
-    def _auto_app_children() -> list[ChildSpec]:
-        """Expand AUTO_APPS_CHILDREN into one leaf per non-FC SwComponent.
-
-        When ``machine`` is set, filter to apps whose owning AA's
-        ``host_machine`` matches.
-        """
-        out: list[ChildSpec] = []
-        for app in rig.applications:
-            host = getattr(app, "host_machine", "") or ""
-            if machine is not None and host and host != machine:
-                continue
-            for comp in app.components:
-                if comp.bazel_target.startswith("//services/"):
-                    continue
-                out.append(
-                    ChildSpec(
-                        name=comp.name,
-                        start_cmd=[f"vendor/apps/{comp.name}/daemon.sh"],
-                        restart=RestartType.PERMANENT,
-                        shutdown=5000,
-                        type=ChildType.WORKER,
-                        modules=[comp.bazel_target],
-                    )
-                )
-        return out
-
     # Detect cycles in the supervisor graph; bail early on detection.
     visiting: set[str] = set()
 
@@ -556,9 +523,6 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 return None
             kids: list[ChildSpec | SupervisorSpec] = []
             for child_name in node.children:
-                if child_name == AUTO_APPS_CHILDREN:
-                    kids.extend(_auto_app_children())
-                    continue
                 if child_name in sup_by_name:
                     sub = _materialize(child_name)
                     if sub is not None:
