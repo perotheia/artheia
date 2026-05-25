@@ -1,15 +1,21 @@
 """Emit the per-machine deploy manifest set.
 
-For each :class:`Machine` in the rig we write four YAML files (the
-four AUTOSAR manifest kinds, AA-aligned filenames):
+For each :class:`Machine` in the rig we write four manifests (the four
+AUTOSAR manifest kinds, AA-aligned filenames) in both YAML and JSON:
 
-  dist/manifest/<machine>/machine.yaml      ← per-ECU config + OS deps
-  dist/manifest/<machine>/application.yaml  ← AAs hosted on this ECU
-  dist/manifest/<machine>/service.yaml      ← service instances here
-  dist/manifest/<machine>/execution.yaml    ← Processes + startup conf
+  dist/manifest/<machine>/machine.{yaml,json}      ← per-ECU config + OS deps
+  dist/manifest/<machine>/application.{yaml,json}  ← AAs hosted on this ECU
+  dist/manifest/<machine>/service.{yaml,json}      ← service instances here
+  dist/manifest/<machine>/execution.{yaml,json}    ← Processes + startup conf
 
-Plus a top-level ``index.yaml`` so Puppet's bootstrap can find each
-machine's directory by hostname.
+Plus a top-level ``index.{yaml,json}`` so Puppet's bootstrap can find
+each machine's directory by hostname.
+
+Both encodings carry identical content — same dict serializer feeds
+``yaml.safe_dump`` and ``json.dumps``. YAML stays canonical for
+humans + the C++ supervisor; JSON is the programmatic-tooling sibling
+(linters, schema validators, Robot assertions, downstream codegen
+that doesn't want to pull in a YAML parser).
 
 This intentionally REPLACES the legacy single-file output of
 ``artheia generate-manifest`` — each ECU's Puppet runs reads its own
@@ -33,6 +39,7 @@ fallback while ``process_to_machine_mappings`` is sparse).
 from __future__ import annotations
 
 import dataclasses
+import json
 from enum import Enum
 from ipaddress import IPv4Address, IPv6Address
 from pathlib import Path
@@ -63,8 +70,24 @@ def _serialize(v: Any) -> Any:
     return v
 
 
-def _dump(obj: Any) -> str:
+def _dump_yaml(obj: Any) -> str:
     return yaml.safe_dump(obj, sort_keys=False, default_flow_style=False)
+
+
+def _dump_json(obj: Any) -> str:
+    # indent=2 keeps it diff-friendly + readable. sort_keys=False so
+    # the JSON column order matches the YAML (top-level kind first,
+    # nested dicts in dataclass-field order).
+    return json.dumps(obj, indent=2, sort_keys=False) + "\n"
+
+
+def _write_pair(path_no_ext: Path, payload: dict) -> list[Path]:
+    """Write both <path>.yaml and <path>.json; return both paths."""
+    yp = path_no_ext.with_suffix(".yaml")
+    jp = path_no_ext.with_suffix(".json")
+    yp.write_text(_dump_yaml(payload))
+    jp.write_text(_dump_json(payload))
+    return [yp, jp]
 
 
 # ---------------------------------------------------------------------------
@@ -251,20 +274,18 @@ def emit_dist_manifest(rig, out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    # Per-machine: 4 yaml files each.
+    # Per-machine: 4 manifest pairs each (yaml + json).
     machine_names = [m.name for m in rig.machines]
     for machine in rig.machines:
         mdir = out_dir / machine.name
         mdir.mkdir(parents=True, exist_ok=True)
-        for fname, payload in [
-            ("machine.yaml",     _machine_payload(machine)),
-            ("application.yaml", _application_payload(rig, machine.name)),
-            ("service.yaml",     _service_payload(rig, machine.name)),
-            ("execution.yaml",   _execution_payload(rig, machine.name)),
+        for stem, payload in [
+            ("machine",     _machine_payload(machine)),
+            ("application", _application_payload(rig, machine.name)),
+            ("service",     _service_payload(rig, machine.name)),
+            ("execution",   _execution_payload(rig, machine.name)),
         ]:
-            p = mdir / fname
-            p.write_text(_dump(payload))
-            written.append(p)
+            written.extend(_write_pair(mdir / stem, payload))
 
     # Top-level index — Puppet's bootstrap finds the per-host dir here.
     index = {
@@ -279,8 +300,6 @@ def emit_dist_manifest(rig, out_dir: Path) -> list[Path]:
             for m in rig.machines
         ],
     }
-    idx_path = out_dir / "index.yaml"
-    idx_path.write_text(_dump(index))
-    written.append(idx_path)
+    written.extend(_write_pair(out_dir / "index", index))
 
     return written
