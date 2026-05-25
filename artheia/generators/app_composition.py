@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from textx import metamodel_from_file
+from textx import metamodel_from_file  # noqa: F401  (kept: _GRAMMAR path uses it for callers/tools)
 
 
 _GRAMMAR = (Path(__file__).resolve().parent.parent /
@@ -108,8 +108,14 @@ def _harvest(art_path: Path, composition_name: str
     derive C struct names (`demo.system` → `demo_system` → message
     `Inc` → C type `demo_system_Inc`).
     """
-    mm = metamodel_from_file(str(_GRAMMAR))
-    model = mm.model_from_file(str(art_path))
+    # Package-aware load (#378): parse_file merges package.art +
+    # component.art, so a composition harvested from component.art sees
+    # the NodeDecls / interfaces declared in the sibling package.art.
+    # A raw single-file metamodel parse would fail on cross-file refs
+    # (e.g. `prototype CounterNode counter` where CounterNode lives in
+    # package.art).
+    from artheia.model import parse_file
+    model = parse_file(str(art_path))
 
     proto_pkg = (model.name or "artheia").replace(".", "_")
 
