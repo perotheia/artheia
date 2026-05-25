@@ -94,6 +94,10 @@ class _Composition:
     # RemoteRef is emitted into our process. Set in _harvest before the
     # cluster merge.
     own_processes: List[str] = field(default_factory=list)
+    # The nanopb header to #include, derived from the source .art package
+    # path: `system.demo` → "system/demo/demo.pb.h" (matches the layout
+    # gen-proto-package writes under platform/proto/).
+    proto_include: str = "demo/system/system.pb.h"
 
 
 def _snake(name: str) -> str:
@@ -123,7 +127,14 @@ def _harvest(art_path: Path, composition_name: str
     from artheia.model import parse_file
     model = parse_file(str(art_path))
 
-    proto_pkg = (model.name or "artheia").replace(".", "_")
+    # Proto C-type prefix must match what gen-proto-package emits: the
+    # libc-safe package rewrite (leading `system` → `services` to dodge
+    # libc's system()), dots → underscores. e.g. .art package
+    # `system.demo` → proto package `services.demo` → C type
+    # `services_demo_Inc`. A raw replace(".","_") here would emit
+    # `system_demo_Inc` and fail to link against the generated nanopb.
+    from artheia.generators.proto import _proto_package_name
+    proto_pkg = _proto_package_name(model.name or "artheia").replace(".", "_")
 
     nodes: Dict[str, _Node] = {}
     ifaces: Dict[str, _Iface] = {}
@@ -232,6 +243,12 @@ def _harvest(art_path: Path, composition_name: str
     # merge folds in remote peer protos (which carry their own process
     # tag we must not generate a project for).
     comp.own_processes = sorted({p.process for p in comp.protos})
+
+    # nanopb include path from the source package: system.demo →
+    # system/demo/demo.pb.h (gen-proto-package writes <pkg-path>/<leaf>.proto
+    # under platform/proto/, and nanopb emits the sibling .pb.h).
+    _src_parts = (model.name or "artheia").split(".")
+    comp.proto_include = "/".join(_src_parts + [f"{_src_parts[-1]}.pb.h"])
 
     # ---- cross-composition (cluster) connects (#378) -------------------
     # A cluster wires prototypes that live in DIFFERENT member
@@ -405,7 +422,7 @@ def _render_main(comp: _Composition,
         seen_hh.add(inc)
         lines.append(f'#include "{inc}"')
     lines.append("")
-    lines.append('#include "demo/system/system.pb.h"')
+    lines.append(f'#include "{comp.proto_include}"')
     lines.append("")
     lines.append("#include <atomic>")
     lines.append("#include <chrono>")

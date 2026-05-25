@@ -143,8 +143,11 @@ def generate_package_proto(art_path: str | Path,
     art_path = Path(art_path)
     out_root = Path(out_root)
 
-    mm = metamodel_from_file(str(_GRAMMAR))
-    model = mm.model_from_file(str(art_path))
+    # Package-aware load (#378): merge package.art + component.art so
+    # messages/nodes resolve across the spec/wiring split regardless of
+    # which file is named.
+    from artheia.model import parse_file
+    model = parse_file(str(art_path))
 
     # Source spec name for the filesystem; rewritten name for the
     # proto package decl. The two are deliberately divergent.
