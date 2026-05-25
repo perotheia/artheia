@@ -1656,10 +1656,10 @@ def audit_manifest_cmd(art_file: str, rig_target: str,
     help="Emit the per-machine deploy manifest set for a vehicle rig. "
     "TARGET is a dotted import path to a module exporting a Rig or "
     "SoftwareSpecification (e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
-    "Writes <out>/<machine>/{machine,application,service,execution}.yaml "
-    "plus an <out>/index.yaml. Each ECU's Puppet flow reads its own "
+    "Writes <out>/<machine>/{machine,application,service,execution}.json "
+    "plus an <out>/index.json. Each ECU's Puppet flow reads its own "
     "directory.\n\n"
-    "Use --flat to emit the legacy single-YAML view to stdout (or to "
+    "Use --flat to emit a single-JSON view to stdout (or to "
     "--out FILE) for inspection / debugging.",
 )
 @click.argument("target")
@@ -1683,7 +1683,7 @@ def audit_manifest_cmd(art_file: str, rig_target: str,
     "flat",
     is_flag=True,
     default=False,
-    help="Emit the legacy single-YAML view of the whole rig instead of "
+    help="Emit a single-JSON view of the whole rig instead of "
     "per-machine directories. Goes to stdout when --out is the "
     "default directory.",
 )
@@ -1698,10 +1698,9 @@ def generate_manifest_cmd(
 
     if flat:
         import dataclasses
+        import json
         from enum import Enum
         from ipaddress import IPv4Address, IPv6Address
-
-        import yaml
 
         def _serialize(v):
             if dataclasses.is_dataclass(v) and not isinstance(v, type):
@@ -1718,12 +1717,12 @@ def generate_manifest_cmd(
             return v
 
         doc = _serialize(rig)
-        yaml_text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+        text = json.dumps(doc, indent=2, sort_keys=False) + "\n"
         # If --out was left at the default dir, write to stdout in --flat.
         if out_path == "dist/manifest":
-            click.echo(yaml_text, nl=False)
+            click.echo(text, nl=False)
         else:
-            Path(out_path).write_text(yaml_text)
+            Path(out_path).write_text(text)
             click.echo(out_path)
         return
 
@@ -1742,7 +1741,7 @@ def executor() -> None:
 
 @executor.command(
     "emit",
-    help="Emit the supervisor manifest (executor.yaml) for a vehicle rig. "
+    help="Emit the supervisor manifest (executor.json) for a vehicle rig. "
     "TARGET is a dotted import path to a module exporting a Rig "
     "(e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
     "Without --machine, emits the whole-rig tree (single-machine deploys, "
@@ -1762,7 +1761,7 @@ def executor() -> None:
     "out_file",
     type=click.Path(dir_okay=False),
     default=None,
-    help="Where to write the YAML. Defaults to stdout.",
+    help="Where to write the JSON. Defaults to stdout.",
 )
 @click.option(
     "--machine",
@@ -1778,7 +1777,7 @@ def executor_emit(
     out_file: str | None,
     machine: str | None,
 ) -> None:
-    import yaml
+    import json
 
     from artheia.manifest.supervisor import build_supervisor_tree
 
@@ -1825,7 +1824,7 @@ def executor_emit(
                 ]
         return d
 
-    out = yaml.safe_dump(_to_dict(tree), sort_keys=False, default_flow_style=False)
+    out = json.dumps(_to_dict(tree), indent=2, sort_keys=False) + "\n"
     if out_file is None:
         click.echo(out, nl=False)
     else:
@@ -1845,7 +1844,7 @@ def gui() -> None:
 
 @gui.command(
     "emit",
-    help="Emit the GUI manifest (machines.yaml) for a vehicle rig. "
+    help="Emit the GUI manifest (machines.json) for a vehicle rig. "
     "TARGET is a dotted import path to a module exporting a Rig. "
     "Output lists each Machine's services/com gRPC endpoint — the GUI "
     "opens one gRPC channel per row.",
@@ -1862,10 +1861,10 @@ def gui() -> None:
     "out_file",
     type=click.Path(dir_okay=False),
     default=None,
-    help="Where to write the YAML. Defaults to stdout.",
+    help="Where to write the JSON. Defaults to stdout.",
 )
 def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
-    import yaml
+    import json
 
     rig = _resolve_rig(target, rig_attr)
 
@@ -1873,7 +1872,7 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
     for m in rig.machines:
         # HOST machines (admin consoles) don't run a supervisor —
         # the GUI is what's running on THEM. Skip them so the
-        # machines.yaml only lists targets to observe.
+        # machines.json only lists targets to observe.
         if getattr(m, "kind", "target") == "host":
             continue
         ep = getattr(m, "com_endpoint", None)
@@ -1886,7 +1885,7 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
         })
 
     doc = {"machines": rows}
-    text = yaml.safe_dump(doc, sort_keys=False, default_flow_style=False)
+    text = json.dumps(doc, indent=2, sort_keys=False) + "\n"
     if out_file is None:
         click.echo(text, nl=False)
     else:
