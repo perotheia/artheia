@@ -163,6 +163,19 @@ NodeDecl:
         // omitting the field is equivalent to writing
         // `reporting=true`.
         ('reporting' '=' reporting=BoolLit)?
+        // Fall-through node (default false). A normal node's GenServer
+        // CRITICAL-errors on any inbound TIPC frame whose service_id
+        // matched no register_cast/register_call — an unrouted message
+        // means the netgraph and the running wiring disagree. A
+        // `fallthrough=true` node instead receives those frames in
+        // handle_info(const InfoMsg&, State&) and decides what to do.
+        // This is for the TEST PROBE only: it impersonates/ drives
+        // arbitrary nodes, so by design it accepts traffic the port
+        // schema doesn't name. gen-app emits the handle_info(InfoMsg)
+        // declaration (body in impl) for such a node. Production FCs
+        // must NOT set this — silently accepting unknown messages is the
+        // exact bug the CRITICAL default guards against.
+        ('fallthrough' '=' fallthrough=BoolLit)?
         // AUTOSAR Log&Trace 3-letter Context ID (e.g. "SMX" for State
         // Management, "COM" for Communication Management). Stamped
         // onto every Logger record so a grep across multi-FC logs

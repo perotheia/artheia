@@ -113,6 +113,13 @@ class _NodeView:
     # emit path consults the filter map (#355). reporting=false
     # nodes have no trace API.
     reporting: bool = True
+    # Fall-through node (default False). When True, gen-app emits a
+    # handle_info(const InfoMsg&, State&) declaration on the daemon
+    # (body in impl) so the node receives inbound TIPC frames that
+    # matched no register_cast/register_call. The TEST PROBE sets this;
+    # a normal node leaves it False and the GenServer base CRITICAL-errors
+    # on any unrouted frame (netgraph/wiring disagreement).
+    fallthrough: bool = False
     # AUTOSAR Log&Trace 3-letter Context ID — stamped onto every log
     # record. Falls back to the node name itself when the .art has
     # no `tag = "..."` field, so every node always has a non-empty
@@ -262,6 +269,9 @@ def _node_view(node) -> _NodeView:
     # always populated as the string "true" or "false" by the time
     # we see it. Default-true: missing/empty is treated as reporting.
     reporting_raw = (getattr(node, "reporting", "") or "true").lower()
+    # Fall-through (default false). Unlike reporting, there's no model
+    # post-process default, so missing/empty is simply False.
+    fallthrough_raw = (getattr(node, "fallthrough", "") or "false").lower()
     # AUTOSAR Log&Trace tag (#383). The .art's `tag = "..."` is the
     # canonical source; when absent we fall back to the node name so
     # the generated logger always has a non-empty context.
@@ -273,6 +283,7 @@ def _node_view(node) -> _NodeView:
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
         reporting=(reporting_raw == "true"),
+        fallthrough=(fallthrough_raw == "true"),
         log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
     )
