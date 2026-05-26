@@ -1,8 +1,8 @@
-// User handler bodies for {{ model.daemon_class }} (STATEM variant).
+// User handler bodies for {{ node.name }} (STATEM variant).
 //
 // FIRST-TIME-ONLY SCAFFOLD. `artheia gen-app --kind fc` checks for
 // this file's existence and refuses to overwrite unless `--force`
-// is passed. Declarations are in lib/{{ model.daemon_class }}.hh.
+// is passed. Declarations are in lib/{{ node.name }}.hh.
 //
 // What lives here (user code):
 //   - on_enter — fires after every committed FSM transition (and
@@ -14,13 +14,13 @@
 // Default bodies are no-ops with a stderr log so traffic is
 // observable. Replace with real behaviour as the FC matures.
 
-#include "lib/{{ model.daemon_class }}.hh"
+#include "lib/{{ node.name }}.hh"
 
 #include <cstdio>
 
 namespace {{ model.cxx_namespace }} {
 
-{% for n in model.nodes if n.statem is not none %}
+{% set n = node %}
 
 // on_enter — runs on the FSM thread AFTER every committed
 // transition. The framework also fires it once at init with
@@ -58,8 +58,6 @@ void {{ n.name }}::on_enter({{ n.name }}State new_s,
     return {{ op.rep_msg }}{};
     {%- endif %}
 }
-{% endfor %}
-
 {% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}

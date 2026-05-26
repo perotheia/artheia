@@ -13,8 +13,11 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "{{ model.fc_short }}_lib",
     hdrs = [
-        "{{ model.daemon_class }}.hh",
-        "{{ model.daemon_class }}_netgraph.hh",
+{%- for n in model.nodes %}
+        "{{ n.name }}.hh",
+        "{{ n.name }}_netgraph.hh",
+{%- endfor %}
+        "{{ model.fc_short }}_codecs.hh",
         "Log.hh",
     ],
     includes = [".."],

@@ -34,8 +34,8 @@
 
 namespace {{ model.cxx_namespace }}::netgraph {
 
+{% set n = node %}
 {% set seen = [] %}
-{%- for n in model.nodes -%}
 {%- for sig in n.signals if sig.direction == "out" -%}
 {%- for d in sig.destinations -%}
 {%- if d.node not in seen -%}
@@ -46,7 +46,6 @@ inline constexpr demo::runtime::TipcAddr {{ d.node|lower }} = {
 };
 
 {% endif -%}
-{%- endfor -%}
 {%- endfor -%}
 {%- endfor %}
 {%- if not seen %}

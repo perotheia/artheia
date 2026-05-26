@@ -453,17 +453,46 @@ def generate_fc(
     statem_suffix = ".statem" if mv.has_statem else ""
 
     # --- lib slice (regen) -------------------------------------------------
+    #
+    # PER-NODE files: an FC may declare more than one node (e.g. com =
+    # ComDaemon + the test ProbeDaemon). Each node gets its own daemon
+    # header + netgraph header + handler stub, so multi-node FCs
+    # decompose cleanly and a single node's regen never disturbs a
+    # sibling's hand-written impl. The per-node templates render ONE
+    # node from ctx["node"]; FC-wide pieces (Log.hh, the codec header,
+    # BUILD files, main.cc) render once over the whole node set.
     lib_dir = out_dir / "lib"
-    p = lib_dir / f"{mv.daemon_class}.hh"
-    results[_write(p, env.get_template(f"Daemon{statem_suffix}.hh.j2").render(**ctx),
-                    overwrite=True)].append(str(p))
-    # Per-node signal routing table — constexpr destinations[] for
-    # each outbound signal the .art's composition / cluster connects
-    # name. Empty when the node has no out-connects; the file still
-    # gets emitted (with just the namespace shell) so users have a
-    # single include point regardless.
-    p = lib_dir / f"{mv.daemon_class}_netgraph.hh"
-    results[_write(p, env.get_template("Netgraph.hh.j2").render(**ctx),
+    impl_dir = out_dir / "impl"
+    for nv in mv.nodes:
+        node_ctx = {**ctx, "node": nv}
+        # Per-node template-pair selection: a statem node derives from
+        # gen_statem, a plain node from gen_server. Mixed FCs are fine —
+        # each node picks its own skeleton.
+        node_suffix = ".statem" if nv.statem is not None else ""
+
+        p = lib_dir / f"{nv.name}.hh"
+        results[_write(p, env.get_template(f"Daemon{node_suffix}.hh.j2").render(**node_ctx),
+                        overwrite=True)].append(str(p))
+        # Per-node signal routing table — constexpr TipcAddr for each
+        # outbound peer the .art's composition / cluster connects name.
+        # Empty (just the namespace shell) when the node has no
+        # out-connects, so users have a stable include point regardless.
+        p = lib_dir / f"{nv.name}_netgraph.hh"
+        results[_write(p, env.get_template("Netgraph.hh.j2").render(**node_ctx),
+                        overwrite=True)].append(str(p))
+        # Handler stubs (write-once). Per node, so adding node B never
+        # clobbers node A's hand-written bodies.
+        p = impl_dir / f"{nv.name}_handlers.cc"
+        results[_write(p, env.get_template(f"handlers{node_suffix}.cc.j2").render(**node_ctx),
+                        overwrite=force)].append(str(p))
+
+    # FC-wide inbound RemoteCodec specializations (#387), deduplicated
+    # across ALL nodes, in ONE header included once by each node header.
+    # Kept out of the per-node headers to avoid an ODR clash when two
+    # nodes share an inbound type (e.g. com's ComDaemon + ProbeDaemon
+    # both take ComEmpty) and main.cc includes both.
+    p = lib_dir / f"{mv.fc_short}_codecs.hh"
+    results[_write(p, env.get_template("Codecs.hh.j2").render(**ctx),
                     overwrite=True)].append(str(p))
     # Per-FC logging context (#383). Wraps platform::runtime::Logger
     # so every log record gets the AUTOSAR context tag prepended.
@@ -477,6 +506,9 @@ def generate_fc(
                     overwrite=True)].append(str(p))
 
     # --- main slice (regen) ------------------------------------------------
+    # One main.cc starts a thread per node. The whole-FC statem_suffix
+    # selects the main template; the statem main starts statem nodes via
+    # start_statem(timers) and plain nodes via start().
     main_dir = out_dir / "main"
     p = main_dir / "main.cc"
     results[_write(p, env.get_template(f"main{statem_suffix}.cc.j2").render(**ctx),
@@ -486,10 +518,8 @@ def generate_fc(
                     overwrite=True)].append(str(p))
 
     # --- impl slice (write-once unless --force) ---------------------------
-    impl_dir = out_dir / "impl"
-    p = impl_dir / f"{mv.daemon_class}_handlers.cc"
-    results[_write(p, env.get_template(f"handlers{statem_suffix}.cc.j2").render(**ctx),
-                    overwrite=force)].append(str(p))
+    # Per-node handler stubs were written in the node loop above; only
+    # the FC-wide BUILD file remains here.
     p = impl_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.impl.bazel.j2").render(**ctx),
                     overwrite=force)].append(str(p))

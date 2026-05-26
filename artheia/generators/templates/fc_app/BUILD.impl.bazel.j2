@@ -10,7 +10,11 @@ package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "{{ model.fc_short }}_impl",
-    srcs = ["{{ model.daemon_class }}_handlers.cc"],
+    srcs = [
+{%- for n in model.nodes %}
+        "{{ n.name }}_handlers.cc",
+{%- endfor %}
+    ],
     copts = [
         "-std=c++17",
         "-Wall",

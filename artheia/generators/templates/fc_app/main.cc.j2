@@ -3,9 +3,10 @@
 //
 // Main slice — thread executor for the node(s) declared in .art.
 // Regenerated on every gen-app run. User code lives in
-// impl/{{ model.daemon_class }}_handlers.cc.
-
-#include "lib/{{ model.daemon_class }}.hh"
+// impl/<Node>_handlers.cc (one per node).
+{% for n in model.nodes %}
+#include "lib/{{ n.name }}.hh"
+{%- endfor %}
 
 #include "TimerService.hh"
 #include "Logger.hh"     // parse_log_level / MakeContextLogger / process_logger

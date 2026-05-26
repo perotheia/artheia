@@ -2,19 +2,20 @@
 // source: {{ source_file }}
 //
 // Lib slice (STATEM variant) — message wiring + GenStateM-derived
-// daemon class. Regenerated on every gen-app run. User edits land
-// in impl/{{ model.daemon_class }}_handlers.cc.
+// daemon class for ONE node. Regenerated on every gen-app run. User
+// edits land in impl/{{ node.name }}_handlers.cc.
 //
 // This template is the statem-aware sibling of Daemon.hh.j2 — it
-// fires when the .art's NodeDecl carries a `statem { ... }` block.
-// The daemon derives from demo::runtime::GenStateM<T,S,D> and the
-// transition table is encoded as switch-on-state per event type
+// fires when this node's .art NodeDecl carries a `statem { ... }`
+// block. The daemon derives from demo::runtime::GenStateM<T,S,D> and
+// the transition table is encoded as switch-on-state per event type
 // (one handle_event overload per declared event type).
 
 #pragma once
 
 #include "GenStateM.hh"
 #include "Log.hh"      // sibling — per-FC ContextLogger + kLogTag
+#include "{{ model.fc_short }}_codecs.hh"   // FC-wide inbound RemoteCodecs (#387)
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
 
 #include <algorithm>
@@ -29,12 +30,7 @@
 
 namespace {{ model.cxx_namespace }} {
 
-{% for n in model.nodes %}
-{%- if n.statem is none %}
-// {{ n.name }} declared no statem block — skipping (gen-app's
-// non-statem template path would normally handle this; if you see
-// this comment, something's misrouted).
-{%- else %}
+{% set n = node %}
 
 // ---- {{ n.name }} state machine ------------------------------------
 
@@ -322,32 +318,12 @@ inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}&
 }
 {% endfor -%}
 {% endfor %}
-{%- endif %}{# end if n.statem #}
 
 {# Trace config impls are inline in the class body (delegate to
    tracer_for(kNodeName)) — no out-of-class definitions needed. #}
-{% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}
 
-{# ---- Inbound RemoteCodec specializations (#387) -------------------------
-   register_call/register_cast on a reporting node's config service need a
-   RemoteCodec<T> (service_id djb2 + nanopb _fields) for every inbound
-   type. Emit one DEMO_DECLARE_REMOTE_CODEC per receiver-port req/rep/data
-   type, deduplicated, at global scope (the macro opens demo::runtime). #}
-{%- set _codecs = [] -%}
-{%- for n in model.nodes if n.reporting -%}
-{%- for op in n.unique_handler_ops() -%}
-{%- if op.req_msg and op.req_msg not in _codecs %}{{ _codecs.append(op.req_msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.req_msg }})
-{%- endif -%}
-{%- if op.rep_msg and op.rep_msg not in _codecs %}{{ _codecs.append(op.rep_msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.rep_msg }})
-{%- endif -%}
-{%- endfor -%}
-{%- for d in n.unique_receiver_data() -%}
-{%- if d.msg not in _codecs %}{{ _codecs.append(d.msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ d.msg }})
-{%- endif -%}
-{%- endfor -%}
-{%- endfor %}
+{# Inbound RemoteCodec specializations now live in the FC-wide
+   {{ model.fc_short }}_codecs.hh (included above), deduplicated across
+   every node in the FC. #}

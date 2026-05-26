@@ -1,21 +1,21 @@
-// User handler bodies for {{ model.daemon_class }}.
+// User handler bodies for {{ node.name }}.
 //
 // FIRST-TIME-ONLY SCAFFOLD. `artheia gen-app --kind fc` checks for
 // this file's existence and refuses to overwrite unless `--force`
 // is passed. Bodies are yours; the declarations are in
-// lib/{{ model.daemon_class }}.hh.
+// lib/{{ node.name }}.hh.
 //
 // Default behaviour for every handler is a no-op (logs the message
 // type to stderr so you can see traffic land). Replace with real
 // behaviour as the FC matures.
 
-#include "lib/{{ model.daemon_class }}.hh"
+#include "lib/{{ node.name }}.hh"
 
 #include <cstdio>
 
 namespace {{ model.cxx_namespace }} {
 
-{% for n in model.nodes %}
+{% set n = node %}
 {# ---- handle_cast (one per unique receiver-data message type) ---- #}
 {%- for d in n.unique_receiver_data() %}
 void {{ n.name }}::handle_cast(const {{ d.msg }}& /*msg*/,
@@ -42,7 +42,6 @@ void {{ n.name }}::handle_cast(const {{ d.msg }}& /*msg*/,
     return {{ op.rep_msg }}{};
     {%- endif %}
 }
-{% endfor %}
 {% endfor %}
 
 }  // namespace {{ model.cxx_namespace }}
