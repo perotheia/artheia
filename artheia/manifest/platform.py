@@ -34,15 +34,16 @@ def _default_art_root() -> Path:
     Search order:
 
     1. ``$ARTHEIA_PLATFORM_SERVICES`` (absolute path).
-    2. ``<repo_root>/platform/system/services`` discovered by walking
+    2. ``<repo_root>/system/services`` discovered by walking
        up from this file (works in editable installs).
-    3. Fall back to ``platform/system/services`` relative to cwd.
+    3. Fall back to ``system/services`` relative to cwd.
 
-    Each FC's package.art lives at
-    ``platform/system/services/<short>/package.art`` — exposed via the
-    workspace aggregator symlink
-    ``platform/system/services -> ../../services/system``. A vendor
-    shipping a different platform layout sets
+    Each FC's package.art lives in its impl tree at
+    ``services/<short>/system/<short>/package.art``; the aggregator dir
+    ``//system/services`` exposes them under one root via per-FC symlinks
+    (``system/services/<short> -> ../../services/<short>/system/<short>``
+    for daemon FCs, ``-> ../../services/nop/<short>`` for placeholders).
+    A vendor shipping a different platform layout sets
     ``ARTHEIA_PLATFORM_SERVICES`` to override.
     """
     env = os.environ.get("ARTHEIA_PLATFORM_SERVICES")
@@ -50,13 +51,13 @@ def _default_art_root() -> Path:
         return Path(env)
 
     here = Path(__file__).resolve()
-    # artheia/artheia/manifest/platform.py → up 4 levels to the repo root.
+    # artheia/artheia/manifest/platform.py → walk up to the repo root.
     for parent in [here, *here.parents]:
-        candidate = parent / "platform" / "system" / "services"
+        candidate = parent / "system" / "services"
         if candidate.is_dir():
             return candidate
 
-    return Path("platform/system/services")
+    return Path("system/services")
 
 
 PLATFORM_SERVICES_ROOT = _default_art_root()

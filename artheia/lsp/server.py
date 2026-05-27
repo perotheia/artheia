@@ -140,20 +140,22 @@ def _import_prefix(line_prefix: str) -> "str | None":
 
 
 def _workspace_root_for_doc(doc_path: Path) -> "Path | None":
-    """Walk up from *doc_path*'s directory looking for a `platform/system/`
-    sibling — that's our conventional workspace root marker. The
-    *workspace root* is the directory that CONTAINS `platform/system/`
-    (so imports like `system.demo` resolve under
-    ``<root>/system/demo/`` via the symlinked tree under
-    ``platform/system/``).
+    """Walk up from *doc_path*'s directory looking for a `system/services/`
+    aggregator — that's our conventional workspace root marker. The
+    *workspace root* is the `system/` directory itself (so imports like
+    `system.demo` resolve under ``<root>/system/demo/`` via the symlinked
+    aggregation tree). ``system/services/`` is used as the marker rather
+    than ``system/`` because real FC `.art` now lives in impl trees at
+    ``services/<fc>/system/<fc>/`` — those have a ``system/`` dir too, but
+    only the repo root carries the ``system/services/`` aggregator.
 
     Falls back to the directory containing doc_path if no marker is
     found (best-effort — still gives reasonable completion).
     """
     d = doc_path.parent
     for _ in range(20):  # bounded walk
-        if (d / "platform" / "system").is_dir():
-            return d / "platform" / "system"
+        if (d / "system" / "services").is_dir():
+            return d / "system"
         if d.parent == d:
             break
         d = d.parent

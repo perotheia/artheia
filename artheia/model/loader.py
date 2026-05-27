@@ -78,10 +78,32 @@ def _merged_source(primary: Path, sibling: Path) -> tuple[str, Path]:
             f"package mismatch between {primary} and {sibling}: "
             f"{pkg_decl!r} vs {cmp_decl!r}"
         )
-    # Strip the package line from component.art content — Model
-    # allows at most one package line per source.
-    cmp_text = _strip_package_line(cmp_text)
-    merged = pkg_text.rstrip() + "\n\n// ---- component.art ----\n\n" + cmp_text
+    # The grammar is `package? imports* elements*` — imports must come
+    # before ANY element. Naively concatenating package.art + component.art
+    # would bury component.art's import lines after package.art's elements,
+    # which is a syntax error. So hoist every import from BOTH files to the
+    # top (deduplicated, order-preserving) and strip them from the bodies.
+    # This lets component.art carry its own `import` lines (e.g. a placeholder
+    # FC importing system.supervisor for a forward-decl'd node).
+    imports = _collect_imports(pkg_text) + _collect_imports(cmp_text)
+    seen: set[str] = set()
+    imports = [i for i in imports if not (i in seen or seen.add(i))]
+
+    # Strip the package line + import lines from both halves — Model allows
+    # at most one package line, and imports are re-emitted at the top.
+    pkg_body = _strip_import_lines(pkg_text)
+    cmp_body = _strip_import_lines(_strip_package_line(cmp_text))
+
+    head = (pkg_decl + "\n\n") if pkg_decl else ""
+    import_block = ("\n".join(imports) + "\n\n") if imports else ""
+    # pkg_body still leads with its own package line; drop it (head re-adds).
+    pkg_body = _strip_package_line(pkg_body)
+    merged = (
+        head + import_block
+        + pkg_body.strip()
+        + "\n\n// ---- component.art ----\n\n"
+        + cmp_body
+    )
     return merged, primary
 
 
@@ -107,6 +129,28 @@ def _strip_package_line(src: str) -> str:
             continue
         out.append(line)
     return "\n".join(out)
+
+
+def _collect_imports(src: str) -> list[str]:
+    """Return the ``import ...`` lines from *src*, stripped of any trailing
+    ``//`` comment, in source order."""
+    out: list[str] = []
+    for line in src.splitlines():
+        s = line.strip()
+        if s.startswith("import "):
+            # Drop trailing line comments so dedup keys on the FQN alone.
+            code = s.split("//", 1)[0].rstrip()
+            out.append(code)
+    return out
+
+
+def _strip_import_lines(src: str) -> str:
+    """Remove every ``import ...`` line from *src* (they're re-emitted at the
+    top of the merged source)."""
+    return "\n".join(
+        line for line in src.splitlines()
+        if not line.strip().startswith("import ")
+    )
 
 
 def _postprocess(model):

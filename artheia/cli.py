@@ -174,13 +174,13 @@ def _collect_imported_models(art_file: str, model) -> list:
             sys.exit(2)
 
         candidate = None
-        for fname in ("system.art", "package.art", "component.art"):
+        for fname in ("system.art", "cluster.art", "package.art", "component.art"):
             if (pkg_dir / fname).exists():
                 candidate = pkg_dir / fname
                 break
         if candidate is None:
             click.secho(
-                f"error: import {import_fqn!r}: no system.art / "
+                f"error: import {import_fqn!r}: no system.art / cluster.art / "
                 f"package.art / component.art under {pkg_dir}",
                 fg="red", err=True,
             )
@@ -284,13 +284,13 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
         #   - component.art    (wiring layer; loader auto-merges
         #                       sibling package.art)
         candidate = None
-        for fname in ("system.art", "package.art", "component.art"):
+        for fname in ("system.art", "cluster.art", "package.art", "component.art"):
             if (pkg_dir / fname).exists():
                 candidate = pkg_dir / fname
                 break
         if candidate is None:
             click.secho(
-                f"error: import {import_fqn!r}: no system.art / "
+                f"error: import {import_fqn!r}: no system.art / cluster.art / "
                 f"package.art / component.art under {pkg_dir}",
                 fg="red", err=True,
             )
