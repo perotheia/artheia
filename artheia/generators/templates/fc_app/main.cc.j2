@@ -10,7 +10,7 @@
 
 #include "TimerService.hh"
 #include "Logger.hh"     // parse_log_level / MakeContextLogger / process_logger
-{% if model.nodes | selectattr("reporting") | list %}
+{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
 {% endif %}
 
@@ -50,7 +50,7 @@ int main() {
 
     demo::runtime::TimerService timers;
     (void)timers;  // wired into the daemon if it needs send_after
-{% if model.nodes | selectattr("reporting") | list %}
+{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
     // Config-service receiver (#386). A reporting node binds its TIPC
     // name and register_cast's the supervisor's control push; the cast
     // lands in GenServer's base handle_cast(LogLevelPush) on the node
@@ -63,7 +63,7 @@ int main() {
     {{ n.snake }}.start();
     std::fprintf(stderr, "[{{ n.snake }}] up — TIPC type=0x%x instance=%u\n",
                  {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
-{% if n.reporting %}
+{% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.name }}::kTipcType,
             {{ n.name }}::kTipcInstance)) {
@@ -91,7 +91,7 @@ int main() {
     }
 {% endif %}
 {% endfor %}
-{% if model.nodes | selectattr("reporting") | list %}
+{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
     config_mux.start();
 {% endif %}
 
@@ -99,7 +99,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-{% if model.nodes | selectattr("reporting") | list %}
+{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
     config_mux.stop();
 {% endif %}
 {% for n in model.nodes %}

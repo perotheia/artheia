@@ -484,10 +484,17 @@ def generate_fc(
     impl_dir = out_dir / "impl"
     for nv in mv.nodes:
         node_ctx = {**ctx, "node": nv}
-        # Per-node template-pair selection: a statem node derives from
-        # gen_statem, a plain node from gen_server. Mixed FCs are fine —
-        # each node picks its own skeleton.
-        node_suffix = ".statem" if nv.statem is not None else ""
+        # Per-node template-pair selection by node kind: a runnable node
+        # derives from GenRunnable (do_start/do_loop/do_stop), a statem node
+        # from gen_statem, a plain node from gen_server. Mixed FCs are fine —
+        # each node picks its own skeleton. runnable wins over statem (a
+        # `node runnable` carries no statem block anyway).
+        if nv.runnable:
+            node_suffix = ".runnable"
+        elif nv.statem is not None:
+            node_suffix = ".statem"
+        else:
+            node_suffix = ""
 
         p = lib_dir / f"{nv.name}.hh"
         results[_write(p, env.get_template(f"Daemon{node_suffix}.hh.j2").render(**node_ctx),
