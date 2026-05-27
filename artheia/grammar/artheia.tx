@@ -255,8 +255,15 @@ Duration:
     /[0-9]+(ms|s|m|h)/
 ;
 
+// A node's runtime base, the OTP triad:
+//   atomic    — a gen_server (reactive/mailbox), or a gen_statem when the
+//               node carries a `statem { ... }` block. The default.
+//   runnable  — a GenRunnable: a free worker that owns a thread and does
+//               its own thing (typically blocking, e.g. a gRPC proxy), with
+//               do_start/do_loop/do_stop bodies in impl. Not message-driven.
+//               (platform/runtime/GenRunnable.hh)
 NodeKind:
-    'atomic'
+    'atomic' | 'runnable'
 ;
 
 TipcAddress:

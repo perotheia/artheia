@@ -20,7 +20,7 @@
       "patterns": [
         {
           "name": "keyword.control.artheia",
-          "match": "\\b(package|import|message|enum|interface|senderReceiver|clientServer|data|operation|returns|node|atomic|tipc|type|instance|ports|sender|receiver|client|server|provides|requires|composition|prototype|connect|to|cluster|params|reliable|best_effort|kick_off|requires_timers|reporting|config|extends|on|process|bus|kind|channels|gateway_route|can|flexray|id|slot|channel|channel_idx|dlc|extended_id|rtr|cycle|pdu_offset|signal|direction|in|out|inout|repeated|statem|states|initial|event|timeout|after|halt)\\b"
+          "match": "\\b(package|import|message|enum|interface|senderReceiver|clientServer|data|operation|returns|node|atomic|runnable|tipc|type|instance|ports|sender|receiver|client|server|provides|requires|composition|prototype|connect|to|cluster|params|reliable|best_effort|kick_off|requires_timers|reporting|config|extends|on|process|bus|kind|channels|gateway_route|can|flexray|id|slot|channel|channel_idx|dlc|extended_id|rtr|cycle|pdu_offset|signal|direction|in|out|inout|repeated|statem|states|initial|event|timeout|after|halt)\\b"
         }
       ]
     },

@@ -53,7 +53,7 @@ _KEYWORDS = [
     "package", "import",
     "message", "enum", "interface", "senderReceiver", "clientServer",
     "data", "operation", "returns", "in", "out", "inout",
-    "node", "atomic", "tipc", "type", "instance",
+    "node", "atomic", "runnable", "tipc", "type", "instance",
     "ports", "sender", "receiver", "client", "server",
     "provides", "requires",
     "composition", "prototype", "connect", "to",

@@ -125,6 +125,11 @@ class _NodeView:
     # no `tag = "..."` field, so every node always has a non-empty
     # contextual tag (per #383 fallback rule).
     log_tag: str = ""
+    # Node runtime base (from the .art NodeKind). False = atomic (a
+    # GenServer, or GenStateM when `statem` is set below). True = a
+    # `node runnable` — a GenRunnable free worker (do_start/do_loop/do_stop),
+    # e.g. a gRPC proxy thread. Templates branch on this to pick the base.
+    runnable: bool = False
     ports: list[_Port] = field(default_factory=list)
     # When the .art's NodeDecl has a `statem { ... }` block, this is
     # the validated StateMSpec lowered from the AST. None for plain
@@ -284,6 +289,9 @@ def _node_view(node) -> _NodeView:
         tipc_instance=node.tipc.instance,
         reporting=(reporting_raw == "true"),
         fallthrough=(fallthrough_raw == "true"),
+        # NodeKind from the .art: `node runnable Foo` → GenRunnable; the
+        # default `node atomic` → GenServer (or GenStateM with a statem block).
+        runnable=(getattr(node, "kind", "atomic") == "runnable"),
         log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
     )
