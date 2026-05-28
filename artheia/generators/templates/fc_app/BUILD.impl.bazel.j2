@@ -22,6 +22,6 @@ cc_library(
         "-fPIC",
     ],
     deps = [
-        "//services/{{ model.fc_short }}/lib:{{ model.fc_short }}_lib",
+        "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
     ],
 )

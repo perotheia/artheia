@@ -17,8 +17,8 @@ cc_binary(
         "-Wextra",
     ],
     deps = [
-        "//services/{{ model.fc_short }}/lib:{{ model.fc_short }}_lib",
-        "//services/{{ model.fc_short }}/impl:{{ model.fc_short }}_impl",
+        "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
+        "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_impl",
     ],
     linkopts = [
         "-lpthread",

@@ -204,6 +204,11 @@ class _ModelView:
     state_enum: str               # SmDaemonState (when statem present)
     has_statem: bool
 
+    # Bazel label prefix for cross-slice deps (//<prefix>/lib:<short>_lib).
+    # Derived from --out at generate_fc() entry; default keeps the legacy
+    # `services/<fc_short>` shape for callers that didn't set it.
+    bazel_pkg_prefix: str = ""
+
     # Per-node detail.
     nodes: list[_NodeView] = field(default_factory=list)
 
@@ -384,6 +389,10 @@ def _build_model_view(art_path: Path,
         daemon_class=daemon_class,
         state_enum=state_enum,
         has_statem=has_statem,
+        # Default to the legacy services/<fc_short> shape; generate_fc
+        # overrides this with the actual --out path so non-services
+        # FCs (e.g. platform/gateway) get correct cross-slice labels.
+        bazel_pkg_prefix=f"services/{fc_short}",
         nodes=nodes,
         messages_used=_messages_used(nodes),
     )
@@ -450,6 +459,12 @@ def generate_fc(
     out_dir = Path(out_dir)
 
     mv = _build_model_view(art_path, cxx_namespace_override=cxx_namespace)
+    # Derive the Bazel package prefix from --out, so generated cross-slice
+    # labels (main → lib, impl → lib) point at the actual output tree, not
+    # the hardcoded `services/<fc>/` it used to assume. Strip any leading
+    # './' and trailing '/' so 'platform/gateway' and 'services/sm' both
+    # form a clean '//<prefix>/lib:<short>_lib' label.
+    mv.bazel_pkg_prefix = str(out_dir).strip("./").rstrip("/")
     env = _env()
 
     results: dict[str, list[str]] = {
