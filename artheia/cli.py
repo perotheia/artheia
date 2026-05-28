@@ -1170,19 +1170,31 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
 
 @main.command(
     "gen-app",
-    help="Generate a C++ application scaffold. Two modes:\n\n"
-    "  --kind psp (default): vendor PSP / signal-routing app (the "
-    "existing three-slice cpp_app generator). Targets vendor-root "
-    "trees like vendor/odd_path_client/system/components/.\n\n"
-    "  --kind fc: single-file Adaptive Functional Cluster. Targets a "
-    "single services/system/<fc>/package.art (the spec layer). Emits "
-    "the lib / main / impl slices into a separate impl-layer dir "
+    help="Generate a C++ application scaffold. Three modes:\n\n"
+    "  --kind fc (default): single-file Adaptive Functional Cluster. "
+    "Targets a single services/system/<fc>/package.art (the spec layer). "
+    "Emits the lib / main / impl slices into a separate impl-layer dir "
     "(convention: services/<fc>/, KEPT DISTINCT from the spec dir to "
-    "avoid mixing .art with generated code) plus manifest.py + "
-    "executor.py + the .proto under platform/proto/.",
+    "avoid mixing .art with generated code) plus the .proto under "
+    "platform/proto/. Bazel build.\n\n"
+    "  --kind lib: standalone application's platform/ slice. Targets a "
+    "single vendor/<app>/system/<app>/component.art. Emits lib + impl "
+    "+ a VENDORED copy of platform/runtime/ + generated/<proto> + a "
+    "top-level CMakeLists.txt so the app builds standalone on its target "
+    "(e.g. RPi4) with plain CMake — no Bazel, no workspace deps. "
+    "NO main/ — the app owns its own main and runnable lifecycle.\n\n"
+    "  --kind psp: legacy three-slice cpp_app generator for vendor PSP "
+    "/ signal-routing apps. Kept for in-flight migrations; new apps "
+    "should use --kind lib.",
 )
-@click.option("--kind", type=click.Choice(["psp", "fc"]), default="psp",
-              help="Generator mode (default: psp).")
+@click.option("--kind", type=click.Choice(["psp", "fc", "lib"]), default="fc",
+              help="Generator mode (default: fc). "
+              "fc — Adaptive FC daemon (lib + impl + main, Bazel). "
+              "lib — standalone app's platform/ slice (lib + impl + "
+              "vendored runtime + CMake, NO main — the app owns its own "
+              "main and runnable lifecycle). "
+              "psp — legacy three-slice cpp_app generator; on the way out, "
+              "kept for in-flight migrations.")
 # --- shared --
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
               help="Output dir. For psp mode: applications/<vendor>/. "
@@ -1250,6 +1262,17 @@ def gen_app(kind: str,
                            namespace=namespace, project_name=project_name,
                            netgraph_paths=netgraph_paths,
                            psp_proto_root=psp_proto_root)
+    elif kind == "lib":
+        if not art_file:
+            click.secho(
+                "error: --kind lib requires an .art file as positional arg",
+                fg="red", err=True)
+            sys.exit(2)
+        from .generators.lib_app import generate_lib
+        results = generate_lib(art_file, out_dir,
+                               proto_out=proto_out,
+                               cxx_namespace=cxx_namespace,
+                               force=force)
     else:  # fc
         if not art_file:
             click.secho(
