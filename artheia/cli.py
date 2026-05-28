@@ -123,18 +123,47 @@ def _import_dir(entry: "Path", entry_pkg: str, import_pkg: str) -> "Path | None"
     return p
 
 
-def _is_stub(el) -> bool:
-    """True if *el* is an empty-body cluster or composition (= forward-decl).
+def _kind_family(el) -> str | None:
+    """Group decl classes into families for forward-decl matching.
 
-    The user's convention: stubs at the top of an aggregator file
-    declare names that live in some other component's component.art.
-    Any non-empty body means this IS the real definition.
+    Returns the family name (one of: cluster, composition, node,
+    interface) or None if *el* isn't a forward-decl-able element.
+    SenderReceiverInterface and ClientServerInterface share the
+    'interface' family because the stub form `interface X { }`
+    doesn't carry the flavor — the real decl on the other side
+    supplies it.
     """
     kind = type(el).__name__
     if kind == "ClusterDecl":
-        return not list(getattr(el, "elements", []))
+        return "cluster"
     if kind == "CompositionDecl":
+        return "composition"
+    if kind == "NodeDecl":
+        return "node"
+    if kind in ("SenderReceiverInterface", "ClientServerInterface"):
+        return "interface"
+    return None
+
+
+def _is_stub(el) -> bool:
+    """True if *el* is an empty-body forward-decl.
+
+    Recognized: cluster / composition / node / interface (both
+    senderReceiver and clientServer flavors). Any non-empty body
+    means this IS the real definition.
+    """
+    kind = type(el).__name__
+    if kind in ("ClusterDecl", "CompositionDecl"):
         return not list(getattr(el, "elements", []))
+    if kind == "NodeDecl":
+        # A real node always has at least a `ports { ... }` block (may be
+        # empty), plus typically tipc/tag/etc. The stub form `node atomic
+        # X { }` has no ports attribute at all.
+        return getattr(el, "ports", None) is None and getattr(el, "tipc", None) is None
+    if kind == "SenderReceiverInterface":
+        return not list(getattr(el, "data", []))
+    if kind == "ClientServerInterface":
+        return not list(getattr(el, "operations", []))
     return False
 
 
@@ -150,7 +179,12 @@ def _collect_imported_models(art_file: str, model) -> list:
     """
     from pathlib import Path
 
-    entry = Path(art_file).resolve()
+    # absolute(), NOT resolve(): the workspace layout uses symlinks
+    # (e.g. system/gateway → ../gateway/system) to mirror the package
+    # FQN onto a directory. Resolving the symlink would dump us in the
+    # physical path (gateway/system/...) where the package↔dir mirror
+    # no longer holds, and _import_dir would compute wrong import paths.
+    entry = Path(art_file).absolute()
 
     visited_packages: set[str] = set()
     visited_files: set[Path] = {entry}
@@ -234,22 +268,28 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
     """
     from pathlib import Path
 
-    entry = Path(art_file).resolve()
+    # absolute(), not resolve() — see _collect_imported_models for why
+    # the entry path must NOT follow workspace symlinks.
+    entry = Path(art_file).absolute()
     entry_pkg = getattr(model, "name", "") or ""
 
-    by_name: dict[str, list[tuple[Path, object]]] = {}
+    # Key by (family, name) so a NodeDecl Foo doesn't collide with a
+    # CompositionDecl Foo (real example: platform/supervisor/system has
+    # both a `node Supervisor` and a `composition Supervisor`).
+    by_name: dict[tuple[str, str], list[tuple[Path, object]]] = {}
     visited_packages: set[str] = set()
 
     def _absorb(other_model, other_path: Path) -> None:
-        """Add other_model's non-stub clusters/compositions to the
-        index, then follow ITS imports too (relative to ITS package)."""
+        """Add other_model's non-stub clusters/compositions/nodes/
+        interfaces to the index, then follow ITS imports too (relative
+        to ITS package)."""
         for e in getattr(other_model, "elements", []):
-            kind = type(e).__name__
-            if kind not in ("ClusterDecl", "CompositionDecl"):
+            fam = _kind_family(e)
+            if fam is None:
                 continue
             if _is_stub(e):
                 continue
-            by_name.setdefault(e.name, []).append((other_path, e))
+            by_name.setdefault((fam, e.name), []).append((other_path, e))
         other_pkg = getattr(other_model, "name", "") or ""
         for imp in getattr(other_model, "imports", []) or []:
             _follow(imp.name, other_path, other_pkg)
@@ -316,7 +356,10 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
     def _resolve(stub):
         if not _is_stub(stub):
             return
-        candidates = by_name.get(stub.name, [])
+        fam = _kind_family(stub)
+        if fam is None:
+            return
+        candidates = by_name.get((fam, stub.name), [])
         if not candidates:
             unresolved.append((type(stub).__name__, stub.name))
             return
@@ -376,12 +419,19 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
         sys.exit(2)
 
     if unresolved:
+        _kind_tags = {
+            "ClusterDecl": "cluster",
+            "CompositionDecl": "composition",
+            "NodeDecl": "node",
+            "SenderReceiverInterface": "interface senderReceiver",
+            "ClientServerInterface": "interface clientServer",
+        }
         msg = ["unresolved forward-decls (no real definition found):"]
         for kind, name in unresolved:
-            tag = "cluster" if kind == "ClusterDecl" else "composition"
-            msg.append(f"  {tag} {name}")
+            msg.append(f"  {_kind_tags.get(kind, kind)} {name}")
+        searched = ", ".join(sorted(visited_packages)) or "(no imports)"
         msg.append(
-            f"\nsearched under: {root}\n"
+            f"\nsearched packages: {searched}\n"
             f"hint: add the missing component to the workspace, or use "
             f"`--no-recurse` to print the file standalone."
         )
