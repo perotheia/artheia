@@ -38,17 +38,17 @@ namespace {{ model.cxx_namespace }} {
 {%- for d in p.data -%}
 {%- if d.msg not in seen_msgs -%}
 {%- set _ = seen_msgs.append(d.msg) %}
-using {{ d.msg }} = {{ model.proto_package }}_{{ d.msg }};
+using {{ d.msg }} = {{ d.proto_type }};
 {%- endif -%}
 {%- endfor -%}
 {%- for op in p.ops -%}
 {%- if op.req_msg and op.req_msg not in seen_msgs -%}
 {%- set _ = seen_msgs.append(op.req_msg) %}
-using {{ op.req_msg }} = {{ model.proto_package }}_{{ op.req_msg }};
+using {{ op.req_msg }} = {{ op.req_proto }};
 {%- endif -%}
 {%- if op.rep_msg and op.rep_msg not in seen_msgs -%}
 {%- set _ = seen_msgs.append(op.rep_msg) %}
-using {{ op.rep_msg }} = {{ model.proto_package }}_{{ op.rep_msg }};
+using {{ op.rep_msg }} = {{ op.rep_proto }};
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}

@@ -79,6 +79,13 @@ def _validate_enums(model):
 def _validate_tipc_unique(model):
     seen: dict[tuple[int, int], str] = {}
     for node in _iter(model, "NodeDecl"):
+        # extern forward-decls carry no tipc (the real def, in an imported
+        # package, owns the address). A non-extern node MAY also omit tipc
+        # at this stage if it derives one via `prototype <Base>` — the
+        # inheritance flatten (model/inherit.py) fills it before generators
+        # run. Either way, nothing to check for a tipc-less node here.
+        if getattr(node, "extern", False) or getattr(node, "tipc", None) is None:
+            continue
         ttype = _parse_hex_or_int(node.tipc.type)
         tinst = _parse_hex_or_int(node.tipc.instance)
         if ttype == _GATEWAY_TIPC_TYPE and tinst == _GATEWAY_TIPC_INSTANCE:
@@ -121,6 +128,8 @@ def _resolve_port(proto, port_name: str):
 
 def _validate_connections(model):
     for comp in _iter(model, "CompositionDecl"):
+        if getattr(comp, "extern", False):
+            continue  # forward-decl: real composition validated where defined
         # Flatten so connects inside nested compositions are validated
         # together with the parent's connects. Inner prototype names
         # appear verbatim in the flat list, so connects targeting them
@@ -178,6 +187,8 @@ def _validate_composition_refs(model):
     name + reference name so the error message points at the .art line.
     """
     for comp in _iter(model, "CompositionDecl"):
+        if getattr(comp, "extern", False):
+            continue  # forward-decl: no body to check
         # Unresolved refs: textX leaves `.type` as None when a bare-name
         # reference can't be resolved (typically a missing `import`).
         for el in comp.elements:
@@ -257,6 +268,8 @@ def _coerce_param_literal(literal):
 
 def _validate_params(model):
     for node in _iter(model, "NodeDecl"):
+        if getattr(node, "extern", False):
+            continue  # forward-decl: no params block
         seen: set[str] = set()
         for p in getattr(node, "params", []) or []:
             if p.name in seen:
@@ -363,9 +376,51 @@ def _validate_gateway_routes(model):
 
 # ---- entry point -----------------------------------------------------------
 
+def _validate_extern_bodies(model):
+    """An `extern` decl is a forward declaration — it MUST have an empty
+    body. A non-empty body means it's a real definition, where `extern` is
+    a mistake (the empty-body-is-magic heuristic was retired in favour of
+    explicit `extern`)."""
+    for el in getattr(model, "elements", []) or []:
+        if not getattr(el, "extern", False):
+            continue
+        kind = el.__class__.__name__
+        nonempty = None
+        if kind == "NodeDecl":
+            # textX leaves an absent optional list attr as [] (not None) and
+            # an absent optional object attr as None. Only a *populated*
+            # body contradicts `extern`. (A bare `extern node X { }` has
+            # tipc=None, ports=[], params=[], statem=None.)
+            if getattr(el, "tipc", None) is not None:
+                nonempty = "a tipc address"
+            elif list(getattr(el, "ports", []) or []):
+                nonempty = "a ports block"
+            elif list(getattr(el, "params", []) or []):
+                nonempty = "a params block"
+            elif getattr(el, "statem", None) is not None:
+                nonempty = "a statem block"
+        elif kind in ("CompositionDecl", "ClusterDecl"):
+            if list(getattr(el, "elements", []) or []):
+                nonempty = "members"
+        elif kind == "SenderReceiverInterface":
+            if list(getattr(el, "data", []) or []):
+                nonempty = "data elements"
+        elif kind == "ClientServerInterface":
+            if list(getattr(el, "operations", []) or []):
+                nonempty = "operations"
+        if nonempty is not None:
+            raise TextXSemanticError(
+                f"extern {el.name}: a forward declaration must have an empty "
+                f"body, but this one declares {nonempty}. Drop `extern` to "
+                f"make it a real definition, or empty the body to keep it a "
+                f"forward declaration."
+            )
+
+
 def _on_model(model, metamodel):
     _validate_messages(model)
     _validate_enums(model)
+    _validate_extern_bodies(model)
     _validate_tipc_unique(model)
     # Composition refs first — cycle / collision errors are more
     # informative than the downstream connect/codegen failures they'd

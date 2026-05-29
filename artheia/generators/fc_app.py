@@ -68,12 +68,26 @@ class _IfaceOp:
     name: str
     req_msg: str           # local message name (e.g. "SystemBoot")
     rep_msg: Optional[str] # None for one-way (rare in CS), else local name
+    # Defining-package proto types (flat, libc-safe). Equal to the FC's own
+    # proto_package + name for a same-package message; differ when the
+    # message is imported from another package — see _proto_type_of().
+    req_proto: str = ""
+    rep_proto: Optional[str] = None
 
 
 @dataclass
 class _DataEl:
     name: str
-    msg: str               # local message name
+    msg: str               # local message name (the C++ alias / handler arg)
+    # Fully-qualified proto type in the message's DEFINING package, flat
+    # libc-safe form (e.g. "system_autosar_mlbevo_gen2_flexray_EML_01").
+    # The RemoteCodec service_id hashes THIS, so sender and receiver must
+    # agree — keying off the resolved message's home package guarantees it.
+    proto_type: str = ""
+    # Path-form of the defining package, for the `#include "<sub>/<leaf>.pb.h"`.
+    proto_subpath: str = ""
+    # Leaf .proto module name (the FC short name of the defining package).
+    proto_leaf: str = ""
 
 
 @dataclass
@@ -229,8 +243,43 @@ def _local_msg(msg_ref) -> str:
     return msg_ref.name
 
 
+def _defining_package(msg_ref) -> str:
+    """The .art package the resolved message actually lives in.
+
+    For a same-file message this equals the FC's own package; for a
+    message imported from another package (e.g. a PSP bus PDU pulled in
+    via `import system.autosar.mlbevo_gen2.flexray.*`) it's the bus
+    package. The scope provider resolves the cross-ref to the real AST
+    node, so its containing model carries the true origin.
+    """
+    try:
+        from textx import get_model
+        return getattr(get_model(msg_ref), "name", "") or ""
+    except Exception:
+        return ""
+
+
+def _proto_type_of(msg_ref) -> tuple[str, str, str]:
+    """Return (flat_proto_type, proto_subpath, proto_leaf) for a resolved
+    message, keyed off its DEFINING package — so the RemoteCodec
+    service_id (a hash of this name) matches on both sender and receiver
+    regardless of which FC imported it."""
+    pkg = _defining_package(msg_ref)
+    proto_pkg = _proto_package_name(pkg)              # libc-safe lead rename
+    flat = proto_pkg.replace(".", "_") + "_" + msg_ref.name
+    subpath = "/".join(pkg.split(".")) if pkg else ""
+    leaf = pkg.split(".")[-1] if pkg else msg_ref.name
+    return flat, subpath, leaf
+
+
+def _data_el(name: str, msg_ref) -> _DataEl:
+    flat, subpath, leaf = _proto_type_of(msg_ref)
+    return _DataEl(name=name, msg=_local_msg(msg_ref),
+                   proto_type=flat, proto_subpath=subpath, proto_leaf=leaf)
+
+
 def _sr_data(iface) -> list[_DataEl]:
-    return [_DataEl(name=d.name, msg=_local_msg(d.type)) for d in iface.data]
+    return [_data_el(d.name, d.type) for d in iface.data]
 
 
 def _cs_ops(iface) -> list[_IfaceOp]:
@@ -240,12 +289,16 @@ def _cs_ops(iface) -> list[_IfaceOp]:
         # The grammar allows multiple params but every existing FC
         # uses exactly one; codegen treats the first `in` as the req.
         req = ""
+        req_proto = ""
         for p in op.params:
             if getattr(p, "direction", "") == "in":
                 req = _local_msg(p.type)
+                req_proto, _, _ = _proto_type_of(p.type)
                 break
         rep = _local_msg(op.returns) if op.returns else None
-        out.append(_IfaceOp(name=op.name, req_msg=req, rep_msg=rep))
+        rep_proto = _proto_type_of(op.returns)[0] if op.returns else None
+        out.append(_IfaceOp(name=op.name, req_msg=req, rep_msg=rep,
+                            req_proto=req_proto, rep_proto=rep_proto))
     return out
 
 

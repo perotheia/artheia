@@ -6,7 +6,7 @@ The loader's post-process step (``_apply_node_defaults`` in
 production didn't match, so every NodeDecl exposes a non-empty
 ``reporting`` attribute regardless of source form.
 
-Inheritance (``extends``) propagates the field through the same
+Inheritance (``prototype``) propagates the field through the same
 flatten step that handles other NodeDecl fields: derived inherits
 the base's value if it didn't write its own.
 
@@ -75,7 +75,7 @@ def test_reporting_inherited_through_extends():
             tipc type=0x10010004 instance=0
             reporting=false
         }
-        node atomic Derived extends SilentBase {
+        node atomic Derived prototype SilentBase {
             tipc type=0x10010005 instance=0
         }
         """
@@ -92,7 +92,7 @@ def test_reporting_override_in_derived():
             tipc type=0x10010006 instance=0
             reporting=false
         }
-        node atomic LoudDerived extends SilentBase {
+        node atomic LoudDerived prototype SilentBase {
             tipc type=0x10010007 instance=0
             reporting=true
         }
@@ -109,10 +109,10 @@ def test_default_propagates_through_extends_chain():
         node atomic Root {
             tipc type=0x10010008 instance=0
         }
-        node atomic Mid extends Root {
+        node atomic Mid prototype Root {
             tipc type=0x10010009 instance=0
         }
-        node atomic Leaf extends Mid {
+        node atomic Leaf prototype Mid {
             tipc type=0x1001000a instance=0
         }
         """

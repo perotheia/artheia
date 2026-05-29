@@ -23,6 +23,7 @@ from textx import metamodel_from_file
 
 from ..grammar import GRAMMAR_PATH
 from .validators import register_validators
+from .scope import register_scope_provider
 
 
 _METAMODEL = None
@@ -32,6 +33,10 @@ def load_metamodel():
     global _METAMODEL
     if _METAMODEL is None:
         mm = metamodel_from_file(str(GRAMMAR_PATH))
+        # Scope provider FIRST: it follows `import pkg.*` lines so a
+        # cross-ref (iface/message/node/composition/cluster) resolves
+        # against imported packages, not just the current model.
+        register_scope_provider(mm)
         register_validators(mm)
         _METAMODEL = mm
     return _METAMODEL
@@ -157,9 +162,9 @@ def _postprocess(model):
     """Hook for transforms that have to run AFTER textX cross-refs
     resolve. Currently:
 
-      - :mod:`artheia.model.inherit` flattens ``node extends Base``
+      - :mod:`artheia.model.inherit` flattens ``node X prototype Base``
         so generators see standalone-looking NodeDecls — the derived
-        node absorbs the base's ports/params/statem/config/flags
+        node absorbs the base's ports/params/statem/config/flags/tipc
         unless it overrode them.
 
     In-place mutation; returns the same model object."""

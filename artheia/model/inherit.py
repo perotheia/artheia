@@ -1,20 +1,22 @@
-"""Node prototype inheritance: resolve `node X extends Y` post-parse.
+"""Node prototype derivation: resolve `node X prototype Y` post-parse.
 
-Grammar declares `(extends=[NodeDecl|FQN])?` on NodeDecl. textX
+Grammar declares `('prototype' base=[NodeDecl|FQN])?` on NodeDecl. textX
 populates `node.base` with the resolved base node when the clause
 is present, leaves it None otherwise.
 
 This module flattens that link. After resolve, the derived node
 LOOKS like a self-contained node — generators consume it without
-any awareness of the extends relationship. The flattening is
+any awareness of the prototype relationship. The flattening is
 in-place mutation on the textX model object: the derived node
 gains the base's ports / params / statem / config / kick_off /
-requires_timers attributes IF and only IF the derived didn't
+requires_timers / tipc attributes IF and only IF the derived didn't
 declare its own.
 
 Rules:
 
-  - tipc is ALWAYS the derived's own (the whole point of extends).
+  - tipc: derived's own wins; if the derived OMITS tipc, it inherits
+    the base's. (The common case states its own — a second instance
+    at a different TIPC address — but omitting is allowed.)
   - All other fields: derived's own value wins if present, else
     base's value is copied verbatim.
   - "Present" means textX-truthy: a non-empty list for ports/params,
@@ -34,6 +36,8 @@ self-contained nodes).
 from __future__ import annotations
 
 from typing import Any
+
+from textx import TextXSemanticError
 
 
 def _is_present(value: Any) -> bool:
@@ -87,7 +91,7 @@ def resolve_inheritance(model) -> None:
         if id(node) in chain:
             names = [_name_at(nid, nodes) for nid in chain] + [node.name]
             raise ValueError(
-                f"node extends cycle: {' -> '.join(names)}"
+                f"node prototype cycle: {' -> '.join(names)}"
             )
         base = getattr(node, "base", None)
         if base is None:
@@ -106,6 +110,21 @@ def resolve_inheritance(model) -> None:
     # inheritance so a base's explicit value still wins.
     for n in nodes:
         _apply_node_defaults(n)
+
+    # tipc is grammar-optional but a REAL (non-extern) node must end up
+    # with one — either declared, or inherited via `prototype`. Check
+    # AFTER the flatten so a derived node that inherited its base's tipc
+    # passes. extern forward-decls legitimately have no tipc.
+    for n in nodes:
+        if getattr(n, "extern", False):
+            continue
+        if getattr(n, "tipc", None) is None:
+            raise TextXSemanticError(
+                f"node {n.name}: missing tipc address. A non-extern node "
+                f"needs `tipc type=... instance=...`, or a `prototype "
+                f"<Base>` clause to inherit one. (Use `extern node {n.name} "
+                f"{{ }}` if you meant a forward declaration.)"
+            )
 
 
 def _apply_node_defaults(node) -> None:
@@ -129,8 +148,13 @@ def _name_at(node_id: int, nodes: list) -> str:
 
 def _copy_inherited_fields(*, src, dst) -> None:
     """Copy src→dst for every NodeDecl field that the dst didn't
-    declare. tipc is NEVER copied (derived must state its own).
+    declare. tipc is inherited only when the derived omitted it.
     """
+    # tipc — inherited ONLY when the derived node didn't state its own.
+    # A `prototype` derivation normally re-addresses (new tipc), but a
+    # derived node may omit tipc to reuse the base's.
+    if getattr(dst, "tipc", None) is None and getattr(src, "tipc", None) is not None:
+        dst.tipc = src.tipc
     # Optional bool flags. Inherited only if dst didn't say either.
     # Since they default to False, "user typed it" === "value is True".
     if not _is_present(dst.kick_off) and _is_present(src.kick_off):

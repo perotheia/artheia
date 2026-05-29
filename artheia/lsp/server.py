@@ -49,6 +49,13 @@ class _Workspace:
     catalog_messages: set[str] = field(default_factory=set)
 
 
+# Structural keywords offered as global completions. NOTE: contextual
+# grammar literals that only appear *inside* a `bus`/`gateway_route` block
+# (`can`, `flexray`, `id`, `slot`, `channel`, `cycle`, `direction`, ...)
+# are deliberately EXCLUDED — they are not standalone keywords. Listing
+# `flexray`/`can` globally made an `import …mlbevo_gen2.flexray.*` segment
+# read as a keyword and polluted completion everywhere; they belong only
+# to the bus/route grammar, which is rare and self-evident in context.
 _KEYWORDS = [
     "package", "import",
     "message", "enum", "interface", "senderReceiver", "clientServer",
@@ -60,12 +67,9 @@ _KEYWORDS = [
     "cluster",
     "params",
     "reliable", "best_effort",
-    "kick_off", "requires_timers", "reporting", "config", "extends",
+    "kick_off", "requires_timers", "reporting", "config", "extern",
     "on", "process",
-    "bus", "kind", "channels",
-    "gateway_route", "can", "flexray", "id", "slot", "channel",
-    "channel_idx", "dlc", "extended_id", "rtr", "cycle", "pdu_offset",
-    "signal", "direction",
+    "bus", "gateway_route", "signal",
     "statem", "states", "initial", "event", "timeout", "after", "halt",
     "true", "false",
     "int32", "int64", "uint32", "uint64",
@@ -189,10 +193,18 @@ def _range_for_textx_error(text: str, err: TextXError) -> lsp.Range:
 
 # ---- parsing --------------------------------------------------------------
 
-def _parse(text: str):
+def _parse(text: str, file_path: "str | None" = None):
+    """Parse *text* on the shared metamodel.
+
+    Passing *file_path* anchors the model so the import-following scope
+    provider can resolve `import <pkg>.*` cross-references (e.g. a PSP bus
+    iface) relative to the file's location. Without it, imports can't be
+    located and references into imported packages show as unresolved. The
+    provider resolves bus packages via their `catalog.json` index, so even
+    a 1000-PDU import stays cheap (no full-package parse)."""
     mm = load_metamodel()
     try:
-        return mm.model_from_str(text), None
+        return mm.model_from_str(text, file_name=file_path), None
     except (TextXSyntaxError, TextXSemanticError, TextXError) as e:
         return None, e
 
@@ -314,7 +326,7 @@ def create_server() -> LanguageServer:
         )
 
     def _refresh(uri: str, text: str) -> _DocState:
-        model, err = _parse(text)
+        model, err = _parse(text, str(_uri_to_path(uri)))
         state = _DocState(text=text, model=model, error=err)
         ws.docs[uri] = state
         _publish(uri, state)
@@ -346,7 +358,7 @@ def create_server() -> LanguageServer:
                     text = art.read_text()
                 except OSError:
                     continue
-                model, err = _parse(text)
+                model, err = _parse(text, str(art))
                 ws.docs[uri] = _DocState(text=text, model=model, error=err)
                 loaded += 1
         logger.info(

@@ -14,25 +14,40 @@
 // declared exactly once even though main.cc includes both node
 // headers. Each node header #includes this (guarded by #pragma once),
 // so a node header used standalone still has its codecs.
+//
+// A codec keys its service_id on the proto type name in the message's
+// DEFINING package — so an inbound type imported from another package
+// (e.g. a PSP bus PDU) declares its codec under that package's name,
+// matching the sender. The #include set below covers every defining
+// package an inbound type comes from.
 
 #pragma once
 
 #include "RemoteCodec.hh"   // DEMO_DECLARE_REMOTE_CODEC
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
+{% set _incl = [model.package_subpath ~ "/" ~ model.fc_short] -%}
+{%- for n in model.nodes if n.reporting -%}
+{%- for d in n.unique_receiver_data() -%}
+{%- set hdr = d.proto_subpath ~ "/" ~ d.proto_leaf -%}
+{%- if d.proto_subpath and hdr not in _incl %}{{ _incl.append(hdr) or "" }}
+#include "{{ hdr }}.pb.h"
+{%- endif -%}
+{%- endfor -%}
+{%- endfor %}
 
 {% set _codecs = [] -%}
 {%- for n in model.nodes if n.reporting -%}
 {%- for op in n.unique_handler_ops() -%}
-{%- if op.req_msg and op.req_msg not in _codecs %}{{ _codecs.append(op.req_msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.req_msg }})
+{%- if op.req_proto and op.req_proto not in _codecs %}{{ _codecs.append(op.req_proto) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ op.req_proto }})
 {%- endif -%}
-{%- if op.rep_msg and op.rep_msg not in _codecs %}{{ _codecs.append(op.rep_msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ op.rep_msg }})
+{%- if op.rep_proto and op.rep_proto not in _codecs %}{{ _codecs.append(op.rep_proto) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
 {%- endif -%}
 {%- endfor -%}
 {%- for d in n.unique_receiver_data() -%}
-{%- if d.msg not in _codecs %}{{ _codecs.append(d.msg) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ model.proto_package }}_{{ d.msg }})
+{%- if d.proto_type and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
+DEMO_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}

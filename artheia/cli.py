@@ -35,8 +35,8 @@ def main() -> None:
     help="Parse and print an .art file as a tree.\n\n"
          "Walks the merged model (package.art + component.art) and prints\n"
          "clusters → compositions → nodes → ports → messages, tree(1)-style.\n\n"
-         "By default, empty-body forward-decls (`cluster Services { }`,\n"
-         "`composition Supervisor { }`) are resolved RECURSIVELY: the parser\n"
+         "By default, `extern` forward-decls (`extern cluster Services { }`,\n"
+         "`extern composition Supervisor { }`) are resolved RECURSIVELY: the parser\n"
          "scans the directory containing the input file (following symlinks)\n"
          "for the real definition and substitutes it in. Unresolved\n"
          "forward-decls are an error.\n\n"
@@ -146,25 +146,16 @@ def _kind_family(el) -> str | None:
 
 
 def _is_stub(el) -> bool:
-    """True if *el* is an empty-body forward-decl.
+    """True if *el* is an `extern` forward-declaration.
 
-    Recognized: cluster / composition / node / interface (both
-    senderReceiver and clientServer flavors). Any non-empty body
-    means this IS the real definition.
+    Forward-decls are now marked EXPLICITLY with the `extern` keyword
+    (cluster / composition / node / interface). The old empty-body
+    heuristic is retired: an empty body is no longer magic — say
+    `extern` when you mean a forward declaration. This keeps the
+    senderReceiver case honest (an empty `interface X { }` is a real,
+    payload-less interface; only `extern interface X { }` is a stub).
     """
-    kind = type(el).__name__
-    if kind in ("ClusterDecl", "CompositionDecl"):
-        return not list(getattr(el, "elements", []))
-    if kind == "NodeDecl":
-        # A real node always has at least a `ports { ... }` block (may be
-        # empty), plus typically tipc/tag/etc. The stub form `node atomic
-        # X { }` has no ports attribute at all.
-        return getattr(el, "ports", None) is None and getattr(el, "tipc", None) is None
-    if kind == "SenderReceiverInterface":
-        return not list(getattr(el, "data", []))
-    if kind == "ClientServerInterface":
-        return not list(getattr(el, "operations", []))
-    return False
+    return bool(getattr(el, "extern", False))
 
 
 def _collect_imported_models(art_file: str, model) -> list:

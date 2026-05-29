@@ -28,6 +28,28 @@ TopLevelElement:
     | GatewayRouteDecl
 ;
 
+// ---- 0. Forward declarations (`extern`) ------------------------------------
+//
+// A top-level decl may be prefixed with `extern` to mark it a FORWARD
+// DECLARATION — the name is introduced into the local file's scope, but
+// the real definition lives in an imported package and is substituted by
+// the loader's scope provider at resolution time. This is the .art
+// analogue of a C++ forward declaration / `extern`: it says "this symbol
+// exists; the linker (here: the import resolver) will supply the body."
+//
+// Semantics (enforced post-parse in model/loader.py, not in the grammar):
+//   - `extern` decls MUST have an empty body (no ports/tipc on a node, no
+//     elements in a composition/cluster, no data/operations on an
+//     interface). A non-empty body means it's a real definition, not a
+//     forward decl, so `extern` is rejected there.
+//   - The matching real definition MUST be reachable through an `import`
+//     line, or resolution errors loudly.
+//
+// `extern` is the explicit replacement for the old empty-body heuristic
+// (an empty `node X { }` / `composition X { }` was silently treated as a
+// stub). Empty bodies are no longer magic — say `extern` when you mean a
+// forward declaration.
+
 // `MessageOrEnum` lets a single cross-reference resolve to either a
 // `MessageDecl` or an `EnumDecl`. textX treats this as an abstract rule:
 // any field declared `[MessageOrEnum|FQN]` will resolve through it.
@@ -85,6 +107,7 @@ InterfaceDecl:
 ;
 
 SenderReceiverInterface:
+    extern?='extern'
     'interface' 'senderReceiver' name=ID '{'
         data*=DataElement
     '}'
@@ -95,6 +118,7 @@ DataElement:
 ;
 
 ClientServerInterface:
+    extern?='extern'
     'interface' 'clientServer' name=ID '{'
         operations*=OperationDecl
     '}'
@@ -118,9 +142,9 @@ ParamDirection:
 // NodeDecl — an atomic node (one OS process / one GenServer-derived
 // daemon) addressed by a unique TIPC type/instance pair.
 //
-// Prototype inheritance (`extends`): if a derived node declares the
+// Prototype derivation (`prototype`): if a derived node declares the
 // same shape as another with just a different TIPC address, write it
-// as `node atomic Foo extends Base { tipc ... }`. The derived node
+// as `node atomic Foo prototype Base { tipc ... }`. The derived node
 // inherits ports, statem, config, params, kick_off, requires_timers
 // from `Base` UNLESS the derived re-declares them (the derived's
 // declaration replaces the base's wholesale; there's no field-level
@@ -128,14 +152,25 @@ ParamDirection:
 // model reaches the generators, a derived node looks identical to
 // a hand-rolled equivalent.
 //
+// `prototype` is attribute-REPLACEMENT, not behavioural extension (so
+// the keyword deliberately is NOT `extends`): the common case is a
+// second instance of the same node shape at a different TIPC address.
+// A derived node MAY omit tipc to inherit the base's; normally it
+// states its own.
+//
 // Common use: two instances of the same node on different machines
 // (TIPC kernel still routes by type/instance — these are DIFFERENT
 // nodes with the same SHAPE). Or: one base node that two specialised
 // daemons share before overriding behaviour. The latter is rare in
 // practice — most "derived" nodes only override tipc.
 NodeDecl:
-    'node' kind=NodeKind name=ID ('extends' base=[NodeDecl|FQN])? '{'
-        tipc=TipcAddress
+    extern?='extern'
+    'node' kind=NodeKind name=ID ('prototype' base=[NodeDecl|FQN])? '{'
+        // tipc is grammar-OPTIONAL but loader-REQUIRED for a real
+        // (non-extern) node, UNLESS a `prototype <Base>` supplies it via
+        // inheritance. An `extern node X { }` carries no tipc at all.
+        // See model/loader.py for the enforced invariant.
+        (tipc=TipcAddress)?
         // Lifecycle / dependency annotations. Each is independently
         // optional; the generator uses them to drop hand-tables
         // (which nodes auto-start, which need TimerService).
@@ -306,6 +341,7 @@ ClientPort:
 // ---- 4. Compositions (netgraph source) -------------------------------------
 
 CompositionDecl:
+    extern?='extern'
     'composition' name=ID '{'
         elements*=CompositionElement
     '}'
@@ -361,6 +397,7 @@ PortRef:
 // is the replacement.
 
 ClusterDecl:
+    extern?='extern'
     'cluster' name=ID '{'
         elements*=ClusterElement
     '}'
