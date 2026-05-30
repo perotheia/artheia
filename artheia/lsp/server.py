@@ -67,7 +67,7 @@ _KEYWORDS = [
     "cluster",
     "params",
     "reliable", "best_effort",
-    "kick_off", "requires_timers", "reporting", "config", "extern",
+    "requires_timers", "reporting", "config", "extern",
     "on", "process",
     "bus", "gateway_route", "signal",
     "statem", "states", "initial", "event", "timeout", "after", "halt",

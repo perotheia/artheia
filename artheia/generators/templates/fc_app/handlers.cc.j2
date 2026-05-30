@@ -16,6 +16,17 @@
 namespace {{ model.cxx_namespace }} {
 
 {% set n = node %}
+// ---- OTP init/1 — runs once on the node thread after start(), before
+//      the first message. Bootstrap a self-driving node's work loop here
+//      (e.g. ::theia::runtime::post_info(*this, "tick")); leave empty for a
+//      passive node. State fields live in impl/{{ n.name }}_state.hh.
+void {{ n.name }}::init({{ n.name }}State& /*s*/) {
+}
+
+// ---- string handle_info — the post_info()/send_after() tick path.
+void {{ n.name }}::handle_info(const char* /*info*/, {{ n.name }}State& /*s*/) {
+}
+
 {# ---- handle_cast (one per unique receiver-data message type) ---- #}
 {%- for d in n.unique_receiver_data() %}
 void {{ n.name }}::handle_cast(const {{ d.msg }}& /*msg*/,

@@ -8,6 +8,24 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
+# State structs (write-once, app-owned). A leaf header-only target so
+# BOTH the lib (which #includes "impl/<Node>_state.hh" as the GenServer
+# State type) and the impl can depend on it WITHOUT a lib<->impl cycle:
+#   {{ model.fc_short }}_state  ←  lib  ←  impl
+cc_library(
+    name = "{{ model.fc_short }}_state",
+    hdrs = [
+{%- for n in model.nodes if not n.statem %}
+        "{{ n.name }}_state.hh",
+{%- endfor %}
+    ],
+    # The lib #includes these as "impl/<Node>_state.hh", so the include
+    # root is the FC out_dir (one above impl/).
+    includes = [".."],
+    copts = ["-std=c++17", "-fPIC"],
+    deps = ["//platform/runtime:runtime"],
+)
+
 cc_library(
     name = "{{ model.fc_short }}_impl",
     srcs = [

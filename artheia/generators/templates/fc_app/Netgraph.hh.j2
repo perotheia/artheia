@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include "NodeRef.hh"   // demo::runtime::TipcAddr + cast(Daemon&, Msg, TipcAddr)
+#include "NodeRef.hh"   // TipcAddr + cast(Daemon&,Msg,TipcAddr); RemoteRef<>
 
 namespace {{ model.cxx_namespace }}::netgraph {
 
@@ -41,9 +41,22 @@ namespace {{ model.cxx_namespace }}::netgraph {
 {%- if d.node not in seen -%}
 {%- set _ = seen.append(d.node) %}
 // Peer {{ d.node }} (reached from {{ n.name }}'s outbound connects).
-inline constexpr demo::runtime::TipcAddr {{ d.node|lower }} = {
+//
+// Cast (fire-and-forget): cast(*this, msg, netgraph::{{ d.node|lower }}).
+inline constexpr ::theia::runtime::TipcAddr {{ d.node|lower }} = {
     {{ d.tipc_type }}u, {{ d.tipc_instance }}u
 };
+// Call (sync request/reply): a RemoteRef the caller declares + connect()s,
+//   netgraph::{{ d.node }}Ref ref; ref.connect();
+//   auto r = ::theia::runtime::call<Reply>(ref, req, act, timeout_ms);
+// RemoteRef tags its trace with the peer's kNodeName only, so a tiny
+// local peer-tag suffices — no need to pull in the peer node's full lib
+// header (which, cross-process, isn't even in this app's tree).
+struct {{ d.node }}_peer {
+    static constexpr const char* kNodeName = "{{ d.node_snake }}";
+};
+using {{ d.node }}Ref =
+    ::theia::runtime::RemoteRef<{{ d.node }}_peer, {{ d.tipc_type }}u, {{ d.tipc_instance }}u>;
 
 {% endif -%}
 {%- endfor -%}

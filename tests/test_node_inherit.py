@@ -80,14 +80,11 @@ def test_derived_overrides_ports():
 
 
 def test_derived_inherits_flags():
-    # Note: kick_off comes BEFORE requires_timers in the grammar (the
-    # body's optional fields are positional).
     m = parse_string(
         """
         package test.inh
         node atomic Base {
             tipc type=0x10010001 instance=0
-            kick_off
             requires_timers
         }
         node atomic Derived prototype Base {
@@ -97,7 +94,6 @@ def test_derived_inherits_flags():
     )
     derived = _node(m, "Derived")
     assert bool(derived.requires_timers) is True
-    assert bool(derived.kick_off) is True
 
 
 def test_derived_inherits_statem():

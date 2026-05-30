@@ -102,9 +102,12 @@ class _Port:
 
 @dataclass
 class _SignalDest:
-    node: str             # target node name (informational)
+    node: str             # target node TYPE name (e.g. "CounterNode")
     tipc_type: str        # "0x..." string from .art tipc decl
     tipc_instance: str    # likewise
+    # The peer's runtime kNodeName (snake form, e.g. "counter_node") —
+    # used by the netgraph RemoteRef peer-tag for trace tagging.
+    node_snake: str = ""
 
 
 @dataclass
@@ -127,13 +130,15 @@ class _NodeView:
     # emit path consults the filter map (#355). reporting=false
     # nodes have no trace API.
     reporting: bool = True
-    # Fall-through node (default False). When True, gen-app emits a
-    # handle_info(const InfoMsg&, State&) declaration on the daemon
-    # (body in impl) so the node receives inbound TIPC frames that
-    # matched no register_cast/register_call. The TEST PROBE sets this;
-    # a normal node leaves it False and the GenServer base CRITICAL-errors
-    # on any unrouted frame (netgraph/wiring disagreement).
-    fallthrough: bool = False
+    # (The `fallthrough` field was removed along with the wire-info path.
+    # An unrouted inbound frame is dropped with a CRITICAL log in TipcMux;
+    # there is no handle_info(const InfoMsg&) clause to emit.)
+    # Needs a TimerService (.art `requires_timers`). When True the main
+    # publishes the process TimerService (set_process_timers) so the
+    # node's handlers / init() can send_after() / cancel_timer() via
+    # process_timers(). (kick_off retired — startup work is now the OTP
+    # init() callback the runtime drives.)
+    requires_timers: bool = False
     # AUTOSAR Log&Trace 3-letter Context ID — stamped onto every log
     # record. Falls back to the node name itself when the .art has
     # no `tag = "..."` field, so every node always has a non-empty
@@ -202,6 +207,39 @@ class _NodeView:
                 out.append(d)
         return out
 
+    def unique_outbound_data(self) -> list[_DataEl]:
+        """OUTBOUND message types this node sends — sender-port data
+        (cast) + client-port request types (call), deduplicated.
+
+        A sender/caller must also have a RemoteCodec<Msg> to ENCODE the
+        message it puts on the wire (`cast(*this, msg, addr)` /
+        `call(ref, req, ...)`), not just inbound types. Without this a
+        send-only node (e.g. an incrementer that only casts Inc) has an
+        empty codec header and `RemoteCodec<Inc>` is incomplete at the
+        cast site.
+        """
+        seen: set[str] = set()
+        out: list[_DataEl] = []
+        for p in self.ports:
+            if p.kind == "sender":
+                for d in p.data:
+                    if d.msg not in seen:
+                        seen.add(d.msg)
+                        out.append(d)
+            elif p.kind == "client":
+                for op in p.ops:
+                    # A client encodes the request AND decodes the reply,
+                    # so it needs a RemoteCodec for both.
+                    if op.req_msg and op.req_msg not in seen:
+                        seen.add(op.req_msg)
+                        out.append(_DataEl(name=op.name, msg=op.req_msg,
+                                           proto_type=op.req_proto))
+                    if op.rep_msg and op.rep_msg not in seen:
+                        seen.add(op.rep_msg)
+                        out.append(_DataEl(name=op.name, msg=op.rep_msg,
+                                           proto_type=op.rep_proto or ""))
+        return out
+
 
 @dataclass
 class _ModelView:
@@ -209,7 +247,7 @@ class _ModelView:
 
     # Filesystem / namespace bookkeeping.
     art_package: str              # source spec, e.g. system.services.sm
-    proto_package: str            # libc-safe rewrite (services_services_sm)
+    proto_package: str            # flattened underscore form (system_services_sm)
     package_subpath: str          # path-form: system/services/sm
     fc_short: str                 # leaf segment: sm
     cxx_namespace: str            # one-segment underscore form (matches .pb.h)
@@ -265,7 +303,7 @@ def _proto_type_of(msg_ref) -> tuple[str, str, str]:
     service_id (a hash of this name) matches on both sender and receiver
     regardless of which FC imported it."""
     pkg = _defining_package(msg_ref)
-    proto_pkg = _proto_package_name(pkg)              # libc-safe lead rename
+    proto_pkg = _proto_package_name(pkg)              # source-true package name
     flat = proto_pkg.replace(".", "_") + "_" + msg_ref.name
     subpath = "/".join(pkg.split(".")) if pkg else ""
     leaf = pkg.split(".")[-1] if pkg else msg_ref.name
@@ -285,9 +323,8 @@ def _sr_data(iface) -> list[_DataEl]:
 def _cs_ops(iface) -> list[_IfaceOp]:
     out: list[_IfaceOp] = []
     for op in iface.operations:
-        # CS ops have one "in" param + an optional `returns` clause.
-        # The grammar allows multiple params but every existing FC
-        # uses exactly one; codegen treats the first `in` as the req.
+        # CS ops carry an optional `in` param + an optional `returns`.
+        # codegen treats the first `in` as the request message.
         req = ""
         req_proto = ""
         for p in op.params:
@@ -295,11 +332,28 @@ def _cs_ops(iface) -> list[_IfaceOp]:
                 req = _local_msg(p.type)
                 req_proto, _, _ = _proto_type_of(p.type)
                 break
+        # Paramless operation (e.g. `operation Get() returns GetReply`):
+        # the request IS a message named after the operation (`message
+        # Get { }`). Resolve it so register_call<Req,Rep> has a real Req
+        # type — otherwise the main emits `register_call<, Rep>`. The
+        # request lives in the iface's own package.
+        if not req:
+            req = op.name
+            req_proto = _op_request_proto(iface, op.name)
         rep = _local_msg(op.returns) if op.returns else None
         rep_proto = _proto_type_of(op.returns)[0] if op.returns else None
         out.append(_IfaceOp(name=op.name, req_msg=req, rep_msg=rep,
                             req_proto=req_proto, rep_proto=rep_proto))
     return out
+
+
+def _op_request_proto(iface, op_name: str) -> str:
+    """Proto type for a paramless operation's implicit request message
+    (named after the operation), qualified by the iface's defining
+    package — so it matches the message the proto generator emits."""
+    pkg = _defining_package(iface)
+    proto_pkg = _proto_package_name(pkg) if pkg else ""
+    return (proto_pkg.replace(".", "_") + "_" + op_name) if proto_pkg else op_name
 
 
 def _port_view(p) -> _Port:
@@ -332,9 +386,6 @@ def _node_view(node) -> _NodeView:
     # always populated as the string "true" or "false" by the time
     # we see it. Default-true: missing/empty is treated as reporting.
     reporting_raw = (getattr(node, "reporting", "") or "true").lower()
-    # Fall-through (default false). Unlike reporting, there's no model
-    # post-process default, so missing/empty is simply False.
-    fallthrough_raw = (getattr(node, "fallthrough", "") or "false").lower()
     # AUTOSAR Log&Trace tag (#383). The .art's `tag = "..."` is the
     # canonical source; when absent we fall back to the node name so
     # the generated logger always has a non-empty context.
@@ -346,7 +397,9 @@ def _node_view(node) -> _NodeView:
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
         reporting=(reporting_raw == "true"),
-        fallthrough=(fallthrough_raw == "true"),
+        # textX stores the optional requires_timers flag truthy when the
+        # keyword was present, else False/"". Coerce to a real bool.
+        requires_timers=bool(getattr(node, "requires_timers", False)),
         # NodeKind from the .art: `node runnable Foo` → GenRunnable; the
         # default `node atomic` → GenServer (or GenStateM with a statem block).
         runnable=(getattr(node, "kind", "atomic") == "runnable"),
@@ -373,17 +426,68 @@ def _messages_used(nodes: list[_NodeView]) -> list[str]:
     return sorted(seen)
 
 
+def _nodes_prototyped_by_composition(model, composition_name: str) -> set[str]:
+    """Return the node-type names a SINGLE named composition prototypes.
+
+    Sibling to :func:`lib_app._nodes_instantiated_by_compositions`, which
+    unions ALL compositions. This one scopes to exactly one composition —
+    the per-process partitioning `gen-app --kind fc --composition <Name>`
+    needs (one composition = one process / one app dir). Nested
+    `composition Foo bar` refs are flattened via
+    :func:`flatten_composition`, so a composition built out of
+    sub-compositions still resolves its full prototyped node set.
+
+    Raises ``ValueError`` if no composition with that name exists, or if
+    the composition prototypes no nodes (an empty partition is almost
+    certainly a typo and would emit a node-less, un-bootable app).
+    """
+    from ..model.flatten import flatten_composition
+
+    comp = None
+    for el in model.elements:
+        if el.__class__.__name__ == "CompositionDecl" and el.name == composition_name:
+            comp = el
+            break
+    if comp is None:
+        available = sorted(
+            el.name for el in model.elements
+            if el.__class__.__name__ == "CompositionDecl"
+        )
+        raise ValueError(
+            f"--composition {composition_name!r}: no such composition. "
+            f"Available compositions: {', '.join(available) or '(none)'}."
+        )
+
+    prototypes, _connects = flatten_composition(comp)
+    names: set[str] = set()
+    for proto in prototypes:
+        # proto.type is the resolved NodeDecl reference; .name is the
+        # node-type name (e.g. "CounterNode") — the same key the netgraph
+        # uses for its per-node signal slice, so the two line up.
+        t = getattr(proto, "type", None)
+        n = getattr(t, "name", None)
+        if n:
+            names.add(n)
+    if not names:
+        raise ValueError(
+            f"--composition {composition_name!r} prototypes no nodes; "
+            f"nothing to emit. Add `prototype <Node> <name>` lines to it."
+        )
+    return names
+
+
 def _build_model_view(art_path: Path,
-                       cxx_namespace_override: Optional[str] = None) -> _ModelView:
+                       cxx_namespace_override: Optional[str] = None,
+                       composition: Optional[str] = None) -> _ModelView:
     model = parse_file(str(art_path))
     art_package = model.name or "artheia"
     parts = art_package.split(".")
     fc_short = parts[-1]
     # nanopb emits C struct names prefixed with the underscore-flat
-    # form of the proto `package` line — which itself is the libc-safe
-    # rewrite of the .art package. So for `system.services.sm` we go
-    # via _proto_package_name → "services.services.sm" → flatten to
-    # "services_services_sm". That's the prefix glued to every typedef.
+    # form of the proto `package` line — which mirrors the .art package
+    # verbatim. So for `system.services.sm` we go via
+    # _proto_package_name → "system.services.sm" → flatten to
+    # "system_services_sm". That's the prefix glued to every typedef.
     proto_pkg = _proto_package_name(art_package).replace(".", "_")
     # User-facing C++ namespace. Defaults to the .art-package as one
     # underscore-flat identifier (so `system.services.sm` ⇒ the single
@@ -395,11 +499,27 @@ def _build_model_view(art_path: Path,
     cxx_ns = cxx_namespace_override or art_package.replace(".", "_")
     daemon_class = ""
 
+    # Per-composition partitioning (one composition = one process / one
+    # app dir). When `composition` is given, restrict the emitted node
+    # set to exactly that composition's prototyped node-types; every
+    # other NodeDecl in the .art (sibling compositions' nodes, plus any
+    # cross-package forward-decl stubs) is skipped. When None, keep the
+    # legacy behaviour: emit every NodeDecl. The netgraph below is still
+    # built over the WHOLE model, so a selected node's cross-process
+    # peers (cluster connects to nodes in OTHER compositions) survive in
+    # its signal slice — those peers are reached by TipcAddr, never
+    # constructed locally.
+    wanted: Optional[set[str]] = None
+    if composition is not None:
+        wanted = _nodes_prototyped_by_composition(model, composition)
+
     nodes: list[_NodeView] = []
     has_statem = False
     state_enum = ""
     for el in model.elements:
         if el.__class__.__name__ == "NodeDecl":
+            if wanted is not None and el.name not in wanted:
+                continue
             nv = _node_view(el)
             nodes.append(nv)
             if not daemon_class:
@@ -425,6 +545,9 @@ def _build_model_view(art_path: Path,
                     node=d["node"],
                     tipc_type=d["tipc_type"],
                     tipc_instance=d["tipc_instance"],
+                    # Peer kNodeName = _to_snake(node type) — matches the
+                    # `static constexpr kNodeName` the generated peer emits.
+                    node_snake=_to_snake(d["node"]),
                 )
                 for d in info.get("destinations", [])
             ]
@@ -482,6 +605,7 @@ def generate_fc(
     manifest_out: Optional[str | Path] = None,
     proto_out: Optional[str | Path] = None,
     cxx_namespace: Optional[str] = None,
+    composition: Optional[str] = None,
     force: bool = False,
 ) -> dict[str, list[str]]:
     """Generate the FC scaffold for a single .art file.
@@ -502,6 +626,16 @@ def generate_fc(
                          ``platform/proto/``). ``None`` skips proto
                          emission. The proto goes under
                          ``<proto_out>/<art-pkg-as-path>/<leaf>.proto``.
+    :param composition:  When set, emit ONE app for a SINGLE composition —
+                         only that composition's prototyped node-types get
+                         lib/impl/main/proto. Used for per-process layout
+                         (one composition = one process / one app dir).
+                         Cross-process peers in OTHER compositions are
+                         reached by TipcAddr (the netgraph still carries
+                         them), never constructed in this app's main.cc.
+                         ``None`` keeps the legacy whole-.art behaviour.
+                         Raises ``ValueError`` for an unknown / empty
+                         composition.
     :param force:        Overwrite the impl slice (write-once after
                          first emit).
 
@@ -511,7 +645,17 @@ def generate_fc(
     art_path = Path(art_path)
     out_dir = Path(out_dir)
 
-    mv = _build_model_view(art_path, cxx_namespace_override=cxx_namespace)
+    # Ergonomics: with --composition, --out is the PARENT and the app dir
+    # is the composition name appended verbatim, so the user names the
+    # where (--out) and the what (--composition) once and the tool
+    # composes the path. e.g. --out up/tmp --composition Demo3WayP3 ->
+    # up/tmp/Demo3WayP3. Without --composition, --out is the app dir
+    # directly (legacy).
+    if composition is not None:
+        out_dir = out_dir / composition
+
+    mv = _build_model_view(art_path, cxx_namespace_override=cxx_namespace,
+                           composition=composition)
     # Derive the Bazel package prefix from --out, so generated cross-slice
     # labels (main → lib, impl → lib) point at the actual output tree, not
     # the hardcoded `services/<fc>/` it used to assume. Strip any leading
@@ -574,6 +718,15 @@ def generate_fc(
         p = lib_dir / f"{nv.name}_netgraph.hh"
         results[_write(p, env.get_template("Netgraph.hh.j2").render(**node_ctx),
                         overwrite=True)].append(str(p))
+        # State struct (write-once). APP-OWNED — the node's persistent
+        # fields are behaviour, not derivable from the .art, so the user
+        # owns this file and regen never clobbers it. lib/<Node>.hh
+        # #includes it. (statem nodes carry their data in the FSM holder,
+        # so no per-node state header for them.)
+        if not nv.statem:
+            p = impl_dir / f"{nv.name}_state.hh"
+            results[_write(p, env.get_template("state.hh.j2").render(**node_ctx),
+                            overwrite=force)].append(str(p))
         # Handler stubs (write-once). Per node, so adding node B never
         # clobbers node A's hand-written bodies.
         p = impl_dir / f"{nv.name}_handlers.cc"

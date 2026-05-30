@@ -150,10 +150,11 @@ def generate_package_proto(art_path: str | Path,
       (``system.services.sm`` → ``system/services/sm/sm.proto``)
       so the on-disk layout mirrors what the user wrote in .art.
       Apps include ``"system/services/sm/sm.pb.h"``.
-    * **Proto ``package`` declaration** uses the libc-safe rewrite
-      (``services.services.sm``) so protoc's generated C++ namespace
-      doesn't collide with libc's ``system()``. See
-      :data:`artheia.generators.proto._PROTO_PACKAGE_LEAD_RENAMES`.
+    * **Proto ``package`` declaration** is the source-true name
+      flattened to one underscore-joined identifier
+      (``system_services_sm``). protoc emits a single C++ namespace
+      from it, so there is no libc ``system()`` collision to dodge.
+      See :data:`artheia.generators.proto._PROTO_PACKAGE_LEAD_RENAMES`.
 
     The file ends up at::
 
@@ -172,8 +173,8 @@ def generate_package_proto(art_path: str | Path,
     from artheia.model import parse_file
     model = parse_file(str(art_path))
 
-    # Source spec name for the filesystem; rewritten name for the
-    # proto package decl. The two are deliberately divergent.
+    # Source spec name drives both the filesystem path (dotted →
+    # dirs) and the proto package decl (flattened → underscores).
     src_package = model.name or ""
     src_parts = src_package.split(".") if src_package else ["artheia"]
     proto_package = _proto_package_name(src_package)

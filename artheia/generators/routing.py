@@ -134,12 +134,12 @@ def _render_header(comp: _Composition, this_process: str,
 
     for r in self_proc.refs:
         lines.append(f"    // local: owned by this process")
-        lines.append(f"    demo::runtime::LocalRef<demo::{r.node_type}> {r.proto_name};")
+        lines.append(f"    theia::runtime::LocalRef<demo::{r.node_type}> {r.proto_name};")
     for p in other_procs:
         for r in p.refs:
             lines.append(f"    // remote: lives in process {p.name}")
             lines.append(
-                f"    demo::runtime::RemoteRef<demo::{r.node_type}, "
+                f"    theia::runtime::RemoteRef<demo::{r.node_type}, "
                 f"{r.tipc_type}u, {r.tipc_instance}u> {r.proto_name};"
             )
 

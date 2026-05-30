@@ -321,7 +321,8 @@ def _iface_directional_messages(iface, src_port_kind: str
     # ClientServerInterface
     out: list[tuple[str, str]] = []
     for op in iface.operations:
-        for p in op.params:
+        in_params = [p for p in op.params if getattr(p, "direction", "") == "in"]
+        for p in in_params:
             if src_port_kind == "ClientPort":
                 # Client sends request out; reply comes in (handled
                 # via the `returns` clause below).
@@ -329,6 +330,19 @@ def _iface_directional_messages(iface, src_port_kind: str
             elif src_port_kind == "ServerPort":
                 # Server receives request; reply goes out.
                 out.append(("in", p.type.name))
+        # Paramless operation (`operation Get() returns GetReply`): the
+        # request IS a message named after the operation. Without this,
+        # a client→server call across processes would have NO outbound
+        # destination in the netgraph, so the per-node netgraph header
+        # (which only emits "out" peers) wouldn't list the server — and
+        # `cast/call(*this, Get{}, netgraph::<server>)` wouldn't compile.
+        # Mirrors fc_app._cs_ops, which uses the op name as the request
+        # message for paramless ops.
+        if not in_params:
+            if src_port_kind == "ClientPort":
+                out.append(("out", op.name))
+            elif src_port_kind == "ServerPort":
+                out.append(("in", op.name))
         if op.returns is not None:
             if src_port_kind == "ClientPort":
                 out.append(("in", op.returns.name))

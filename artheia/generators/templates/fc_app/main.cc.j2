@@ -43,20 +43,32 @@ int main() {
     // push (#386) via process_logger().set_level on the node thread.
     auto logger = MakeContextLogger();
     if (const char* lvl = std::getenv("THEIA_LOG_LEVEL")) {
-        logger->set_level(::platform::runtime::parse_log_level(lvl));
+        logger->set_level(::theia::runtime::parse_log_level(lvl));
     }
-    ::platform::runtime::set_process_logger(logger);
+    ::theia::runtime::set_process_logger(logger);
     (void)logger;  // available for user handlers via RuntimeContext
 
-    demo::runtime::TimerService timers;
-    (void)timers;  // wired into the daemon if it needs send_after
+    ::theia::runtime::TimerService timers;
+{%- if model.nodes | selectattr("requires_timers") | list %}
+    // Publish the process TimerService so a `requires_timers` node's
+    // handlers / init() reach it via process_timers() — mirrors
+    // set_process_logger above. Set once, before any node starts.
+    ::theia::runtime::set_process_timers(&timers);
+{%- else %}
+    (void)timers;  // no node requires_timers
+{%- endif %}
 {% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
     // Config-service receiver (#386). A reporting node binds its TIPC
     // name and register_cast's the supervisor's control push; the cast
     // lands in GenServer's base handle_cast(LogLevelPush) on the node
     // thread. Same standard GwMessageHeader path as any app message —
     // no bespoke control frame.
-    demo::runtime::TipcMux config_mux;
+    ::theia::runtime::TipcMux config_mux;
+    // Publish the one per-app mux (the single epoll/select loop) so a
+    // handler's ad-hoc RemoteRef registers its call-reply fd here via
+    // process_mux() — without it a synchronous call(ref,...) from inside
+    // a handler would never get its reply pumped.
+    ::theia::runtime::set_process_mux(&config_mux);
 {% endif %}
 {% for n in model.nodes %}
     {{ n.name }} {{ n.snake }};

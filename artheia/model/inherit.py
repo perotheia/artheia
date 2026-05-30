@@ -8,7 +8,7 @@ This module flattens that link. After resolve, the derived node
 LOOKS like a self-contained node — generators consume it without
 any awareness of the prototype relationship. The flattening is
 in-place mutation on the textX model object: the derived node
-gains the base's ports / params / statem / config / kick_off /
+gains the base's ports / params / statem / config /
 requires_timers / tipc attributes IF and only IF the derived didn't
 declare its own.
 
@@ -46,7 +46,7 @@ def _is_present(value: Any) -> bool:
     textX's container conventions:
       - list-valued fields (ports, params) default to []
       - object-valued fields (statem, config) default to None
-      - bool-valued fields (kick_off, requires_timers) default to False
+      - bool-valued fields (requires_timers) default to False
 
     "Present" means the derived's value diverges from the empty
     default — meaning the user typed it.
@@ -155,10 +155,8 @@ def _copy_inherited_fields(*, src, dst) -> None:
     # derived node may omit tipc to reuse the base's.
     if getattr(dst, "tipc", None) is None and getattr(src, "tipc", None) is not None:
         dst.tipc = src.tipc
-    # Optional bool flags. Inherited only if dst didn't say either.
-    # Since they default to False, "user typed it" === "value is True".
-    if not _is_present(dst.kick_off) and _is_present(src.kick_off):
-        dst.kick_off = src.kick_off
+    # Optional bool flag. Inherited only if dst didn't say it.
+    # Since it defaults to False, "user typed it" === "value is True".
     if not _is_present(dst.requires_timers) and _is_present(src.requires_timers):
         dst.requires_timers = src.requires_timers
 

@@ -7,7 +7,7 @@
 //
 // This template is the statem-aware sibling of Daemon.hh.j2 — it
 // fires when this node's .art NodeDecl carries a `statem { ... }`
-// block. The daemon derives from demo::runtime::GenStateM<T,S,D> and
+// block. The daemon derives from ::theia::runtime::GenStateM<T,S,D> and
 // the transition table is encoded as switch-on-state per event type
 // (one handle_event overload per declared event type).
 
@@ -111,14 +111,14 @@ class {{ n.name }};
 //     ({{ n.name }}State::{{ n.statem.initial }})
 //   - one handle_event overload per declared event type
 //     ({% for blk in n.statem.blocks %}{% for r in blk.rules %}{%- if r.event_fqn %}{{ r.event_fqn.split(".")[-1] }}{% if not loop.last %}, {% endif %}{%- endif %}{% endfor %}{% if not loop.last %}, {% endif %}{% endfor %})
-//   - handle_event for demo::runtime::StateTimeoutMsg<{{ n.name }}State>
+//   - handle_event for ::theia::runtime::StateTimeoutMsg<{{ n.name }}State>
 //     covering states with `timeout → ...` rules
 //   - subscribe/unsubscribe/broadcast helpers for sender ports
 //
 // User-overridable (in impl/):
 //   - on_enter(new, old, data) — side effects (broadcast, log, persist)
 //   - any handle_event overload (if the static table needs a guard)
-class {{ n.name }} : public demo::runtime::GenStateM<{{ n.name }},
+class {{ n.name }} : public ::theia::runtime::GenStateM<{{ n.name }},
                                                        {{ n.name }}State,
                                                        {{ n.name }}Data> {
 public:
@@ -137,15 +137,15 @@ public:
     // Delegates to the process-wide Tracer per #355; see the
     // non-statem Daemon template for full semantics.
     void trace_enable(const char* msg_type, bool enabled) {
-        ::demo::runtime::tracer_for(kNodeName).trace_enable(
+        ::theia::runtime::tracer_for(kNodeName).trace_enable(
             msg_type, enabled);
     }
     bool trace_enabled(const char* msg_type) const {
-        return ::demo::runtime::tracer_for(kNodeName)
+        return ::theia::runtime::tracer_for(kNodeName)
             .trace_filter_passes(msg_type);
     }
     void trace_clear_all() {
-        ::demo::runtime::tracer_for(kNodeName).trace_clear_all();
+        ::theia::runtime::tracer_for(kNodeName).trace_clear_all();
     }
 
     // Keep the framework's config-service handler
@@ -154,7 +154,7 @@ public:
     // register_cast<LogLevelPush> wouldn't resolve. Same name-hiding
     // guard as the handle_event using-decl below. GenStateM derives
     // from GenServer, so the handler is inherited.
-    using demo::runtime::GenStateM<{{ n.name }},
+    using ::theia::runtime::GenStateM<{{ n.name }},
                                     {{ n.name }}State,
                                     {{ n.name }}Data>::handle_cast;
 {% endif %}
@@ -165,7 +165,7 @@ public:
 
     // Keep base-class handle_event(StateTimeoutMsg) visible — derived
     // overloads otherwise hide it (C++ name hiding).
-    using demo::runtime::GenStateM<{{ n.name }},
+    using ::theia::runtime::GenStateM<{{ n.name }},
                                     {{ n.name }}State,
                                     {{ n.name }}Data>::handle_event;
 
@@ -185,23 +185,23 @@ public:
 
 {% for msg, rules in events_by_msg.items() %}
     // {{ msg }} — handled from: {% for r in rules %}{{ r.state }} → {% if r.target.halt %}halt{% else %}{{ r.target.state }}{% if r.target.timeout_ms %} after {{ r.target.timeout_ms }}ms{% endif %}{% endif %}{% if not loop.last %} | {% endif %}{% endfor %}
-    demo::runtime::EventResult<{{ n.name }}State> handle_event(
+    ::theia::runtime::EventResult<{{ n.name }}State> handle_event(
             {{ n.name }}State s, const {{ msg }}& /*e*/,
             {{ n.name }}Data& /*d*/) {
 {%- for r in rules %}
         if (s == {{ n.name }}State::{{ r.state }}) {
 {%- if r.target.halt %}
-            return demo::runtime::halt<{{ n.name }}State>();
+            return ::theia::runtime::halt<{{ n.name }}State>();
 {%- elif r.target.timeout_ms %}
-            return demo::runtime::transition_to<{{ n.name }}State>(
+            return ::theia::runtime::transition_to<{{ n.name }}State>(
                 {{ n.name }}State::{{ r.target.state }}, {{ r.target.timeout_ms }});
 {%- else %}
-            return demo::runtime::transition_to<{{ n.name }}State>(
+            return ::theia::runtime::transition_to<{{ n.name }}State>(
                 {{ n.name }}State::{{ r.target.state }});
 {%- endif %}
         }
 {%- endfor %}
-        return demo::runtime::keep_state<{{ n.name }}State>();
+        return ::theia::runtime::keep_state<{{ n.name }}State>();
     }
 {% endfor %}
 
@@ -215,9 +215,9 @@ public:
 {% if has_timeout %}
     // State-timeout dispatch — fires when a state's `after <ms>`
     // arms a TimerService timeout and the timer matures.
-    demo::runtime::EventResult<{{ n.name }}State> handle_event(
+    ::theia::runtime::EventResult<{{ n.name }}State> handle_event(
             {{ n.name }}State s,
-            const demo::runtime::StateTimeoutMsg<{{ n.name }}State>& /*e*/,
+            const ::theia::runtime::StateTimeoutMsg<{{ n.name }}State>& /*e*/,
             {{ n.name }}Data& /*d*/) {
         switch (s) {
 {%- for blk in n.statem.blocks -%}
@@ -225,19 +225,19 @@ public:
 {%- if rule.is_timeout %}
         case {{ n.name }}State::{{ blk.state }}:
 {%- if rule.target.halt %}
-            return demo::runtime::halt<{{ n.name }}State>();
+            return ::theia::runtime::halt<{{ n.name }}State>();
 {%- elif rule.target.timeout_ms %}
-            return demo::runtime::transition_to<{{ n.name }}State>(
+            return ::theia::runtime::transition_to<{{ n.name }}State>(
                 {{ n.name }}State::{{ rule.target.state }}, {{ rule.target.timeout_ms }});
 {%- else %}
-            return demo::runtime::transition_to<{{ n.name }}State>(
+            return ::theia::runtime::transition_to<{{ n.name }}State>(
                 {{ n.name }}State::{{ rule.target.state }});
 {%- endif %}
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}
         default:
-            return demo::runtime::keep_state<{{ n.name }}State>();
+            return ::theia::runtime::keep_state<{{ n.name }}State>();
         }
     }
 {% endif %}
@@ -264,7 +264,7 @@ public:
     // gets emitted once. Dispatch is by request type, not by port.
 {% for op in n.unique_handler_ops() -%}
     {{ op.rep_msg or "void" }} handle_call(const {{ op.req_msg }}& req,
-                                            demo::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& h);
+                                            ::theia::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& h);
 {% endfor %}
 
 private:

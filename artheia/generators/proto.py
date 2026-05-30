@@ -77,35 +77,29 @@ def _env() -> Environment:
     )
 
 
-# Top-level .art package names that would collide with libc / POSIX
-# identifiers when protoc maps the proto package to a C++ namespace.
-# The .art's `package system.supervisor` is the canonical FQN in the
-# Theia DSL (mirrors the directory layout under `platform/system/`),
-# but protoc would emit `namespace system { namespace supervisor`
-# which collides with libc's `int system(const char*)` from
-# <stdlib.h>. Anywhere a .pb.cc file includes <stdlib.h> (which is
-# nearly always — protobuf's own runtime does), the
-# fully-qualified `::system::supervisor::*` qualifier on protoc's
-# generated code parses as a reference to libc `system()` instead.
+# Top-level .art package-name segments that would collide with libc /
+# POSIX identifiers IF protoc emitted them as a nested C++ namespace.
 #
-# Fix: rewrite the leading segment to a non-colliding alias. Keep
-# the rest of the path so message names + import paths stay
-# intuitive ("services.supervisor.ChildState" reads cleanly).
-#
-# The mapping is intentionally narrow: we only redirect leading
-# segments that ARE known C/POSIX identifiers. New collisions can
-# be added here as needed.
-_PROTO_PACKAGE_LEAD_RENAMES: dict[str, str] = {
-    "system": "services",   # libc system()
-    # Add more as needed: e.g. "time": "services" if a `time.*`
-    # package ever gets coined.
-}
+# This used to rewrite a leading `system` → `services` to dodge libc's
+# `int system(const char*)`. That concern only applies to a *nested*
+# namespace (`::system::supervisor::`). The proto package decls Theia
+# emits are FLATTENED to a single underscore-joined identifier
+# (`package system_demo;` — see proto_package.py), so protoc produces
+# one namespace `system_demo` and one C-struct prefix `system_demo_*`.
+# A flattened `system_demo` / `system_demo_Inc` is never the bare token
+# `system`, so it cannot bind to libc `system()`. The rewrite was
+# therefore unnecessary and made package names read as `services_demo`
+# instead of the source-true `system_demo`. The table is now empty;
+# add an entry only if a genuinely-colliding flat name ever appears.
+_PROTO_PACKAGE_LEAD_RENAMES: dict[str, str] = {}
 
 
 def _proto_package_name(art_package: str) -> str:
-    """Map an .art package name to a proto package name that won't
-    collide with libc / POSIX identifiers when protoc emits a C++
-    namespace. See ``_PROTO_PACKAGE_LEAD_RENAMES`` for the table.
+    """Map an .art package name to its proto package name.
+
+    Identity today (no lead segments are rewritten — see
+    ``_PROTO_PACKAGE_LEAD_RENAMES`` for the history). Kept as the single
+    choke point so a future collision rewrite stays centralized.
 
     Empty / missing names fall through to "artheia".
     """
@@ -124,12 +118,12 @@ def package_subdir(art_package: str) -> Path:
     ``system/services/sm/`` — mirrors the source-tree layout
     (``services/system/sm/package.art``) verbatim.
 
-    Note: the .proto file's ``package`` declaration is the
-    libc-safe rewrite (``services.services.sm``), not this dir
+    Note: the .proto file's ``package`` declaration is the flattened
+    underscore-joined name (``system_services_sm``), not this dir
     name. They're independent — the filesystem mirrors the .art
     spec name, the C++ namespace is what protoc emits from the
-    rewritten declaration. See :data:`_PROTO_PACKAGE_LEAD_RENAMES`
-    for why.
+    flattened declaration. See :data:`_PROTO_PACKAGE_LEAD_RENAMES`
+    for the (now-empty) collision-rewrite history.
 
     Empty/missing names land at ``artheia/``.
     """

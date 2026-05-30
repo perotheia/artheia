@@ -145,7 +145,7 @@ ParamDirection:
 // Prototype derivation (`prototype`): if a derived node declares the
 // same shape as another with just a different TIPC address, write it
 // as `node atomic Foo prototype Base { tipc ... }`. The derived node
-// inherits ports, statem, config, params, kick_off, requires_timers
+// inherits ports, statem, config, params, requires_timers
 // from `Base` UNLESS the derived re-declares them (the derived's
 // declaration replaces the base's wholesale; there's no field-level
 // merging). The flatten step lives in the loader — by the time the
@@ -183,7 +183,10 @@ NodeDecl:
         // wins of always-on tracing (postmortem on uncovered bugs,
         // automatic flip from supervisor) outweigh the ~kB of code
         // we'd save by compile-time gating.
-        (kick_off?='kick_off')?
+        // (kick_off retired: a node's post-construction startup work is
+        // now the OTP init(State&) callback, run by the runtime on the
+        // node thread after start — see GenServer::dispatch_init_. A
+        // self-driving node just fills in its generated init() in impl.)
         (requires_timers?='requires_timers')?
         // AUTOSAR Reporting/Non-Reporting (at per-node-thread
         // granularity). Default = true: HeartbeatPublisher emits,
@@ -198,19 +201,13 @@ NodeDecl:
         // omitting the field is equivalent to writing
         // `reporting=true`.
         ('reporting' '=' reporting=BoolLit)?
-        // Fall-through node (default false). A normal node's GenServer
-        // CRITICAL-errors on any inbound TIPC frame whose service_id
-        // matched no register_cast/register_call — an unrouted message
-        // means the netgraph and the running wiring disagree. A
-        // `fallthrough=true` node instead receives those frames in
-        // handle_info(const InfoMsg&, State&) and decides what to do.
-        // This is for the TEST PROBE only: it impersonates/ drives
-        // arbitrary nodes, so by design it accepts traffic the port
-        // schema doesn't name. gen-app emits the handle_info(InfoMsg)
-        // declaration (body in impl) for such a node. Production FCs
-        // must NOT set this — silently accepting unknown messages is the
-        // exact bug the CRITICAL default guards against.
-        ('fallthrough' '=' fallthrough=BoolLit)?
+        // (The `fallthrough` flag was removed: the wire-info path it
+        // enabled — receiving an unrouted inbound frame as untyped bytes
+        // in handle_info(const InfoMsg&, State&) — no longer exists. An
+        // unrouted frame whose service_id matched no register_cast/
+        // register_call is dropped with a CRITICAL log in TipcMux. A test
+        // probe that needs to consume arbitrary traffic must declare a
+        // typed receiver port for each message it handles.)
         // AUTOSAR Log&Trace 3-letter Context ID (e.g. "SMX" for State
         // Management, "COM" for Communication Management). Stamped
         // onto every Logger record so a grep across multi-FC logs

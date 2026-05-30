@@ -12,6 +12,13 @@
 #include "Log.hh"      // sibling — per-FC ContextLogger + kLogTag
 #include "{{ model.fc_short }}_codecs.hh"   // FC-wide inbound RemoteCodecs (#387)
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
+// State held by the daemon — FIELDS are APP-OWNED (node behaviour, not
+// derived from the .art), so the struct lives in a WRITE-ONCE impl header
+// (seeded empty, never clobbered without --force) that the user fills in.
+// Included at GLOBAL scope (the header opens its own `namespace
+// {{ model.cxx_namespace }}`) so it isn't nested under this file's
+// namespace block — bound as the GenServer State type below.
+#include "impl/{{ node.name }}_state.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -73,19 +80,7 @@ using {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber =
 {% endfor -%}
 {% endfor %}
 
-// State held by the daemon — kept minimal; per-handler scratch
-// goes in impl. Future iterations push more here once the FC has
-// real persistent state needs.
-struct {{ n.name }}State {
-    {% if model.has_statem -%}
-    // statem-FCs carry their FSM data inside the gen_statem holder;
-    // this struct is reserved for daemon-side bookkeeping that
-    // mustn't survive an FSM transition.
-    {%- endif %}
-    int  reserved{0};
-};
-
-class {{ n.name }} : public demo::runtime::GenServer<{{ n.name }}, {{ n.name }}State> {
+class {{ n.name }} : public ::theia::runtime::GenServer<{{ n.name }}, {{ n.name }}State> {
 public:
     static constexpr const char* kNodeName = "{{ n.snake }}";
     static constexpr uint32_t kTipcType     = {{ n.tipc_type }}u;
@@ -104,7 +99,7 @@ public:
     // overload by name, so register_cast<LogLevelPush> wouldn't
     // resolve. This using-decl keeps both visible; overload resolution
     // then picks the right one per message type.
-    using demo::runtime::GenServer<{{ n.name }}, {{ n.name }}State>::handle_cast;
+    using ::theia::runtime::GenServer<{{ n.name }}, {{ n.name }}State>::handle_cast;
 
     // ---- Trace config (reporting=true only) -----------------------
     //
@@ -118,15 +113,15 @@ public:
     // consults the same filter inside Tracer; non-listed types are
     // dropped on the disabled fast path.
     void trace_enable(const char* msg_type, bool enabled) {
-        ::demo::runtime::tracer_for(kNodeName).trace_enable(
+        ::theia::runtime::tracer_for(kNodeName).trace_enable(
             msg_type, enabled);
     }
     bool trace_enabled(const char* msg_type) const {
-        return ::demo::runtime::tracer_for(kNodeName)
+        return ::theia::runtime::tracer_for(kNodeName)
             .trace_filter_passes(msg_type);
     }
     void trace_clear_all() {
-        ::demo::runtime::tracer_for(kNodeName).trace_clear_all();
+        ::theia::runtime::tracer_for(kNodeName).trace_clear_all();
     }
 {% endif %}
 
@@ -142,28 +137,15 @@ public:
 
     // ---- GenServer plumbing: terminate default
     //
-    // handle_info is NOT declared here on purpose. The GenServer base
-    // provides both clauses:
-    //   * handle_info(const char*, State&) — benign no-op for post_info().
-    //   * handle_info(const InfoMsg&, State&) — an inbound TIPC frame that
-    //     matched no register_cast/register_call: the base default is a
-    //     CRITICAL ERROR (an unrouted message ⇒ the netgraph and the
-    //     running wiring disagree). A node that legitimately handles
-    //     arbitrary traffic (the test probe) shadows the InfoMsg clause in
-    //     its impl; a normal FC node must NOT — letting an unknown message
-    //     through silently is exactly the bug this guards against.
     // terminate keeps an inline no-op default; impl may shadow it.
+    //
+    // There is NO handle_info(const InfoMsg&) clause: the wire-info path
+    // was removed. An inbound TIPC frame that matched no register_cast/
+    // register_call is dropped with a CRITICAL log in TipcMux — never
+    // delivered as untyped bytes. Cross-node traffic is exclusively typed
+    // cast/call. The only handle_info is the LOCAL string clause below
+    // (post_info / self-tick).
     void terminate(const char* /*reason*/, {{ n.name }}State& /*s*/) noexcept {}
-{% if n.fallthrough %}
-    // Fall-through node (.art `fallthrough = true`). This node accepts
-    // inbound TIPC frames that matched no port codec — declared here,
-    // body in impl/{{ n.name }}_handlers.cc. Shadows the GenServer base
-    // CRITICAL default so an unrouted frame is delivered, not aborted.
-    // The using-decl keeps the base string handle_info (post_info path)
-    // visible alongside this InfoMsg overload.
-    using demo::runtime::GenServer<{{ n.name }}, {{ n.name }}State>::handle_info;
-    void handle_info(const demo::runtime::InfoMsg& m, {{ n.name }}State& s);
-{% endif %}
 
     // ---- handle_cast / handle_call — declared here, body in impl
     //
@@ -179,6 +161,22 @@ public:
     {{ op.rep_msg or "void" }} handle_call(const {{ op.req_msg }}& req,
                                             {{ n.name }}State& s);
 {% endfor %}
+
+    // ---- OTP init/1 — body in impl ({{ n.name }}_handlers.cc) ----------
+    //
+    // Called ONCE by the runtime on this node's thread after start(),
+    // before the first mailbox item (GenServer::dispatch_init_). A
+    // self-driving node bootstraps its work loop here (e.g.
+    // ::theia::runtime::post_info(*this, "tick")); a passive node leaves it
+    // empty. Emitted for every node so the hook is always visible.
+    void init({{ n.name }}State& s);
+
+    // ---- string handle_info — body in impl ----------------------------
+    //
+    // The post_info()/send_after() string-message path (timer loops,
+    // internal ticks). LOCAL-ONLY opaque signal — never crosses the wire.
+    // Declared so a node can override the GenServer base no-op in its impl.
+    void handle_info(const char* info, {{ n.name }}State& s);
 
     // ---- send helpers — bodies in impl (the broadcast fan-out)
 {% for p in n.ports if p.kind == "sender" %}

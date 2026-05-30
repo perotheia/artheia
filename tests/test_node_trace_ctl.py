@@ -92,7 +92,7 @@ def test_reporting_true_emits_trace_api(tmp_path):
     assert "void trace_clear_all() {" in hh
     assert "trace_filter_" in hh
     # Bodies delegate to the per-node tracer (the runtime sink #361).
-    assert "::demo::runtime::tracer_for(kNodeName).trace_enable(" in hh
+    assert "::theia::runtime::tracer_for(kNodeName).trace_enable(" in hh
 
 
 def test_reporting_false_omits_trace_api(tmp_path):

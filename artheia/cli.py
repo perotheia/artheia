@@ -9,7 +9,6 @@ from textx import TextXError, TextXSemanticError, TextXSyntaxError
 
 from . import __version__
 from .generators import (
-    generate_cpp_stubs,
     generate_etcd_schema,
     generate_netgraph,
     generate_proto,
@@ -748,30 +747,25 @@ def gen_proto(art_file: str, out_dir: str) -> None:
         click.echo(p)
 
 
-@main.command("gen-proto-package",
-              help="Emit ONE .proto file per .art package at "
-                   "<out>/<pkg-path>/<leaf>.proto (mirrors the .art "
-                   "package hierarchy; matches the platform/proto/ layout "
-                   "used by libgw and apps).")
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out", "out_root", required=True, type=click.Path(file_okay=False))
-def gen_proto_package(art_file: str, out_root: str) -> None:
-    from .generators.proto_package import generate_package_proto
-    path = generate_package_proto(art_file, out_root)
-    click.echo(str(path))
+# (gen-proto-package retired as a standalone command — `gen-app --kind fc`
+# emits the per-package .proto internally via generate_package_proto (still
+# in generators/proto_package.py). The committed platform/proto/*.proto were
+# produced by it; regenerate them through gen-app, not a bare command.)
 
 
-@main.command("gen-manifest-proto",
+@main.command("gen-manifest",
               help="Generate the Functional-Cluster manifest module "
                    "(services/manifest/service.py) from a system .art. "
                    "The FC list is taken from `cluster Services` — the "
                    ".art is the source of truth. SwComponent / Executable "
                    "/ Process triples are emitted for each cluster member; "
                    "the hand-authored supervisor tree is sidecared in "
-                   "executor.py and re-exported unchanged.")
+                   "executor.py and re-exported unchanged. (Emits a Python "
+                   "manifest module — NOT a .proto; was misnamed "
+                   "gen-manifest-proto.)")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.argument("out_file", type=click.Path(dir_okay=False))
-def gen_manifest_proto(art_file: str, out_file: str) -> None:
+def gen_manifest(art_file: str, out_file: str) -> None:
     from .generators.manifest_proto import generate_manifest_proto
     path = generate_manifest_proto(art_file, out_file)
     click.echo(str(path))
@@ -795,45 +789,10 @@ def gen_routing(art_file: str, composition: str, out_dir: str) -> None:
         click.echo(str(p))
 
 
-@main.command("gen-app-composition",
-              help="Emit one CMake project per `on process P` partition of a "
-                   "composition. Each project boots TimerService + TipcMux + "
-                   "local nodes, connects RemoteRefs, registers inbound "
-                   "dispatch entries, and runs until SIGINT / DEMO_RUN_MS. "
-                   "Node implementations are NOT generated — they come from "
-                   "the existing demo_runtime; this generator only emits "
-                   "main.cc + CMakeLists per process. With --proto-out it "
-                   "ALSO emits the composition's package .proto (and "
-                   "compiles it to .pb.{c,h} when nanopb_generator is on "
-                   "PATH) so one invocation produces both the app and its "
-                   "codec — no separate gen-proto-package step.")
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--composition", required=True,
-              help="Name of the composition to materialize.")
-@click.option("--out", "out_root", required=True, type=click.Path(file_okay=False))
-@click.option("--runtime-dir", default="../../demo",
-              help="Path to the demo runtime, used by each generated "
-                   "CMakeLists as an add_subdirectory target.")
-@click.option("--proto-out", "proto_out", default=None,
-              type=click.Path(file_okay=False),
-              help="When set, also emit the package .proto at "
-                   "<proto-out>/<art-pkg-as-path>/<leaf>.proto (the "
-                   "platform/proto/ layout the generated mains #include). "
-                   "The proto package decl is libc-safe (system→services).")
-@click.option("--no-nanopb", "no_nanopb", is_flag=True, default=False,
-              help="With --proto-out, skip running nanopb_generator — emit "
-                   "only the .proto and let the build (Bazel genrule) "
-                   "compile it.")
-def gen_app_composition(art_file: str, composition: str,
-                         out_root: str, runtime_dir: str,
-                         proto_out: str | None, no_nanopb: bool) -> None:
-    from .generators.app_composition import generate_composition
-    paths = generate_composition(art_file, composition, out_root,
-                                  runtime_dir=runtime_dir,
-                                  proto_out=proto_out,
-                                  run_nanopb=not no_nanopb)
-    for p in paths:
-        click.echo(str(p))
+# (gen-app-composition retired — superseded by `gen-app --kind fc
+# --composition <Name>`, which emits a buildable per-composition app
+# (lib + impl + main) instead of just main.cc + CMakeLists over a
+# hand-written node runtime.)
 
 
 @main.command("gen-netgraph", help="Emit a JSON netgraph describing nodes + compositions.")
@@ -882,57 +841,12 @@ def gen_etcd(art_file: str, out_file: str) -> None:
     click.echo(str(path))
 
 
-@main.command("gen-cpp-stubs", help="Emit C++ callback-style header stubs (one per node).")
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
-def gen_cpp_stubs(art_file: str, out_dir: str) -> None:
-    model = _parse(art_file)
-    for p in generate_cpp_stubs(model, out_dir, source_file=art_file):
-        click.echo(str(p))
+# (gen-cpp-stubs retired — conflicted with gen-app, which emits the
+# GenServer/GenStateM daemon (incl. the statem StateMBase) directly from
+# the same .art. There is one C++-from-.art path now: `gen-app --kind fc`.)
 
-
-@main.command(
-    "gen-trace-decoder-subset",
-    help="Emit the per-rig trace-decoder subset .cc. Walks the cluster "
-    "netgraph + PSP netgraph for the union of message types this rig "
-    "actually uses; emits a registration table that drives "
-    "libtrace_decoder.so. PSP has ~4500 messages but a real rig uses ~100 — "
-    "this slims the .so accordingly. Consumed by supdbg + supervisor-gui's "
-    "trace panel; the rf-theia Robot trace adapter uses py-proto reflection "
-    "directly and does NOT need this output.",
-)
-@click.option(
-    "--cluster-netgraph",
-    type=click.Path(exists=True, dir_okay=False),
-    default=None,
-    help="Cluster netgraph JSON (output of `artheia gen-netgraph`).",
-)
-@click.option(
-    "--psp-netgraph",
-    type=click.Path(exists=True, dir_okay=False),
-    default=None,
-    help="PSP / gateway netgraph JSON (output of `artheia gen-psp-netgraph`).",
-)
-@click.option(
-    "--out",
-    "out_file",
-    required=True,
-    type=click.Path(dir_okay=False),
-    help="Where to write the generated .cc (e.g. "
-    "platform/runtime/trace_decoder/generated/decoders.cc).",
-)
-def gen_trace_decoder_subset(
-    cluster_netgraph: str | None,
-    psp_netgraph: str | None,
-    out_file: str,
-) -> None:
-    from .generators.trace_decoder_subset import generate as _gen
-    p = _gen(
-        cluster_netgraph=cluster_netgraph,
-        psp_netgraph=psp_netgraph,
-        out_file=out_file,
-    )
-    click.echo(str(p))
+# (gen-trace-decoder-subset retired — unused. The trace decoder is built as
+# a dependency, not generated per-rig from a netgraph here.)
 
 
 @main.command(
@@ -1192,21 +1106,8 @@ def gen_autosar_system(
     generate(list(catalog_paths), out_path, package_name)
 
 
-@main.command(
-    "gen-host-netgraph",
-    help="Walk a platform .art composition, find every tipc-addressed node, "
-    "and emit a host_netgraph.json mapping symbolic_port_name -> TIPC address "
-    "and port shape. Consumed by the host transport layer (pero_cmp_lnx).",
-)
-@click.option("--art", "art_paths", multiple=True, required=True,
-              type=click.Path(exists=True, dir_okay=False),
-              help=".art files declaring TIPC nodes (platform/system/system.art "
-              "plus any imported fragments). Repeat per file; nodes are merged.")
-@click.option("--out", "out_path", required=True, type=click.Path(dir_okay=False),
-              help="Output host_netgraph.json.")
-def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
-    from .generators.host_netgraph import generate
-    generate(list(art_paths), out_path)
+# (gen-host-netgraph retired — superseded by gen-netgraph, the single
+# JSON netgraph emitter for nodes + compositions.)
 
 
 @main.command(
@@ -1224,40 +1125,20 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
     "top-level CMakeLists.txt so the app builds standalone on its target "
     "(e.g. RPi4) with plain CMake — no Bazel, no workspace deps. "
     "NO main/ — the app owns its own main and runnable lifecycle.\n\n"
-    "  --kind psp: legacy three-slice cpp_app generator for vendor PSP "
-    "/ signal-routing apps. Kept for in-flight migrations; new apps "
-    "should use --kind lib.",
+    "(The legacy --kind psp arm was retired; vendor signal-routing apps "
+    "now use --kind lib.)",
 )
-@click.option("--kind", type=click.Choice(["psp", "fc", "lib"]), default="fc",
+@click.option("--kind", type=click.Choice(["fc", "lib"]), default="fc",
               help="Generator mode (default: fc). "
               "fc — Adaptive FC daemon (lib + impl + main, Bazel). "
               "lib — standalone app's platform/ slice (lib + impl + "
               "vendored runtime + CMake, NO main — the app owns its own "
-              "main and runnable lifecycle). "
-              "psp — legacy three-slice cpp_app generator; on the way out, "
-              "kept for in-flight migrations.")
+              "main and runnable lifecycle).")
 # --- shared --
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir. For psp mode: applications/<vendor>/. "
-              "For fc mode: services/<fc>/ (the impl layer — keep "
-              "DISTINCT from the .art spec at services/system/<fc>/).")
-# --- psp-mode flags --
-@click.option("--vendor-root", default=None,
-              type=click.Path(exists=True, file_okay=False),
-              help="(psp mode) Vendor system root, e.g. vendor/odd_path_client. "
-              "Must contain system/components/*.art.")
-@click.option("--namespace", default="",
-              help="(psp mode) C++ namespace (default: vendor dir name).")
-@click.option("--project", "project_name", default="",
-              help="(psp mode) CMake project name (default: vendor dir name).")
-@click.option("--netgraph", "netgraph_paths", multiple=True,
-              type=click.Path(exists=True, dir_okay=False),
-              help="(psp mode) netgraph.json per bus. Joins receiver port "
-              "interfaces to their bus addresses.")
-@click.option("--psp-proto-root", "psp_proto_root", default=None,
-              type=click.Path(exists=True, file_okay=False),
-              help="(psp mode) Pre-existing PSP .proto tree to resolve "
-              "PDU packages against.")
+              help="Output dir. For fc mode: services/<fc>/ (the impl "
+              "layer — keep DISTINCT from the .art spec at "
+              "services/system/<fc>/).")
 # --- fc-mode flags --
 @click.argument("art_file", required=False,
                 type=click.Path(exists=True, dir_okay=False))
@@ -1281,29 +1162,27 @@ def gen_host_netgraph(art_paths: tuple[str, ...], out_path: str) -> None:
               "`--ns vendor::myapp` for vendor scaffolding. Default: "
               "the .art package as one underscore-flat identifier "
               "(e.g. `system_services_sm`).")
+@click.option("--composition", "composition", default=None,
+              help="(fc mode) Emit ONE app for a SINGLE composition — only "
+              "that composition's prototyped node-types get lib/impl/main/"
+              "proto. With --composition, --out is the PARENT dir and the "
+              "composition name is appended as the app dir (Demo3WayP3 → "
+              "<out>/Demo3WayP3), so you name the where (--out) and the "
+              "what (--composition) once. Run once per composition for a "
+              "per-process layout. Cross-process peers in other "
+              "compositions are reached by TipcAddr, not constructed in "
+              "this app's main. Default (unset): --out is the app dir and "
+              "every node in the .art is emitted (legacy). Ignored by "
+              "--kind lib.")
 def gen_app(kind: str,
             out_dir: str,
-            vendor_root: str | None,
-            namespace: str,
-            project_name: str,
-            netgraph_paths: tuple[str, ...],
-            psp_proto_root: str | None,
             art_file: str | None,
             manifest_out: str | None,
             proto_out: str | None,
             force: bool,
-            cxx_namespace: str | None) -> None:
-    if kind == "psp":
-        if not vendor_root:
-            click.secho("error: --vendor-root is required for --kind psp",
-                        fg="red", err=True)
-            sys.exit(2)
-        from .generators.cpp_app import generate
-        results = generate(vendor_root, out_dir,
-                           namespace=namespace, project_name=project_name,
-                           netgraph_paths=netgraph_paths,
-                           psp_proto_root=psp_proto_root)
-    elif kind == "lib":
+            cxx_namespace: str | None,
+            composition: str | None) -> None:
+    if kind == "lib":
         if not art_file:
             click.secho(
                 "error: --kind lib requires an .art file as positional arg",
@@ -1321,11 +1200,18 @@ def gen_app(kind: str,
                 fg="red", err=True)
             sys.exit(2)
         from .generators.fc_app import generate_fc
-        results = generate_fc(art_file, out_dir,
-                              manifest_out=manifest_out,
-                              proto_out=proto_out,
-                              cxx_namespace=cxx_namespace,
-                              force=force)
+        try:
+            results = generate_fc(art_file, out_dir,
+                                  manifest_out=manifest_out,
+                                  proto_out=proto_out,
+                                  cxx_namespace=cxx_namespace,
+                                  composition=composition,
+                                  force=force)
+        except ValueError as e:
+            # Unknown / empty --composition. generate_fc raises a clear
+            # message naming the available compositions.
+            click.secho(f"error: {e}", fg="red", err=True)
+            sys.exit(2)
     for path in results.get("wrote", []):
         click.echo(f"  wrote:      {path}")
     for path in results.get("overwrote", []):

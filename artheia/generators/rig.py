@@ -131,17 +131,18 @@ def _process_name(vehicle: str, art_proc: str) -> str:
 
 def _bazel_target(bazel_package: str, vehicle: str, art_proc: str) -> str:
     """`//demo` + vehicle=demo + art_proc=P1 → `//demo:p1_main`. The
-    `_main` suffix matches the cc_binary convention used by
-    gen-app-composition. The bazel target name is just the art_proc
-    token lowercased (no vehicle prefix — the package already says
-    `//demo`, so prefixing the binary with `demo_` would be redundant)."""
+    `_main` suffix is the rig-manifest convention; `//demo:p1_main`
+    aliases the per-composition fc app binary
+    (//demo/Demo3Way_P1/main:demo — see demo/BUILD.bazel). The bazel
+    target name is just the art_proc token lowercased (no vehicle prefix
+    — the package already says `//demo`)."""
     pkg = bazel_package.rstrip(":/")
     return f"{pkg}:{art_proc.lower()}_main"
 
 
 def _composition_class(comp_name: str) -> str:
-    """`Demo3Way` → `Demo3WayComposition` (the C++ class name
-    materialized by gen-app-composition for the process root)."""
+    """`Demo3Way` → `Demo3WayComposition` (the composition's C++ class
+    name)."""
     return f"{comp_name}Composition"
 
 
@@ -181,7 +182,8 @@ won't re-run safely — round-trip regen would clobber your edits.
 
 The composition's prototypes were grouped by their ``on process X``
 annotation; each group becomes a process binary built from the
-composition's C++ codegen output (``artheia gen-app-composition``).
+per-composition fc app (``artheia gen-app --kind fc --composition
+<Name>``).
 
 TODO markers below flag the deployment-specific decisions the
 generator cannot infer:

@@ -47,10 +47,10 @@ void {{ n.name }}::on_enter({{ n.name }}State new_s,
 {%- for op in n.unique_handler_ops() %}
 {{ op.rep_msg or "void" }} {{ n.name }}::handle_call(
         const {{ op.req_msg }}& /*req*/,
-        demo::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& /*h*/) {
+        ::theia::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& /*h*/) {
     // TODO: map {{ op.name }} ({{ op.req_msg }} →
     // {{ op.rep_msg or "void" }}) onto an FSM event (e.g.
-    // demo::runtime::post_event(*this, SomeEvent{})) or onto
+    // ::theia::runtime::post_event(*this, SomeEvent{})) or onto
     // daemon-side persistent state (via h.data).
     std::fprintf(stderr, "[%s] {{ op.name }} called\n",
                  kNodeName);

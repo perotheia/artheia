@@ -26,8 +26,8 @@
 #include "RemoteCodec.hh"   // DEMO_DECLARE_REMOTE_CODEC
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
 {% set _incl = [model.package_subpath ~ "/" ~ model.fc_short] -%}
-{%- for n in model.nodes if n.reporting -%}
-{%- for d in n.unique_receiver_data() -%}
+{%- for n in model.nodes -%}
+{%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
 {%- set hdr = d.proto_subpath ~ "/" ~ d.proto_leaf -%}
 {%- if d.proto_subpath and hdr not in _incl %}{{ _incl.append(hdr) or "" }}
 #include "{{ hdr }}.pb.h"
@@ -35,8 +35,13 @@
 {%- endfor -%}
 {%- endfor %}
 
+{# Codecs for every wire type this app touches: inbound (decode) AND
+   outbound (encode). A receiver/server needs RemoteCodec<T> to DECODE;
+   a sender/client needs it to ENCODE — both specializations live here.
+   Not gated on `reporting`: a non-reporting send-only node still needs
+   its outbound codec. #}
 {% set _codecs = [] -%}
-{%- for n in model.nodes if n.reporting -%}
+{%- for n in model.nodes -%}
 {%- for op in n.unique_handler_ops() -%}
 {%- if op.req_proto and op.req_proto not in _codecs %}{{ _codecs.append(op.req_proto) or "" }}
 DEMO_DECLARE_REMOTE_CODEC({{ op.req_proto }})
@@ -45,7 +50,7 @@ DEMO_DECLARE_REMOTE_CODEC({{ op.req_proto }})
 DEMO_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
 {%- endif -%}
 {%- endfor -%}
-{%- for d in n.unique_receiver_data() -%}
+{%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
 {%- if d.proto_type and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
 DEMO_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}

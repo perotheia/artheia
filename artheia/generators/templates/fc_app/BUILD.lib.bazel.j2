@@ -30,5 +30,10 @@ cc_library(
     deps = [
         "//platform/runtime:runtime",
         "//platform/proto:platform_protos",
+        # The State structs the lib binds as the GenServer State type live
+        # in the (write-once, app-owned) impl/<Node>_state.hh headers,
+        # exposed by the leaf {{ model.fc_short }}_state target — depended
+        # on here so the lib<-impl include is a clean DAG, not a cycle.
+        "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_state",
     ],
 )
