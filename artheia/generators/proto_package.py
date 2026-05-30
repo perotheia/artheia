@@ -66,21 +66,44 @@ def _proto_type_for(field) -> str:
 def _harvest(model):
     messages: List[_Message] = []
     enums: List[_Enum] = []
+    used_types: set[str] = set()
     for el in model.elements:
         kind = el.__class__.__name__
         if kind == "MessageDecl":
             fields = []
             for idx, f in enumerate(el.fields):
+                pt = _proto_type_for(f)
+                used_types.add(pt)
                 fields.append(_Field(
                     name=f.name,
                     number=idx + 1,
-                    proto_type=_proto_type_for(f),
+                    proto_type=pt,
                     repeated=bool(f.repeated),
                 ))
             messages.append(_Message(name=el.name, fields=fields))
         elif kind == "EnumDecl":
             enums.append(_Enum(name=el.name, values=el.values))
+    # Emit ONLY enums actually used as a field type. AUTOSAR value tables
+    # (the bulk of an autosar bus package) are imported as companion enums
+    # but the message fields stay scalar (uint32/float) — the enum is never
+    # a field type, just documentation. Emitting all of them drags in
+    # thousands of proto3-conformance headaches (sibling-scoping name
+    # clashes, case-insensitive collisions, keyword labels) for symbols no
+    # message references. Drop the unreferenced ones.
+    enums = [e for e in enums if e.name in used_types]
     return messages, enums
+
+
+def _proto_enum_value(enum_name: str, value_name: str) -> str:
+    """proto3 enum values use C++ sibling scoping — a value identifier
+    must be unique across the WHOLE proto package, not just its enum, and
+    must not collide with a proto keyword. AUTOSAR value tables freely
+    reuse labels (`Neutralwert`, `Fehler`, `aus`, ...) across enums and
+    even use keywords (`reserved`). Prefixing each value with its enum
+    name makes it package-unique and keyword-safe in one move. The label
+    is documentation only (the wire field stays scalar), so the rename is
+    harmless."""
+    return f"{enum_name}_{value_name}"
 
 
 def _render_proto(model, package: str, source_file: str) -> str:
@@ -99,7 +122,7 @@ def _render_proto(model, package: str, source_file: str) -> str:
     for en in enums:
         lines.append(f"enum {en.name} {{")
         for v in en.values:
-            lines.append(f"    {v.name} = {v.number};")
+            lines.append(f"    {_proto_enum_value(en.name, v.name)} = {v.number};")
         lines.append("}")
         lines.append("")
 

@@ -446,4 +446,62 @@ def generate_lib(
     for p in _nanopb_compile(generated_dir, Path(proto_path), Path(proto_out)):
         results["wrote"].append(p)
 
+    # Imported-package protos. A standalone app vendors EVERYTHING it
+    # needs, so any inbound message resolved from another package (e.g. a
+    # PSP bus PDU pulled in via `import …flexray.*`) needs that package's
+    # .proto + .pb.{c,h} under generated/ too — otherwise the codec's
+    # `#include "<pkg-path>/<leaf>.pb.h"` won't resolve. Emit one per
+    # distinct imported defining-package the model references.
+    for imp_art in _imported_proto_sources(art_path, mv):
+        ip = generate_package_proto(str(imp_art), proto_out)
+        results["wrote"].append(str(ip))
+        for p in _nanopb_compile(generated_dir, Path(ip), Path(proto_out)):
+            results["wrote"].append(p)
+
     return results
+
+
+def _imported_proto_sources(art_path: Path, mv) -> list[Path]:
+    """Source ``.art`` files for every IMPORTED defining-package the model's
+    inbound messages resolve to (deduped), excluding the app's own package.
+
+    The standalone build must vendor these packages' protos. We map each
+    distinct ``proto_subpath`` on a receiver-port data element back to its
+    source package directory via the same import-resolution the scope
+    provider uses, then point ``generate_package_proto`` at that dir."""
+    from ..model.scope import _import_dir
+    from ..model import parse_file as _pf
+
+    entry = Path(art_path).absolute()
+    model = _pf(str(art_path))
+    entry_pkg = getattr(model, "name", "") or ""
+    own_subpath = "/".join(entry_pkg.split(".")) if entry_pkg else ""
+
+    # Map import-package-FQN -> its resolved directory (from this model's
+    # `import` lines).
+    imp_dirs: dict[str, Path] = {}
+    for imp in getattr(model, "imports", []) or []:
+        ipkg = imp.name[:-2] if imp.name.endswith(".*") else imp.name
+        d = _import_dir(entry, entry_pkg, ipkg)
+        if d is not None and d.is_dir():
+            imp_dirs[ipkg] = d
+
+    # Distinct defining-package subpaths referenced by inbound data.
+    wanted: dict[str, Path] = {}  # subpath -> source .art
+    for nv in mv.nodes:
+        for port in getattr(nv, "ports", []):
+            for d in getattr(port, "data", []):
+                sub = getattr(d, "proto_subpath", "")
+                if not sub or sub == own_subpath:
+                    continue
+                pkg_fqn = sub.replace("/", ".")
+                src_dir = imp_dirs.get(pkg_fqn)
+                if src_dir is None:
+                    continue
+                # Prefer package.art (schema layer carries the messages).
+                for fname in ("package.art", "system.art", "component.art"):
+                    cand = src_dir / fname
+                    if cand.exists():
+                        wanted[sub] = cand
+                        break
+    return list(wanted.values())
