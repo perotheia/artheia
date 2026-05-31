@@ -25,9 +25,11 @@ _AF_TIPC = socket.AF_TIPC
 # use; the kernel routes by (type, instance), so probe and FC meet.
 
 
-def _bind_addr(tipc_type: int) -> tuple:
-    # Publish the single instance range [0,0] under this service type.
-    return (socket.TIPC_ADDR_NAMESEQ, tipc_type, 0, 0)
+def _bind_addr(tipc_type: int, tipc_instance: int) -> tuple:
+    # Publish the single instance as the range [instance, instance] so a
+    # connect to exactly (type, instance) resolves. (Publishing [0,0] would
+    # only answer instance 0 — a peer addressing any other instance fails.)
+    return (socket.TIPC_ADDR_NAMESEQ, tipc_type, tipc_instance, tipc_instance)
 
 
 def _connect_addr(tipc_type: int, tipc_instance: int) -> tuple:
@@ -53,7 +55,7 @@ class TipcServer:
 
     def start(self) -> None:
         s = socket.socket(_AF_TIPC, socket.SOCK_SEQPACKET)
-        s.bind(_bind_addr(self.tipc_type))
+        s.bind(_bind_addr(self.tipc_type, self.tipc_instance))
         s.listen(16)
         self._listen = s
         self._running = True
