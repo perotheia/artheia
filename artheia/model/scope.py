@@ -240,11 +240,62 @@ class ImportFollowingScopeProvider:
         """
         catalog = pkg_dir / "catalog.json"
         if catalog.exists():
-            return self._catalog_index(pkg_dir, pkg_fqn).lookup(family, leaf)
+            hit = self._catalog_index(pkg_dir, pkg_fqn).lookup(family, leaf)
+            if hit is not None:
+                return hit
+            # The catalog indexes ONLY message/interface (the per-PDU types) —
+            # it returns None for everything else (family "node" etc.). A bus
+            # package's component.art also carries the small `<Bus>_Bus` NODE
+            # (node-only by design — no N² eager ifaces/ports). Resolve it by
+            # parsing ONLY component.art (never the package.art message monolith,
+            # which would be the N² we're avoiding) — the file is tiny, so this
+            # stays O(1). This is what lets a sender's `extern node atomic
+            # <Bus>_Bus { }` resolve to the real PSP node while the thousand
+            # PDUs stay on the catalog fast path.
+            if family in ("message_or_enum", "interface"):
+                return None  # catalog is authoritative for these — a miss is a miss
+            return self._resolve_in_component_only(pkg_dir, family, leaf)
         model = self._load_package(pkg_dir)
         if model is None:
             return None
         for el in getattr(model, "elements", []) or []:
+            if _family_of(el.__class__.__name__) != family:
+                continue
+            if _is_extern(el):
+                continue
+            if el.name == leaf:
+                return el
+        return None
+
+    def _resolve_in_component_only(self, pkg_dir: Path, family: str, leaf: str):
+        """For a catalog (bus) package: resolve a non-catalog family (e.g. the
+        `<Bus>_Bus` node) by parsing ONLY this dir's component.art — never the
+        package.art message monolith (that's the N² the catalog avoids). The
+        component.art is node-only (gen-autosar-system), so this is O(1).
+        Cached per dir."""
+        comp = pkg_dir / "component.art"
+        if not comp.exists():
+            return None
+        key = (pkg_dir.resolve(), "component_only")
+        m = self._pkg_cache.get(key)
+        if m is None:
+            if key in self._loading:
+                return None
+            self._loading.add(key)
+            try:
+                from .loader import load_metamodel
+                # Parse component.art STANDALONE (no package.art sibling merge),
+                # so the 512/1025 messages never enter scope.
+                m = load_metamodel().model_from_file(str(comp))
+                self._pkg_cache[key] = m
+            except Exception:
+                self._pkg_cache[key] = None
+                m = None
+            finally:
+                self._loading.discard(key)
+        if m is None:
+            return None
+        for el in getattr(m, "elements", []) or []:
             if _family_of(el.__class__.__name__) != family:
                 continue
             if _is_extern(el):
