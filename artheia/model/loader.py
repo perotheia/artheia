@@ -196,3 +196,82 @@ def parse_file_standalone(path: str | Path):
 def parse_string(src: str, file_name: Optional[str] = None):
     return _postprocess(
         load_metamodel().model_from_str(src, file_name=file_name))
+
+
+def extract_node_projection(comp_path: "str | Path", node_name: str) -> Optional[str]:
+    """Read a bus component.art and return a tiny `package + node` source for
+    `node_name` with its `ports { }` block STRIPPED — a node-only PROJECTION.
+
+    A bus component.art carries the `<Bus>_Bus` node with 512/1025 ports +
+    matching extern iface fwd-decls; parsing it whole is O(N²) (seconds). A
+    CONSUMER (e.g. the gateway) only needs the bus node's ADDRESS, not its ports,
+    so we text-extract just the node header — never tokenizing the N ports/ifaces.
+    Returns None if the node isn't found. Shared by the model scope provider AND
+    the CLI parse path."""
+    import re
+    p = Path(comp_path)
+    try:
+        text = p.read_text()
+    except OSError:
+        return None
+    pkg_m = re.search(r"^\s*package\s+([\w.]+)", text, re.MULTILINE)
+    pkg = pkg_m.group(1) if pkg_m else ""
+    node_m = re.search(
+        r"(node\b[^\n{]*\b" + re.escape(node_name) + r"\b[^\n{]*)\{", text)
+    if node_m is None:
+        return None
+    i = node_m.end()
+    depth = 1
+    body_start = i
+    while i < len(text) and depth:
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    body = text[body_start:i - 1]
+    body = re.sub(r"ports\s*\{.*?\n\s*\}", "", body, flags=re.DOTALL)
+    head = node_m.group(1).rstrip()
+    return f"package {pkg}\n{head} {{{body}}}\n"
+
+
+def parse_bus_node_projection(comp_path: "str | Path", node_name: str):
+    """Parse the node-only projection (extract_node_projection) of a bus
+    component.art — the cheap consumer view of a bus mega-node (address, no
+    ports). Returns the parsed model, or None if the node isn't found."""
+    src = extract_node_projection(comp_path, node_name)
+    if src is None:
+        return None
+    return _postprocess(
+        load_metamodel().model_from_str(src, file_name=str(comp_path)))
+
+
+def parse_bus_component_nodes_only(comp_path: "str | Path"):
+    """Parse a bus component.art as NODE-ONLY projections: every `node ... X {`
+    in the file gets its ports stripped (extract_node_projection), and the
+    resulting tiny package (all nodes, no ifaces, no ports) is parsed. The cheap
+    consumer view — avoids the O(N²) of the full ifaces+ports file. Returns the
+    parsed model (or an empty-ish one if no nodes)."""
+    import re
+    p = Path(comp_path)
+    try:
+        text = p.read_text()
+    except OSError:
+        return None
+    pkg_m = re.search(r"^\s*package\s+([\w.]+)", text, re.MULTILINE)
+    pkg = pkg_m.group(1) if pkg_m else ""
+    # Every node name declared in the file (non-extern; the real bus nodes).
+    names = re.findall(r"^\s*node\b[^\n{]*\b([A-Za-z_]\w*)\b[^\n{]*\{",
+                       text, re.MULTILINE)
+    parts = [f"package {pkg}"]
+    for n in names:
+        proj = extract_node_projection(comp_path, n)
+        if proj is None:
+            continue
+        # Drop the proj's own `package` line (keep one at the top).
+        body = "\n".join(ln for ln in proj.splitlines()
+                         if not ln.lstrip().startswith("package "))
+        parts.append(body)
+    return _postprocess(
+        load_metamodel().model_from_str("\n".join(parts), file_name=str(p)))

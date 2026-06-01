@@ -13,7 +13,11 @@ from .generators import (
     generate_netgraph,
     generate_proto,
 )
-from .model import parse_file, parse_file_standalone
+from .model import (
+    parse_file,
+    parse_file_standalone,
+    parse_bus_component_nodes_only,
+)
 
 
 def _parse(art_file: str):
@@ -67,10 +71,30 @@ def main() -> None:
                    "Match is against `<package>.<element-name>`.")
 @click.option("--no-recurse", "no_recurse", is_flag=True, default=False,
               help="Leave forward-decls unresolved (single-file view).")
+@click.option("--force", "force", is_flag=True, default=False,
+              help="Push INSIDE catalog-optimized bus packages: resolve a bus "
+                   "mega-node's full per-PDU ifaces + ports (and their "
+                   "messages) instead of the cheap node-only view. Accepts the "
+                   "O(N²) parse cost (seconds for a 1000-PDU bus).")
 def parse(art_file: str, depth, only_containers: bool, fqn_filter,
-          no_recurse: bool) -> None:
+          no_recurse: bool, force: bool) -> None:
+    # If the ENTRY file is itself a catalog-optimized bus package (its dir has a
+    # catalog.json), the default view is the cheap node-only projection of its
+    # bus mega-node(s) — parsing the merged package.art+component.art (messages +
+    # N ifaces + N ports) is O(N²) (seconds-to-minutes for a 1000-PDU bus).
+    # --force pushes inside (full merged parse, accepts the N²).
+    from pathlib import Path as _P
+    entry_dir = _P(art_file).absolute().parent
+    if (not force) and (entry_dir / "catalog.json").exists():
+        model = parse_bus_component_nodes_only(art_file)
+        if model is None:
+            model = _parse(art_file)
+        _print_tree(model, max_depth=depth, only_containers=only_containers,
+                    fqn_filter=fqn_filter, resolved={})
+        return
     model = _parse(art_file)
-    resolved = {} if no_recurse else _resolve_forward_decls(art_file, model)
+    resolved = ({} if no_recurse
+                else _resolve_forward_decls(art_file, model, force=force))
     _print_tree(model, max_depth=depth, only_containers=only_containers,
                 fqn_filter=fqn_filter, resolved=resolved)
 
@@ -204,7 +228,7 @@ def _pkg_entry_file(pkg_dir: "Path") -> "tuple[Path | None, bool]":
     return (None, False)
 
 
-def _collect_imported_models(art_file: str, model) -> list:
+def _collect_imported_models(art_file: str, model, force: bool = False) -> list:
     """Follow the entry model's ``import system.x.*`` graph and return
     a list of additional ``(Path, model)`` tuples — every reachable
     file's parsed model, NOT including the entry model itself.
@@ -258,11 +282,17 @@ def _collect_imported_models(art_file: str, model) -> list:
             return
         visited_files.add(resolved_path)
         try:
-            # Catalog stop → parse component.art STANDALONE (no package.art
-            # sibling merge: that would pull in the 512/1025-PDU monolith, the
-            # O(N²) we avoid). Otherwise the normal merged parse.
-            other = (_parse_standalone(str(candidate)) if catalog_stop
-                     else _parse(str(candidate)))
+            # Catalog stop (default) → cheap node-only projection (bus nodes,
+            # ports stripped). --force → full component.art (node+ifaces+ports,
+            # the accepted N²). No stop → normal merged parse.
+            if catalog_stop and not force:
+                other = parse_bus_component_nodes_only(str(candidate))
+            elif catalog_stop:
+                other = _parse_standalone(str(candidate))
+            else:
+                other = _parse(str(candidate))
+            if other is None:
+                return
         except SystemExit:
             return
         out.append((resolved_path, other))
@@ -282,7 +312,7 @@ def _collect_imported_models(art_file: str, model) -> list:
     return out
 
 
-def _resolve_forward_decls(art_file: str, model) -> dict:
+def _resolve_forward_decls(art_file: str, model, force: bool = False) -> dict:
     """Resolve every forward-decl in *model* by following the
     ``import`` statements at the top of the file (and transitively).
     Returns ``{id(stub) -> real_element}``. Strict: any unresolved
@@ -378,9 +408,19 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
         if candidate.resolve() == entry:
             return  # already loaded — that's the entry model itself
         try:
-            # Catalog stop → standalone parse (no PDU-monolith sibling merge).
-            other = (_parse_standalone(str(candidate)) if catalog_stop
-                     else _parse(str(candidate)))
+            if catalog_stop and not force:
+                # Default: cheap node-only projection (bus nodes, ports stripped)
+                # — never parse the N ifaces/ports/messages (O(N²)).
+                other = parse_bus_component_nodes_only(str(candidate))
+            elif catalog_stop:
+                # --force: parse the full component.art (node + ifaces + ports),
+                # then below we'll also let the package.art messages resolve —
+                # the accepted N² "push inside" view.
+                other = _parse_standalone(str(candidate))
+            else:
+                other = _parse(str(candidate))
+            if other is None:
+                return
         except SystemExit:
             return  # diagnostic already printed
         # On a catalog stop, index the bus node but do NOT follow the package's
@@ -396,6 +436,32 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
     unresolved: list[tuple[str, str]] = []
     ambiguous: list[tuple[str, list[str]]] = []
 
+    # Entry's own catalog (if it's a bus dir): under --force, the bus's extern
+    # `<Pdu>_Iface` fwd-decls resolve here (the catalog is authoritative for
+    # message/interface). Lazy-built once.
+    _own_catalog = {"idx": None, "built": False}
+
+    def _own_catalog_lookup(fam: str, name: str):
+        if not force:
+            return None
+        if not _own_catalog["built"]:
+            _own_catalog["built"] = True
+            cat = entry.parent / "catalog.json"
+            if cat.exists():
+                from .model.scope import _CatalogIndex  # type: ignore
+                _own_catalog["idx"] = _CatalogIndex(cat, entry_pkg)
+        idx = _own_catalog["idx"]
+        if idx is None:
+            return None
+        cfam = "interface" if fam == "interface" else (
+            "message_or_enum" if fam == "message_or_enum" else None)
+        if cfam is None:
+            return None
+        try:
+            return idx.lookup(cfam, name)
+        except Exception:
+            return None
+
     def _resolve(stub):
         if not _is_stub(stub):
             return
@@ -404,6 +470,10 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
             return
         candidates = by_name.get((fam, stub.name), [])
         if not candidates:
+            own = _own_catalog_lookup(fam, stub.name)
+            if own is not None:
+                resolved[id(stub)] = own
+                return
             unresolved.append((type(stub).__name__, stub.name))
             return
         if len(candidates) > 1:

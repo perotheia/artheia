@@ -185,6 +185,20 @@ class ImportFollowingScopeProvider:
         want_pkg = name.rsplit(".", 1)[0] if dotted else None
 
         matches: list[tuple[str, object]] = []  # (pkg_fqn, element)
+
+        # OWN-package resolution first: a same-package ref (e.g. a bus node's
+        # `provides <Pdu>_Iface` port, where the iface lives in THIS file's own
+        # package — the catalog dir's package.art/catalog.json) has no `import`
+        # to follow. So try the entry file's OWN directory: if it carries a
+        # catalog.json, the iface/message resolves LAZILY from the catalog
+        # (O(1)) — which is exactly how a bus mega-node in component.art binds
+        # its per-PDU iface ports without dragging in the package.art monolith.
+        if not dotted or want_pkg == entry_pkg:
+            own = self._resolve_one_in_package(
+                entry.parent, entry_pkg, family, leaf)
+            if own is not None:
+                matches.append((entry_pkg, own))
+
         for imp in getattr(model, "imports", []) or []:
             imp_pkg = imp.name[:-2] if imp.name.endswith(".*") else imp.name
             pkg_dir = _import_dir(entry, entry_pkg, imp_pkg)
@@ -268,41 +282,37 @@ class ImportFollowingScopeProvider:
         return None
 
     def _resolve_in_component_only(self, pkg_dir: Path, family: str, leaf: str):
-        """For a catalog (bus) package: resolve a non-catalog family (e.g. the
-        `<Bus>_Bus` node) by parsing ONLY this dir's component.art — never the
-        package.art message monolith (that's the N² the catalog avoids). The
-        component.art is node-only (gen-autosar-system), so this is O(1).
-        Cached per dir."""
+        """For a catalog (bus) package: resolve a non-catalog family (the
+        `<Bus>_Bus` node) WITHOUT paying the bus's O(N²) parse cost. The bus
+        component.art carries the node + N extern iface fwd-decls + N node ports
+        — parsing it whole is seconds for a big bus. So when a CONSUMER (e.g. the
+        gateway) resolves the bus node, we extract ONLY that node's declaration
+        (a node-only PROJECTION — ports stripped) and parse that tiny stub. The
+        full node+ports view is the bus's own parse / `--force`, not a consumer's
+        default. Cached per (dir, leaf)."""
+        if family != "node":
+            return None
         comp = pkg_dir / "component.art"
         if not comp.exists():
             return None
-        key = (pkg_dir.resolve(), "component_only")
-        m = self._pkg_cache.get(key)
-        if m is None:
-            if key in self._loading:
-                return None
-            self._loading.add(key)
-            try:
-                from .loader import load_metamodel
-                # Parse component.art STANDALONE (no package.art sibling merge),
-                # so the 512/1025 messages never enter scope.
-                m = load_metamodel().model_from_file(str(comp))
-                self._pkg_cache[key] = m
-            except Exception:
-                self._pkg_cache[key] = None
-                m = None
-            finally:
-                self._loading.discard(key)
-        if m is None:
-            return None
-        for el in getattr(m, "elements", []) or []:
-            if _family_of(el.__class__.__name__) != family:
-                continue
-            if _is_extern(el):
-                continue
-            if el.name == leaf:
-                return el
-        return None
+        key = (pkg_dir.resolve(), "node_proj", leaf)
+        cached = self._pkg_cache.get(key)
+        if cached is not None or key in self._pkg_cache:
+            return cached
+        try:
+            from .loader import parse_bus_node_projection
+            m = parse_bus_node_projection(comp, leaf)
+        except Exception:
+            m = None
+        el = None
+        if m is not None:
+            for e in getattr(m, "elements", []) or []:
+                if (_family_of(e.__class__.__name__) == "node"
+                        and not _is_extern(e) and e.name == leaf):
+                    el = e
+                    break
+        self._pkg_cache[key] = el
+        return el
 
     def _catalog_index(self, pkg_dir: Path, pkg_fqn: str) -> "_CatalogIndex":
         key = pkg_dir.resolve()
