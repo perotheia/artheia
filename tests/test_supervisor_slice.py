@@ -23,7 +23,10 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-RIG_TARGET = "demo.manifest.rig"
+# The multi-host (central + compute + admin) spec these slice tests assert on
+# now lives in zonal_rig.py — demo.manifest.rig was trimmed to single-machine
+# (central only). zonal_rig carries DemoSoftware / ComputeHost / AdminHost.
+RIG_TARGET = "demo.manifest.zonal_rig"
 
 
 def _artheia_bin() -> str | None:

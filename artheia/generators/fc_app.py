@@ -11,7 +11,6 @@ User's flow::
 
     $ artheia gen-app --kind fc services/system/<fc>/package.art \\
                       --out services/system/<fc>/                  \\
-                      --manifest-out manifest/services/<fc>/        \\
                       --proto-out platform/proto/
 
     services/system/<fc>/
@@ -602,7 +601,6 @@ def generate_fc(
     art_path: str | Path,
     out_dir: str | Path,
     *,
-    manifest_out: Optional[str | Path] = None,
     proto_out: Optional[str | Path] = None,
     cxx_namespace: Optional[str] = None,
     composition: Optional[str] = None,
@@ -614,14 +612,13 @@ def generate_fc(
                          filesystem layout and the C++ namespace.
     :param out_dir:      Where the lib/main/impl slices land (typically
                          ``services/<fc>/``).
-    :param manifest_out: Deprecated. Accepted for back-compat but
-                         ignored — gen-app no longer writes anything
-                         under ``manifest/services/<fc>/``. The
-                         aggregate FC manifest lives at
-                         ``services/manifest/service.py:FcLayer``;
-                         the per-FC supervision policy at
-                         ``manifest/services/<fc>/executor.py`` is
-                         hand-edited.
+
+                         NOTE: gen-app does NOT emit any manifest. The
+                         manifest is generated PER-CLUSTER, not per-FC:
+                         ``artheia gen-manifest <system.art>
+                         services/manifest/service.py`` builds the FC
+                         list from ``cluster Services`` and sidecars the
+                         hand-written supervisor tree in ``executor.py``.
     :param proto_out:    Where .proto lands (typically
                          ``platform/proto/``). ``None`` skips proto
                          emission. The proto goes under
@@ -778,9 +775,7 @@ def generate_fc(
     # list (.art-name + ownership), not from per-FC manifest.py files.
     # The only deployment knob is the supervision policy, hand-edited
     # at manifest/services/<fc>/executor.py and imported into FcLayer
-    # via importlib. ``manifest_out`` is accepted for API back-compat
-    # but ignored.
-    _ = manifest_out  # unused — see comment above
+    # via importlib. gen-app emits NO manifest (see gen-manifest).
 
     # --- proto slice -------------------------------------------------------
     if proto_out is not None:

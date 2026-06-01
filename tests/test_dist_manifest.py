@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-RIG_TARGET = "demo.manifest.rig"
+RIG_TARGET = "demo.manifest.zonal_rig"  # multi-host spec (central trimmed to single-machine)
 
 
 def _artheia_bin() -> str | None:
@@ -96,7 +96,7 @@ def test_central_services_pinned_to_central(emitted_manifest):
     central = _instance_names(emitted_manifest, "central_host")
     compute = _instance_names(emitted_manifest, "compute_host")
 
-    for svc in ["per", "log", "sm", "ucm", "com"]:
+    for svc in ["per", "log", "sm", "ucm"]:  # com retired
         assert svc in central, (
             f"{svc!r} must be on central_host; got {sorted(central)}"
         )

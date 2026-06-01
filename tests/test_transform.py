@@ -423,7 +423,7 @@ def test_demo_software_routes_components_to_three_machines():
     Three machines: admin_host (the HostMachine running the GUI /
     observability stack), central_host, and compute_host.
     """
-    from demo.manifest.rig import DemoSoftware
+    from demo.manifest.zonal_rig import DemoSoftware
     rig = DemoSoftware.to_rig()
 
     assert {m.name for m in rig.machines} == {
@@ -449,7 +449,7 @@ def test_demo_software_routes_components_to_three_machines():
     # slice, not the app), including the compute-only shwa.
     services = by_app["services_app"]
     fc_names = {c.name for c in services.components}
-    assert {"com", "log", "per", "sm", "ucm", "shwa"}.issubset(fc_names)
+    assert {"log", "per", "sm", "ucm", "shwa"}.issubset(fc_names)  # com retired
 
 
 def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():
@@ -465,7 +465,7 @@ def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():
     The application shape and machine list ARE expected to differ
     between the two paths now.
     """
-    from demo.manifest.rig import DemoRig, DemoSoftware
+    from demo.manifest.zonal_rig import DemoRig, DemoSoftware
     materialized = DemoSoftware.to_rig()
 
     assert materialized.vehicle == DemoRig.vehicle

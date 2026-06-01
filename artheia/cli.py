@@ -1142,10 +1142,6 @@ def gen_autosar_system(
 # --- fc-mode flags --
 @click.argument("art_file", required=False,
                 type=click.Path(exists=True, dir_okay=False))
-@click.option("--manifest-out", "manifest_out", default=None,
-              type=click.Path(file_okay=False),
-              help="(fc mode) Where manifest.py + executor.py land "
-              "(typically manifest/services/<fc>/).")
 @click.option("--proto-out", "proto_out", default=None,
               type=click.Path(file_okay=False),
               help="(fc mode) Where the generated .proto lands "
@@ -1177,7 +1173,6 @@ def gen_autosar_system(
 def gen_app(kind: str,
             out_dir: str,
             art_file: str | None,
-            manifest_out: str | None,
             proto_out: str | None,
             force: bool,
             cxx_namespace: str | None,
@@ -1202,7 +1197,6 @@ def gen_app(kind: str,
         from .generators.fc_app import generate_fc
         try:
             results = generate_fc(art_file, out_dir,
-                                  manifest_out=manifest_out,
                                   proto_out=proto_out,
                                   cxx_namespace=cxx_namespace,
                                   composition=composition,

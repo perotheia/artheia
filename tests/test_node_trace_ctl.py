@@ -38,13 +38,10 @@ def _build_art(tmp_path: Path, body: str) -> Path:
 def _run_gen_app(tmp_path: Path, art: Path) -> Path:
     """Invoke generate_fc and return the lib/.hh path."""
     out_dir = art.parent  # gen-app writes lib/main/impl alongside .art
-    manifest_dir = tmp_path / "manifest"
     proto_dir = tmp_path / "proto"
-    manifest_dir.mkdir(exist_ok=True)
     proto_dir.mkdir(exist_ok=True)
     generate_fc(
         str(art), str(out_dir),
-        manifest_out=str(manifest_dir),
         proto_out=str(proto_dir),
         cxx_namespace="ara::tfc",
         force=True,
