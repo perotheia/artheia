@@ -5,7 +5,7 @@
 //
 // register_call / register_cast on a reporting node's config service
 // need a RemoteCodec<T> for every inbound type. This header declares
-// ONE DEMO_DECLARE_REMOTE_CODEC per inbound (receiver-port data /
+// ONE THEIA_DECLARE_REMOTE_CODEC per inbound (receiver-port data /
 // server-op req+rep) type, deduplicated across EVERY node in the FC.
 //
 // It lives in one header — not per-node — so that when two nodes in
@@ -23,7 +23,7 @@
 
 #pragma once
 
-#include "RemoteCodec.hh"   // DEMO_DECLARE_REMOTE_CODEC
+#include "RemoteCodec.hh"   // THEIA_DECLARE_REMOTE_CODEC
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
 {% set _incl = [model.package_subpath ~ "/" ~ model.fc_short] -%}
 {%- for n in model.nodes -%}
@@ -44,15 +44,15 @@
 {%- for n in model.nodes -%}
 {%- for op in n.unique_handler_ops() -%}
 {%- if op.req_proto and op.req_proto not in _codecs %}{{ _codecs.append(op.req_proto) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ op.req_proto }})
+THEIA_DECLARE_REMOTE_CODEC({{ op.req_proto }})
 {%- endif -%}
 {%- if op.rep_proto and op.rep_proto not in _codecs %}{{ _codecs.append(op.rep_proto) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
+THEIA_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
 {%- endif -%}
 {%- endfor -%}
 {%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
 {%- if d.proto_type and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
-DEMO_DECLARE_REMOTE_CODEC({{ d.proto_type }})
+THEIA_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}
