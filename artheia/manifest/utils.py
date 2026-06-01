@@ -63,9 +63,19 @@ def app_dir(base_dir: str, ident: str) -> str:
     return f"{base_dir}/{ident}"
 
 
-def app_bazel_target(base_dir: str, ident: str) -> str:
-    """Bazel label for an application member: ``//<base_dir>/<ident>:<ident>``."""
-    return f"//{base_dir}/{ident}:{ident}"
+def app_bazel_target(base_dir: str, ident: str, composition: str) -> str:
+    """Bazel label for a gen-app member's binary. Two layout conventions, by
+    base_dir:
+
+      - services FCs:  ``//services/<ident>/main:<ident>``  (per-FC dir + binary
+        named after the FC short — e.g. log → //services/log/main:log).
+      - app members:   ``//<base_dir>/<composition>/main:demo``  (per-composition
+        app dir whose cc_binary is conventionally named ``demo`` — e.g.
+        demo/Demo3WayP1 → //demo/Demo3WayP1/main:demo).
+    """
+    if base_dir == "services":
+        return f"//services/{ident}/main:{ident}"
+    return f"//{base_dir}/{composition}/main:demo"
 
 
 def app_start_cmd(ident: str) -> list[str]:
@@ -85,9 +95,10 @@ def app_component_for(
     """
     return SwComponent(
         name=ident,
-        bazel_target=app_bazel_target(base_dir, ident),
+        bazel_target=app_bazel_target(base_dir, ident, composition),
         owner=base_dir,
         art_node=f"system.{base_dir}.{ident}/{composition}",
+        bazel_buildable=True,
     )
 
 
@@ -133,12 +144,14 @@ def app_process_for(
 
 
 def component_for(short: str) -> SwComponent:
-    """One bazel-buildable handle per cluster member."""
+    """One bazel-buildable handle per cluster member. The FC binary is the
+    gen-app `//services/<short>/main:<short>` cc_binary."""
     return SwComponent(
         name=short,
-        bazel_target=f"//services/{short}",
+        bazel_target=f"//services/{short}/main:{short}",
         owner="platform",
         art_node=f"services.{short}/{_daemon_class(short)}",
+        bazel_buildable=True,
     )
 
 

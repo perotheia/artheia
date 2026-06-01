@@ -435,10 +435,11 @@ def test_demo_software_routes_components_to_three_machines():
 
     by_app = {a.name: a for a in rig.applications}
 
-    # platform_app → central, the platform binaries.
+    # platform_app → central, the platform binaries. (gateway was dropped from
+    # the rig pending its gen-app modernization — supervisor only for now.)
     platform = by_app["platform_app"]
     assert platform.host_machine == "central_host"
-    assert {c.name for c in platform.components} == {"gateway", "supervisor"}
+    assert {c.name for c in platform.components} == {"supervisor"}
 
     # compute_app → compute, the three demo apps.
     compute = by_app["compute_app"]
