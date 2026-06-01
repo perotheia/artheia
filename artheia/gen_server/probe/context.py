@@ -127,16 +127,72 @@ class ArtheiaContext:
             if el.__class__.__name__ != "NodeDecl":
                 continue
             tipc = getattr(el, "tipc", None)
-            if tipc is None:          # extern / forward-decl: no address
-                continue
+            if tipc is None:
+                # extern / forward-decl: no LOCAL address. A client .art (e.g.
+                # tdb) declares `extern node atomic SupervisorCtl { }` to
+                # address a node owned by an imported package. Follow the
+                # import lines to the REAL definition (which carries the tipc
+                # address + ports) so the probe can target it. This is what
+                # lets a client .art drive peers it doesn't define — the
+                # transport-swap-safe alternative to a hand-rolled TIPC client.
+                real = self._resolve_extern_node(el.name)
+                if real is None:
+                    continue          # truly unresolved — skip (no address)
+                el = real
+                tipc = getattr(el, "tipc", None)
+                if tipc is None:
+                    continue
             ref = RemoteRef(
                 name=el.name,
                 tipc_type=_hexint(tipc.type),
                 tipc_instance=_hexint(tipc.instance),
             )
+            # Ports come from the REAL node's model; resolve their ifaces in
+            # that model's scope (ifaces dict is local-only, so pass {} and let
+            # _build_port read the already-resolved iface object off the port).
             for p in getattr(el, "ports", []):
                 ref.ports.append(self._build_port(p, ifaces))
             self._refs[el.name] = ref
+
+    def _resolve_extern_node(self, name: str):
+        """Find the real NodeDecl for an `extern` forward-decl by following
+        this model's `import pkg.*` lines into the imported packages — the
+        same directory-climb the scope provider uses. Returns the NodeDecl
+        with a tipc address, or None."""
+        from artheia.model import parse_file as _parse
+        from artheia.model.scope import _import_dir, _PKG_FILE_PRIORITY
+        from pathlib import Path
+
+        entry = Path(self.art_file)
+        imports = []
+        for im in getattr(self.model, "imports", []):
+            raw = getattr(im, "package", None) or getattr(im, "name", "") or ""
+            # `import system.supervisor.*` → the package is "system.supervisor"
+            # (strip the trailing ".*" / "." wildcard the grammar keeps).
+            raw = raw.rstrip("*").rstrip(".")
+            if raw:
+                imports.append(raw)
+        for imp_pkg in imports:
+            if not imp_pkg:
+                continue
+            d = _import_dir(entry, self.package, imp_pkg)
+            if d is None or not d.exists():
+                continue
+            for fname in _PKG_FILE_PRIORITY:
+                f = d / fname
+                if not f.exists():
+                    continue
+                try:
+                    im_model = _parse(str(f))
+                except Exception:
+                    continue
+                for el in getattr(im_model, "elements", []):
+                    if (el.__class__.__name__ == "NodeDecl"
+                            and el.name == name
+                            and not getattr(el, "extern", False)
+                            and getattr(el, "tipc", None) is not None):
+                        return el
+        return None
 
     def _build_port(self, p, ifaces) -> PortRef:
         iface = getattr(p, "iface", None)
