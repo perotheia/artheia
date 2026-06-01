@@ -246,7 +246,19 @@ class ArtheiaContext:
                 f"(have: {', '.join(sorted(self._refs))})"
             )
 
-    def probe(self, node_name: str):
-        """Create a NodeProbe impersonating `node_name` (binds its address)."""
+    def probe(self, node_name: str, *, instance: int | None = None):
+        """Create a NodeProbe impersonating `node_name` (binds its address).
+
+        `instance` overrides the source TIPC instance from the .art — useful
+        when several short-lived client processes (e.g. successive `tdb`
+        invocations) impersonate the SAME client node: binding a distinct
+        instance per process avoids racing on the fixed address while the
+        previous process's socket drains. The TYPE (service id) is unchanged,
+        so the peer still routes replies back correctly.
+        """
         from .node import NodeProbe
-        return NodeProbe(self, self.ref(node_name))
+        import dataclasses
+        ref = self.ref(node_name)
+        if instance is not None:
+            ref = dataclasses.replace(ref, tipc_instance=instance)
+        return NodeProbe(self, ref)
