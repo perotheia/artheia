@@ -184,6 +184,15 @@ def parse_file(path: str | Path):
         load_metamodel().model_from_str(merged, file_name=str(anchor)))
 
 
+def parse_file_standalone(path: str | Path):
+    """Parse a single .art file WITHOUT merging its package.art/component.art
+    sibling. Used for the catalog (bus) packages: their component.art is the
+    small bus-node file, and merging in the 512/1025-PDU package.art monolith
+    is the O(N²) we avoid — the per-PDU types resolve lazily from catalog.json.
+    Shared by the CLI parse path + the LSP."""
+    return _postprocess(load_metamodel().model_from_file(str(Path(path))))
+
+
 def parse_string(src: str, file_name: Optional[str] = None):
     return _postprocess(
         load_metamodel().model_from_str(src, file_name=file_name))

@@ -13,12 +13,23 @@ from .generators import (
     generate_netgraph,
     generate_proto,
 )
-from .model import parse_file
+from .model import parse_file, parse_file_standalone
 
 
 def _parse(art_file: str):
     try:
         return parse_file(art_file)
+    except (TextXSyntaxError, TextXSemanticError, TextXError) as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+
+
+def _parse_standalone(art_file: str):
+    """Like _parse but WITHOUT the package.art/component.art sibling merge —
+    for the catalog stop (parse the small bus-node component.art, not the PDU
+    monolith)."""
+    try:
+        return parse_file_standalone(art_file)
     except (TextXSyntaxError, TextXSemanticError, TextXError) as e:
         click.secho(f"error: {e}", fg="red", err=True)
         sys.exit(2)
@@ -157,6 +168,42 @@ def _is_stub(el) -> bool:
     return bool(getattr(el, "extern", False))
 
 
+# Entry-file priority for an imported package directory. component.art is LAST
+# so a hand-written package (schema in package.art) is preferred — except when
+# the catalog optimization kicks in (below).
+_PKG_ENTRY_PRIORITY = ("system.art", "cluster.art", "package.art", "component.art")
+
+
+def _pkg_entry_file(pkg_dir: "Path") -> "tuple[Path | None, bool]":
+    """Pick the .art entry to parse for an imported package directory, and
+    report whether the catalog optimization was detected.
+
+    Returns ``(entry_path, catalog_stop)``:
+
+      - If the directory carries a ``catalog.json`` (a generated, read-only bus
+        package — kcan/flexray), the catalog optimization is DETECTED: parsing
+        the ``package.art`` PDU monolith is O(N²) (measured ~3.4s for flexray's
+        1025 PDUs) and unnecessary — the per-PDU message/interface types resolve
+        LAZILY from catalog.json. So we STOP at the small ``component.art`` (the
+        bus mega-node only) and return ``catalog_stop=True``; the message/iface
+        chain is left to lazy resolution. No catalog.json → normal priority,
+        ``catalog_stop=False``.
+
+    Shared by the CLI parse path AND the LSP (both walk the import graph and must
+    avoid dragging a thousand-PDU package into scope). The forward-declaration
+    chain node→iface→message is what makes the stop safe: the bus NODE is the
+    only thing that must be eagerly present; its sender ports' ifaces (and their
+    messages) are forward-resolved on demand from the catalog.
+    """
+    if (pkg_dir / "catalog.json").exists():
+        comp = pkg_dir / "component.art"
+        return (comp if comp.exists() else None, True)
+    for fname in _PKG_ENTRY_PRIORITY:
+        if (pkg_dir / fname).exists():
+            return (pkg_dir / fname, False)
+    return (None, False)
+
+
 def _collect_imported_models(art_file: str, model) -> list:
     """Follow the entry model's ``import system.x.*`` graph and return
     a list of additional ``(Path, model)`` tuples — every reachable
@@ -197,11 +244,7 @@ def _collect_imported_models(art_file: str, model) -> list:
             )
             sys.exit(2)
 
-        candidate = None
-        for fname in ("system.art", "cluster.art", "package.art", "component.art"):
-            if (pkg_dir / fname).exists():
-                candidate = pkg_dir / fname
-                break
+        candidate, catalog_stop = _pkg_entry_file(pkg_dir)
         if candidate is None:
             click.secho(
                 f"error: import {import_fqn!r}: no system.art / cluster.art / "
@@ -215,11 +258,20 @@ def _collect_imported_models(art_file: str, model) -> list:
             return
         visited_files.add(resolved_path)
         try:
-            other = _parse(str(candidate))
+            # Catalog stop → parse component.art STANDALONE (no package.art
+            # sibling merge: that would pull in the 512/1025-PDU monolith, the
+            # O(N²) we avoid). Otherwise the normal merged parse.
+            other = (_parse_standalone(str(candidate)) if catalog_stop
+                     else _parse(str(candidate)))
         except SystemExit:
             return
         out.append((resolved_path, other))
         other_pkg = getattr(other, "name", "") or ""
+        # Catalog stop: a bus package's component.art (node-only) carries no
+        # imports worth following, and we must NOT descend into the PDU
+        # monolith — the per-PDU types resolve lazily from catalog.json.
+        if catalog_stop:
+            return
         for imp in getattr(other, "imports", []) or []:
             _follow(imp.name, candidate, other_pkg)
 
@@ -269,10 +321,12 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
     by_name: dict[tuple[str, str], list[tuple[Path, object]]] = {}
     visited_packages: set[str] = set()
 
-    def _absorb(other_model, other_path: Path) -> None:
+    def _absorb(other_model, other_path: Path, follow_imports: bool = True) -> None:
         """Add other_model's non-stub clusters/compositions/nodes/
-        interfaces to the index, then follow ITS imports too (relative
-        to ITS package)."""
+        interfaces to the index, then (unless follow_imports=False) follow ITS
+        imports too. follow_imports=False is the catalog stop: a bus package's
+        node-only component.art is indexed, but we don't descend into the PDU
+        monolith its sibling package.art would pull in."""
         for e in getattr(other_model, "elements", []):
             fam = _kind_family(e)
             if fam is None:
@@ -280,6 +334,8 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
             if _is_stub(e):
                 continue
             by_name.setdefault((fam, e.name), []).append((other_path, e))
+        if not follow_imports:
+            return
         other_pkg = getattr(other_model, "name", "") or ""
         for imp in getattr(other_model, "imports", []) or []:
             _follow(imp.name, other_path, other_pkg)
@@ -306,18 +362,11 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
             )
             sys.exit(2)
 
-        # File-name priority within the package dir:
-        #   - system.art       (aggregator: top-of-subtree files like
-        #                       platform/system/services/system.art)
-        #   - package.art      (schema layer; loader auto-merges
-        #                       sibling component.art)
-        #   - component.art    (wiring layer; loader auto-merges
-        #                       sibling package.art)
-        candidate = None
-        for fname in ("system.art", "cluster.art", "package.art", "component.art"):
-            if (pkg_dir / fname).exists():
-                candidate = pkg_dir / fname
-                break
+        # Entry file for the package dir. The catalog optimization (a bus
+        # package with catalog.json) STOPS at the node-only component.art —
+        # parsing the PDU monolith (package.art) would be O(N²) and the per-PDU
+        # types resolve lazily from the catalog instead.
+        candidate, catalog_stop = _pkg_entry_file(pkg_dir)
         if candidate is None:
             click.secho(
                 f"error: import {import_fqn!r}: no system.art / cluster.art / "
@@ -329,10 +378,14 @@ def _resolve_forward_decls(art_file: str, model) -> dict:
         if candidate.resolve() == entry:
             return  # already loaded — that's the entry model itself
         try:
-            other = _parse(str(candidate))
+            # Catalog stop → standalone parse (no PDU-monolith sibling merge).
+            other = (_parse_standalone(str(candidate)) if catalog_stop
+                     else _parse(str(candidate)))
         except SystemExit:
             return  # diagnostic already printed
-        _absorb(other, candidate)
+        # On a catalog stop, index the bus node but do NOT follow the package's
+        # imports (would re-enter the monolith).
+        _absorb(other, candidate, follow_imports=not catalog_stop)
 
     # Seed the recursion with the entry file's imports.
     for imp in getattr(model, "imports", []) or []:
