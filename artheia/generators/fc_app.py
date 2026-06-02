@@ -87,6 +87,10 @@ class _DataEl:
     proto_subpath: str = ""
     # Leaf .proto module name (the FC short name of the defining package).
     proto_leaf: str = ""
+    # True when the defining package is platform.runtime — its codec is already
+    # THEIA_DECLARE_REMOTE_CODEC'd in the runtime headers, so Codecs.hh must skip
+    # re-declaring it (would be an ODR clash). The .pb.h include is still needed.
+    runtime_owned: bool = False
 
 
 @dataclass
@@ -303,16 +307,34 @@ def _proto_type_of(msg_ref) -> tuple[str, str, str]:
     regardless of which FC imported it."""
     pkg = _defining_package(msg_ref)
     proto_pkg = _proto_package_name(pkg)              # source-true package name
-    flat = proto_pkg.replace(".", "_") + "_" + msg_ref.name
-    subpath = "/".join(pkg.split(".")) if pkg else ""
+    flat_pkg = proto_pkg.replace(".", "_")
+    flat = flat_pkg + "_" + msg_ref.name
     leaf = pkg.split(".")[-1] if pkg else msg_ref.name
+    # The #include path for the defining package's bundled .pb.h. platform.runtime
+    # ships its proto under the FLAT-package dir (platform_runtime/runtime.pb.h —
+    # the nanopb convention its own headers + include root use), unlike the normal
+    # FC dotted layout (system/services/sm/sm.pb.h). Use the flat-package dir for
+    # platform.runtime so a cross-package import (the supervisor embedding its
+    # TraceControlPush) #includes the right header.
+    if pkg == "platform.runtime":
+        subpath = flat_pkg                            # → platform_runtime/<leaf>.pb.h
+    else:
+        subpath = "/".join(pkg.split(".")) if pkg else ""
     return flat, subpath, leaf
 
 
 def _data_el(name: str, msg_ref) -> _DataEl:
     flat, subpath, leaf = _proto_type_of(msg_ref)
+    # platform.runtime types already have their THEIA_DECLARE_REMOTE_CODEC in
+    # the runtime headers (GenServer.hh declares TraceControlPush/LogLevelPush).
+    # An FC that sends/receives them (the supervisor's ChildControlIf) must NOT
+    # re-declare the codec — that's an ODR redefinition. Flag it so the Codecs.hh
+    # template skips the declaration (the type + its .pb.h still come from the
+    # runtime, linked via platform/runtime).
+    runtime_owned = (_defining_package(msg_ref) == "platform.runtime")
     return _DataEl(name=name, msg=_local_msg(msg_ref),
-                   proto_type=flat, proto_subpath=subpath, proto_leaf=leaf)
+                   proto_type=flat, proto_subpath=subpath, proto_leaf=leaf,
+                   runtime_owned=runtime_owned)
 
 
 def _sr_data(iface) -> list[_DataEl]:

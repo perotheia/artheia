@@ -51,7 +51,7 @@ THEIA_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
 {%- endif -%}
 {%- endfor -%}
 {%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
-{%- if d.proto_type and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
+{%- if d.proto_type and not d.runtime_owned and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
 THEIA_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}
 {%- endfor -%}
