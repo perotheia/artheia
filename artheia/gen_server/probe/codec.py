@@ -8,6 +8,7 @@ decode line up with the wire service_id.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -47,24 +48,75 @@ class Codec:
 
         from grpc_tools import protoc  # compiler only; no gRPC runtime imported
 
+        # Compile the target proto AND any protos it imports, in one call, so a
+        # cross-package message (e.g. supervisor's TraceConfig embedding
+        # platform.runtime.TraceControlPush) gets its imported _pb2 emitted too.
+        # The generated supervisor_pb2 does `from platform_runtime import
+        # runtime_pb2`, a package-relative import, so self._out must be on
+        # sys.path with package __init__.py's (protoc lays the tree out, we add
+        # the inits).
+        deps = self._collect_proto_imports(proto_abs)
+        targets = [str(proto_rel)] + [str(d) for d in deps]
         rc = protoc.main([
             "",
             f"-I{self.proto_root}",
             f"--python_out={self._out}",
-            str(proto_rel),
+            *targets,
         ])
         if rc != 0:
             raise RuntimeError(f"protoc failed (rc={rc}) on {proto_rel}")
 
-        # The emitted module mirrors the proto path: <subdir>/<leaf>_pb2.py
-        pb2_path = self._out / subdir / f"{leaf}_pb2.py"
-        mod_name = f"_artheia_probe_{flat_pkg}_pb2"
-        spec = importlib.util.spec_from_file_location(mod_name, pb2_path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[mod_name] = module
-        spec.loader.exec_module(module)
+        # Make the emitted tree importable as packages (the generated code uses
+        # absolute `from <pkg> import <leaf>_pb2`). Add __init__.py per dir and
+        # put self._out on sys.path once.
+        self._make_importable_tree()
+
+        # Import the target module by its package path (mirrors proto layout):
+        # <subdir-as-module>.<leaf>_pb2
+        mod_path = ".".join(subdir.parts + (f"{leaf}_pb2",))
+        import importlib as _il
+        module = _il.import_module(mod_path)
         self._modules[flat_pkg] = module
         return module
+
+    def _collect_proto_imports(self, proto_abs: "Path") -> "list":
+        """Return the import paths (relative to proto_root) a .proto declares,
+        recursively, so they get compiled alongside it."""
+        from pathlib import Path as _P
+        seen: set = set()
+        out: list = []
+
+        def walk(p: _P):
+            try:
+                text = p.read_text()
+            except Exception:
+                return
+            for line in text.splitlines():
+                line = line.strip()
+                if line.startswith("import ") and line.endswith(".proto\";"):
+                    rel = line.split('"', 2)[1]
+                    if rel in seen:
+                        continue
+                    seen.add(rel)
+                    out.append(_P(rel))
+                    dep_abs = self.proto_root / rel
+                    if dep_abs.exists():
+                        walk(dep_abs)
+
+        walk(proto_abs)
+        return out
+
+    def _make_importable_tree(self) -> None:
+        """Drop __init__.py into every dir under self._out and ensure self._out
+        is on sys.path, so protoc's package-relative `from pkg import x_pb2`
+        imports resolve."""
+        out = str(self._out)
+        if out not in sys.path:
+            sys.path.insert(0, out)
+        for d, _dirs, _files in os.walk(self._out):
+            init = os.path.join(d, "__init__.py")
+            if not os.path.exists(init):
+                open(init, "w").close()
 
     def _message_class(self, art_package: str, proto_type: str) -> type:
         """proto_type is the flat nanopb name, e.g. 'system_demo_Inc'.
