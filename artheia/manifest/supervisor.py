@@ -359,6 +359,19 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
     # FC short → its Process. Process.name == FC short by convention.
     process_by_short = {p.name: p for p in rig.execution_manifests}
 
+    # Worker short → its SwComponent.art_node ("system.<cluster>.<ident>/
+    # <Composition>"). Application workers (demo p1/p2/p3) host their nodes
+    # via a composition whose prototypes resolve to node types carrying the
+    # real TIPC address — but Process.nodes only carries the bare prototype
+    # names, so the address is lost unless we re-resolve it from the .art.
+    # See _collect_nodes_for_app below.
+    art_node_by_short: dict[str, str] = {}
+    for app in getattr(rig, "applications", []) or []:
+        for comp in getattr(app, "components", []) or []:
+            an = getattr(comp, "art_node", "") or ""
+            if comp.name not in art_node_by_short and an:
+                art_node_by_short[comp.name] = an
+
     # ProcessToMachineMapping lookup for core-affinity refs.
     ptm_by_process: dict[str, "ProcessToMachineMapping"] = {  # noqa: F821
         m.process: m for m in getattr(rig, "process_to_machine_mappings", [])
@@ -464,6 +477,82 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             ))
         return out
 
+    def _collect_nodes_for_app(short: str) -> list[NodeInfo]:
+        """Resolve an application worker's nodes from its composition .art.
+
+        Application workers (demo p1/p2/p3) don't live under
+        ``services/<short>/`` — they host their nodes via a composition
+        (``Demo3WayP1``) whose prototypes (``counter``/``driver``/...) each
+        resolve to a node TYPE (``CounterNode``) that carries the real TIPC
+        address. ``Process.nodes`` only kept the bare PROTOTYPE names, so the
+        supervisor had no address to push the trace-enable to
+        (``bad tipc addr for 'p1'``). Re-resolve here.
+
+        Source of the .art path is the worker's ``SwComponent.art_node``,
+        formatted ``system.<cluster>.<ident>/<Composition>``. The cluster's
+        component.art lives at ``<repo>/system/<cluster>/component.art`` (the
+        ``system/<cluster>`` symlink into the source tree); the composition's
+        ``PrototypeDecl``s cross-ref into it for the node types + tipc.
+
+        Returns [] if the art_node is unknown / the file is missing / the
+        composition has no prototypes — caller falls back to name-only.
+        """
+        an = art_node_by_short.get(short, "")
+        if not an or "/" not in an:
+            return []
+        dotted, _, composition = an.partition("/")
+        parts = dotted.split(".")
+        # "system.<cluster>.<ident>" → cluster is the segment after "system".
+        if len(parts) < 2 or parts[0] != "system":
+            return []
+        cluster = parts[1]
+
+        from pathlib import Path as _Path
+        from artheia.manifest.platform import (
+            PLATFORM_SERVICES_ROOT as _SVCS_ROOT,
+        )
+        from artheia.model.loader import parse_file as _parse_file
+
+        # _SVCS_ROOT is <repo>/system/services; the cluster art root is a
+        # sibling <repo>/system/<cluster>/component.art.
+        art_path = _Path(_SVCS_ROOT).parent / cluster / "component.art"
+        if not art_path.exists():
+            return []
+        try:
+            model = _parse_file(art_path)
+        except Exception:
+            return []
+
+        comp = None
+        for el in model.elements:
+            if type(el).__name__ == "CompositionDecl" and el.name == composition:
+                comp = el
+                break
+        if comp is None:
+            return []
+
+        out: list[NodeInfo] = []
+        for el in getattr(comp, "elements", []) or []:
+            if type(el).__name__ != "PrototypeDecl":
+                continue
+            ntype = getattr(el, "type", None)
+            if ntype is None:
+                continue
+            tipc = getattr(ntype, "tipc", None)
+            tipc_type = getattr(tipc, "type", "") if tipc else ""
+            tipc_instance = getattr(tipc, "instance", "0") if tipc else "0"
+            reporting_raw = (getattr(ntype, "reporting", "") or "true").lower()
+            # NodeInfo.name is the node-TYPE name (matches the Tracer key
+            # "CounterNode"), not the prototype name "counter" — consistent
+            # with the FC path (SmDaemon, not the prototype).
+            out.append(NodeInfo(
+                name=getattr(ntype, "name", el.name),
+                reporting=(reporting_raw == "true"),
+                tipc_type=tipc_type,
+                tipc_instance=tipc_instance,
+            ))
+        return out
+
     def _fc_child(short: str) -> ChildSpec | None:
         """Build a leaf ChildSpec for an FC (Process in execution_manifests).
 
@@ -501,9 +590,13 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         # from their package.art (_collect_nodes_for_fc); application
         # leaves carry their hosted prototype names on Process.nodes
         # (set by the generated applications.py from the composition) —
-        # lift those into minimal NodeInfo so executor.json lists each
-        # app's nodes too.
+        # resolve those prototypes to their node TYPES (with real TIPC
+        # addresses) via the composition .art so the supervisor can push
+        # trace config to them; only if that also yields nothing do we fall
+        # back to address-less NodeInfo (a truly opaque vendor app).
         nodes = _collect_nodes_for_fc(short)
+        if not nodes:
+            nodes = _collect_nodes_for_app(short)
         if not nodes:
             nodes = [NodeInfo(name=n) for n in getattr(proc, "nodes", []) or []]
 

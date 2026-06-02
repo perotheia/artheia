@@ -103,3 +103,75 @@ def test_executor_yaml_carries_nodes_block(tmp_path):
     assert len(sm_daemons) == 1, f"expected one SmDaemon, got {nodes!r}"
     assert sm_daemons[0]["reporting"] is True
     assert sm_daemons[0]["tipc_type"].lower() == "0x8001000d"
+
+
+def test_app_worker_nodes_carry_resolved_tipc_addr(tmp_path):
+    """Regression: an APPLICATION worker (demo p1) hosts its nodes via a
+    composition, so Process.nodes only kept the bare PROTOTYPE names
+    (counter/driver/ticker) and the emitted nodes: block had
+    ``tipc_type: ""`` — leaving the supervisor unable to push trace config
+    (``bad tipc addr for 'p1'``). The fix re-resolves each prototype to its
+    node TYPE (CounterNode @ 0xd0010001) from the composition .art.
+
+    Assert p1's nodes carry the node-type name AND a real tipc address.
+    """
+    import shutil
+    import subprocess
+    artheia = shutil.which("artheia")
+    if not artheia:
+        pytest.skip("artheia CLI not on PATH")
+
+    repo = Path(__file__).resolve().parent.parent.parent
+    out = tmp_path / "central_executor.json"
+    env = {
+        **__import__("os").environ,
+        "PYTHONPATH": f"{repo}:{repo / 'artheia'}",
+    }
+    result = subprocess.run(
+        [
+            artheia, "executor", "emit",
+            "demo.manifest.rig", "--rig", "CentralRig",
+            "--out", str(out),
+        ],
+        capture_output=True, text=True, env=env, cwd=str(repo),
+    )
+    if result.returncode != 0:
+        pytest.skip(
+            "demo rig emit failed (likely missing optional deps); "
+            f"stderr: {result.stderr[:400]}"
+        )
+    assert out.exists(), "executor.json not produced"
+
+    import json as _json
+    data = _json.loads(out.read_text())
+
+    def _walk(node, name):
+        if node.get("name") == name:
+            return node
+        for c in node.get("children", []) or []:
+            r = _walk(c, name)
+            if r is not None:
+                return r
+        return None
+
+    p1 = _walk(data, "p1")
+    assert p1 is not None, "p1 app worker not in emitted tree"
+    nodes = p1.get("nodes", []) or []
+    assert nodes, f"p1 has no nodes: block (got {p1!r})"
+
+    by_name = {n["name"]: n for n in nodes}
+    # node-TYPE names (CounterNode), NOT prototype names (counter).
+    assert "CounterNode" in by_name, (
+        f"p1 nodes should carry node-type names; got {list(by_name)}"
+    )
+    counter = by_name["CounterNode"]
+    assert counter["tipc_type"].lower() == "0xd0010001", (
+        f"CounterNode must carry its real tipc addr, not '' — got {counter!r}"
+    )
+    assert counter["reporting"] is True
+    # the other two prototypes resolve too.
+    assert by_name["DriverNode"]["tipc_type"].lower() == "0xd0010002"
+    assert by_name["TickerNode"]["tipc_type"].lower() == "0xd0010003"
+    # CRITICAL: no node may have an empty tipc address (the bug signature).
+    empties = [n["name"] for n in nodes if not n.get("tipc_type")]
+    assert not empties, f"these p1 nodes still have empty tipc: {empties}"
