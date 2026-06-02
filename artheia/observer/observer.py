@@ -49,8 +49,9 @@ class TraceRec:
     msg_type: str           # wire-type name
     corr_id: int
     ts_ns: int
-    payload: bytes          # the wrapped [header][proto-wire] of the traced msg
-    json: str               # JSON serialization of the decoded TraceRecord
+    payload: bytes          # the inner message's proto-wire bytes (no header)
+    json: str               # JSON serialization of the TraceRecord ENVELOPE
+    content: "Optional[dict]" = None  # the inner msg decoded by msg_type, or None
 
 
 class TraceObserver:
@@ -136,12 +137,49 @@ class TraceObserver:
         # The proto field is `node_name` (= src; back-compat alias per
         # services/log/system/log/package.art), NOT `src`. Read the real
         # field name; TraceRec keeps `src` as the observer's vocabulary.
+        inner = self._decode_inner(msg.msg_type, bytes(msg.payload))
         return TraceRec(
             src=msg.node_name, dst=msg.dst, msg_type=msg.msg_type,
             corr_id=msg.corr_id, ts_ns=msg.ts_ns,
             payload=bytes(msg.payload),
             json=json_format.MessageToJson(msg, indent=None),
+            content=inner,
         )
+
+    def _decode_inner(self, msg_type: str, payload: bytes) -> Optional[dict]:
+        """Decode the INNER traced message from its proto-wire bytes.
+
+        The record's `payload` is the raw proto3 wire of the traced message
+        (e.g. system_demo_GetReply); `msg_type` is its flat nanopb type name.
+        Resolve that type to its _pb2 class via the probe Codec and decode to a
+        plain {field: value} dict. Returns None on empty payload or any failure
+        (best-effort — a record we can't decode the body of still renders its
+        envelope).
+
+        msg_type is `<flat_package>_<Message>`; we don't know a-priori where the
+        package ends, so try successively-shorter prefixes as the art package
+        (system.demo.Get? system.demo → Get? …) until _message_class resolves.
+        Results cache inside Codec, so the trial cost is paid once per type.
+        """
+        if not payload or not msg_type:
+            return None
+        parts = msg_type.split("_")
+        # Try the longest package prefix first (most specific): for
+        # 'system_demo_GetReply' try 'system.demo.Get'→fail, 'system.demo'→ok.
+        for cut in range(len(parts) - 1, 0, -1):
+            art_package = ".".join(parts[:cut])
+            try:
+                cls = self.codec._message_class(art_package, msg_type)
+            except Exception:
+                continue
+            try:
+                inner = cls()
+                inner.ParseFromString(payload)
+                return {f.name: getattr(inner, f.name)
+                        for f in cls.DESCRIPTOR.fields}
+            except Exception:
+                return None
+        return None
 
     # ---- record stream ----------------------------------------------------
     def records(self, timeout: float = 5.0) -> Iterator[TraceRec]:
