@@ -78,7 +78,7 @@ class TipcServer:
                         pass
                     continue
                 try:
-                    buf = sk.recv(4096)
+                    buf = sk.recv(65536)
                 except OSError:
                     buf = b""
                 if not buf:
@@ -145,7 +145,7 @@ class TipcClient:
         ready, _, _ = select.select([self._sock], [], [], timeout)
         if not ready:
             return None
-        buf = self._sock.recv(4096)
+        buf = self._sock.recv(65536)
         if len(buf) < wire.HEADER_SIZE:
             return None
         hdr = wire.Header.unpack(buf)
