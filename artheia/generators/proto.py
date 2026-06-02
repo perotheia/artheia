@@ -43,16 +43,44 @@ class _Enum:
     values: list[_EnumValue]
 
 
-def _proto_type_for(field) -> tuple[str, str | None]:
-    """Return (proto_type, optional_imported_decl_name).
+def _ref_package(ref) -> str:
+    """The .art package that DEFINES a referenced decl (message/enum).
 
-    The imported decl can be either a message or an enum — both live in
-    their own `.proto` file in the output.
+    Cross-package refs (a supervisor message embedding platform.runtime's
+    TraceControlPush) resolve via the import-following scope provider to a decl
+    living in another model; get_model(ref).name is that model's package. Empty
+    string if it can't be determined (treated as same-package).
+    """
+    try:
+        from textx import get_model
+        return get_model(ref).name or ""
+    except Exception:
+        return ""
+
+
+def _proto_type_for(field, cur_package: str) -> tuple[str, str | None, str | None]:
+    """Return (proto_type, imported_decl_name, import_path).
+
+    - proto_type: the type as written in the .proto. For a SAME-package ref it's
+      the bare name; for a CROSS-package ref it's package-qualified
+      (`platform_runtime.TraceControlPush`) so protoc resolves it via the import.
+    - imported_decl_name: the referenced decl's name (for the same-package
+      import filename), or None for scalars.
+    - import_path: the proto import path. Same package → "<Name>.proto"; cross
+      package → "<other_pkg_subdir>/<Name>.proto" (where it was generated).
     """
     t = field.type
-    if getattr(t, "ref", None) is not None:
-        return t.ref.name, t.ref.name
-    return t.kind, None
+    ref = getattr(t, "ref", None)
+    if ref is None:
+        return t.kind, None, None
+    ref_pkg = _ref_package(ref)
+    if ref_pkg and ref_pkg != cur_package:
+        # Cross-package: qualify the type with the flat proto package and point
+        # the import at that package's proto subdir (mirrors package_subdir).
+        flat = _proto_package_name(ref_pkg).replace(".", "_")
+        subdir = package_subdir(ref_pkg).as_posix()
+        return f"{flat}.{ref.name}", ref.name, f"{subdir}/{ref.name}.proto"
+    return ref.name, ref.name, f"{ref.name}.proto"
 
 
 def _messages(model) -> Iterable:
@@ -164,9 +192,9 @@ def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Pa
         # declaration order. Any trailing nanopb options block is passed
         # through verbatim — the generator does not parse it.
         for idx, f in enumerate(msg.fields):
-            proto_type, imp = _proto_type_for(f)
-            if imp and imp != msg.name and f"{imp}.proto" not in imports:
-                imports.append(f"{imp}.proto")
+            proto_type, imp, imp_path = _proto_type_for(f, model.name or "")
+            if imp and imp != msg.name and imp_path and imp_path not in imports:
+                imports.append(imp_path)
             fields.append(_Field(
                 name=f.name,
                 number=idx + 1,

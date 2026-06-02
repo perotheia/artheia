@@ -37,6 +37,29 @@ def test_proto_basic_shape(tmp_path):
     assert "repeated string tags = 2;" in outer
 
 
+def test_bundled_proto_cross_package_import(tmp_path):
+    """A field whose type is defined in an IMPORTED .art package emits a
+    package-qualified type + an import at the imported package's bundled-proto
+    path (e.g. the supervisor's TraceConfig embedding platform.runtime's
+    TraceControlPush). Real instance: system/supervisor/package.art."""
+    from artheia.generators.proto_package import generate_package_proto
+
+    repo = Path(__file__).resolve().parent.parent.parent
+    art = repo / "system/supervisor/package.art"
+    if not art.exists():
+        import pytest
+        pytest.skip("supervisor .art not present")
+    out = generate_package_proto(str(art), tmp_path)
+    text = Path(out).read_text()
+    # cross-package import path = <flat-pkg>/<leaf>.proto
+    assert 'import "platform_runtime/runtime.proto";' in text
+    # field type is package-QUALIFIED so protoc/nanopb resolve via the import
+    assert "platform_runtime.TraceControlPush trace_ctrl" in text
+    assert "platform_runtime.LogLevelValue level" in text
+    # the imported enum is NOT re-emitted locally (it lives in the runtime proto)
+    assert "enum TraceKind" not in text
+
+
 def test_netgraph_shape(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     out = tmp_path / "netgraph.json"
