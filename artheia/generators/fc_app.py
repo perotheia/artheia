@@ -380,18 +380,25 @@ def _to_snake(name: str) -> str:
     return s.lower()
 
 
-def _node_view(node) -> _NodeView:
+def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
     # model/inherit's _apply_node_defaults guarantees reporting is
     # always populated as the string "true" or "false" by the time
     # we see it. Default-true: missing/empty is treated as reporting.
     reporting_raw = (getattr(node, "reporting", "") or "true").lower()
+    # Runtime node IDENTITY (kNodeName / Tracer key / trace nodeName /
+    # supervisor push target / netgraph peer tag) is the PROTOTYPE name
+    # (e.g. "counter") when this node was reached via a composition — the
+    # .art/manifest address nodes by prototype name, so the runtime matches.
+    # Falls back to the snake'd node TYPE for standalone gen (no composition).
+    # The C++ class identity (name/upper) stays the TYPE — that's the class.
+    identity = proto_name or _to_snake(node.name)
     # AUTOSAR Log&Trace tag (#383). The .art's `tag = "..."` is the
-    # canonical source; when absent we fall back to the node name so
-    # the generated logger always has a non-empty context.
-    log_tag = (getattr(node, "tag", "") or "").strip() or node.name
+    # canonical source; when absent we fall back to the node IDENTITY so
+    # the generated logger context matches the trace nodeName.
+    log_tag = (getattr(node, "tag", "") or "").strip() or identity
     nv = _NodeView(
         name=node.name,
-        snake=_to_snake(node.name),
+        snake=identity,
         upper=node.name.upper(),
         tipc_type=node.tipc.type,
         tipc_instance=node.tipc.instance,
@@ -475,6 +482,40 @@ def _nodes_prototyped_by_composition(model, composition_name: str) -> set[str]:
     return names
 
 
+def _prototype_name_by_type(model, composition_name: str) -> dict[str, str]:
+    """Map node-TYPE name → PROTOTYPE (instance) name for one composition.
+
+    `prototype CounterNode counter` → {"CounterNode": "counter"}. This is the
+    canonical node identity: the .art/manifest address nodes by the prototype
+    name, so the runtime kNodeName (Tracer key, trace nodeName, supervisor
+    push target, netgraph peer tag) uses it too. Returns {} if the composition
+    isn't found (caller falls back to the type name).
+
+    NOTE: assumes a node type is prototyped at most once per composition (true
+    across the current model — verified). A duplicated type would collide here
+    and need per-instance tracers; we'd detect that as len(prototypes) >
+    len(map) at the call site if it ever happens.
+    """
+    from ..model.flatten import flatten_composition
+
+    comp = None
+    for el in model.elements:
+        if el.__class__.__name__ == "CompositionDecl" and el.name == composition_name:
+            comp = el
+            break
+    if comp is None:
+        return {}
+    prototypes, _connects = flatten_composition(comp)
+    out: dict[str, str] = {}
+    for proto in prototypes:
+        t = getattr(proto, "type", None)
+        tn = getattr(t, "name", None)
+        pn = getattr(proto, "name", None)
+        if tn and pn:
+            out[tn] = pn
+    return out
+
+
 def _build_model_view(art_path: Path,
                        cxx_namespace_override: Optional[str] = None,
                        composition: Optional[str] = None) -> _ModelView:
@@ -512,6 +553,18 @@ def _build_model_view(art_path: Path,
     if composition is not None:
         wanted = _nodes_prototyped_by_composition(model, composition)
 
+    # type→prototype name map (e.g. {"CounterNode": "counter"}) — the canonical
+    # runtime identity. ALWAYS unioned across EVERY composition in the .art
+    # (prototype names are globally unique), NOT just the selected one: a node's
+    # cross-process PEERS live in OTHER compositions (p1's counter is a peer of
+    # p3's incrementer), and their kNodeName peer tags must resolve too. A type
+    # prototyped by >1 composition keeps the first seen.
+    proto_by_type: dict[str, str] = {}
+    for el in model.elements:
+        if el.__class__.__name__ == "CompositionDecl":
+            for t, p in _prototype_name_by_type(model, el.name).items():
+                proto_by_type.setdefault(t, p)
+
     nodes: list[_NodeView] = []
     has_statem = False
     state_enum = ""
@@ -519,7 +572,7 @@ def _build_model_view(art_path: Path,
         if el.__class__.__name__ == "NodeDecl":
             if wanted is not None and el.name not in wanted:
                 continue
-            nv = _node_view(el)
+            nv = _node_view(el, proto_name=proto_by_type.get(el.name))
             nodes.append(nv)
             if not daemon_class:
                 daemon_class = nv.name
@@ -544,9 +597,10 @@ def _build_model_view(art_path: Path,
                     node=d["node"],
                     tipc_type=d["tipc_type"],
                     tipc_instance=d["tipc_instance"],
-                    # Peer kNodeName = _to_snake(node type) — matches the
-                    # `static constexpr kNodeName` the generated peer emits.
-                    node_snake=_to_snake(d["node"]),
+                    # Peer kNodeName = the peer's PROTOTYPE name when known
+                    # (matches the `static constexpr kNodeName` the peer emits),
+                    # else the snake'd node TYPE for standalone peers.
+                    node_snake=proto_by_type.get(d["node"], _to_snake(d["node"])),
                 )
                 for d in info.get("destinations", [])
             ]

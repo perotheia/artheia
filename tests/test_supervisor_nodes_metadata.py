@@ -160,18 +160,21 @@ def test_app_worker_nodes_carry_resolved_tipc_addr(tmp_path):
     assert nodes, f"p1 has no nodes: block (got {p1!r})"
 
     by_name = {n["name"]: n for n in nodes}
-    # node-TYPE names (CounterNode), NOT prototype names (counter).
-    assert "CounterNode" in by_name, (
-        f"p1 nodes should carry node-type names; got {list(by_name)}"
+    # PROTOTYPE names (counter/driver/ticker), matching the runtime kNodeName
+    # gen-app emits + the .art/manifest vocabulary — NOT the node TYPE
+    # (CounterNode). The supervisor's trace-push target, the trace record
+    # nodeName, and `tdb trace <name>` all key on this prototype name.
+    assert "counter" in by_name, (
+        f"p1 nodes should carry prototype names; got {list(by_name)}"
     )
-    counter = by_name["CounterNode"]
+    counter = by_name["counter"]
     assert counter["tipc_type"].lower() == "0xd0010001", (
-        f"CounterNode must carry its real tipc addr, not '' — got {counter!r}"
+        f"counter must carry its real tipc addr, not '' — got {counter!r}"
     )
     assert counter["reporting"] is True
     # the other two prototypes resolve too.
-    assert by_name["DriverNode"]["tipc_type"].lower() == "0xd0010002"
-    assert by_name["TickerNode"]["tipc_type"].lower() == "0xd0010003"
+    assert by_name["driver"]["tipc_type"].lower() == "0xd0010002"
+    assert by_name["ticker"]["tipc_type"].lower() == "0xd0010003"
     # CRITICAL: no node may have an empty tipc address (the bug signature).
     empties = [n["name"] for n in nodes if not n.get("tipc_type")]
     assert not empties, f"these p1 nodes still have empty tipc: {empties}"

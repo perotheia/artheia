@@ -542,11 +542,13 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             tipc_type = getattr(tipc, "type", "") if tipc else ""
             tipc_instance = getattr(tipc, "instance", "0") if tipc else "0"
             reporting_raw = (getattr(ntype, "reporting", "") or "true").lower()
-            # NodeInfo.name is the node-TYPE name (matches the Tracer key
-            # "CounterNode"), not the prototype name "counter" — consistent
-            # with the FC path (SmDaemon, not the prototype).
+            # NodeInfo.name is the PROTOTYPE name ("counter"), matching the
+            # runtime kNodeName gen-app now emits (prototype-derived) — so the
+            # supervisor's trace-config push target, the trace record nodeName,
+            # the Tracer registry key, and `tdb trace <name>` all agree. (Was
+            # the node TYPE "CounterNode"; that desynced from the records.)
             out.append(NodeInfo(
-                name=getattr(ntype, "name", el.name),
+                name=getattr(el, "name", getattr(ntype, "name", "")),
                 reporting=(reporting_raw == "true"),
                 tipc_type=tipc_type,
                 tipc_instance=tipc_instance,
