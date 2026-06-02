@@ -52,6 +52,32 @@ class TraceRec:
     payload: bytes          # the inner message's proto-wire bytes (no header)
     json: str               # JSON serialization of the TraceRecord ENVELOPE
     content: "Optional[dict]" = None  # the inner msg decoded by msg_type, or None
+    kind: str = ""          # TraceKind enum name (e.g. "CALL_OUT"), "" if unset
+
+    def to_dict(self) -> dict:
+        """Full record as JSON-ready dict: header fields + decoded inner proto.
+
+        `content` carries the decoded inner message; bytes fields in it are
+        hex-encoded so the dict is JSON-serializable. `payload_hex` keeps the
+        raw inner bytes for callers that want them.
+        """
+        def jsonable(x):
+            if isinstance(x, (bytes, bytearray)):
+                return x.hex()
+            return x
+        content = None
+        if self.content is not None:
+            content = {k: jsonable(v) for k, v in self.content.items()}
+        return {
+            "ts_ns": self.ts_ns,
+            "src": self.src,
+            "dst": self.dst,
+            "msg_type": self.msg_type,
+            "kind": self.kind,
+            "corr_id": self.corr_id,
+            "payload_hex": self.payload.hex() if self.payload else "",
+            "content": content,
+        }
 
 
 class TraceObserver:
@@ -138,12 +164,20 @@ class TraceObserver:
         # services/log/system/log/package.art), NOT `src`. Read the real
         # field name; TraceRec keeps `src` as the observer's vocabulary.
         inner = self._decode_inner(msg.msg_type, bytes(msg.payload))
+        # kind is a TraceKind enum (field 6). Resolve its symbolic name from
+        # the enum descriptor; fall back to the raw int if unnamed.
+        try:
+            kind_name = msg.DESCRIPTOR.fields_by_name["kind"].enum_type \
+                .values_by_number[msg.kind].name
+        except Exception:
+            kind_name = str(getattr(msg, "kind", "") or "")
         return TraceRec(
             src=msg.node_name, dst=msg.dst, msg_type=msg.msg_type,
             corr_id=msg.corr_id, ts_ns=msg.ts_ns,
             payload=bytes(msg.payload),
             json=json_format.MessageToJson(msg, indent=None),
             content=inner,
+            kind=kind_name,
         )
 
     def _decode_inner(self, msg_type: str, payload: bytes) -> Optional[dict]:
