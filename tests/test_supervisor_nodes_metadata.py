@@ -99,8 +99,12 @@ def test_executor_yaml_carries_nodes_block(tmp_path):
     assert sm is not None, "sm worker not in emitted tree"
     nodes = sm.get("nodes", []) or []
     assert nodes, f"sm has no nodes: block (got {sm!r})"
-    sm_daemons = [n for n in nodes if n["name"] == "SmDaemon"]
-    assert len(sm_daemons) == 1, f"expected one SmDaemon, got {nodes!r}"
+    # NodeInfo.name is the PROTOTYPE name ("sm_daemon"), matching the runtime
+    # kNodeName — not the node TYPE ("SmDaemon"). (For sm the prototype name
+    # equals the snake'd type; the log pump is where they differ —
+    # TraceStreamPump → trace_pump.)
+    sm_daemons = [n for n in nodes if n["name"] == "sm_daemon"]
+    assert len(sm_daemons) == 1, f"expected one sm_daemon, got {nodes!r}"
     assert sm_daemons[0]["reporting"] is True
     assert sm_daemons[0]["tipc_type"].lower() == "0x8001000d"
 

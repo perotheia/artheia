@@ -457,6 +457,33 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             # manifest emit. Caller's other paths still report.
             return []
 
+        # Map node-TYPE → PROTOTYPE name from the sibling component.art's
+        # composition (e.g. TraceStreamPump → trace_pump), so NodeInfo.name is
+        # the PROTOTYPE name — matching the runtime kNodeName gen-app emits and
+        # the trace record nodeName. Most services nodes' prototype name equals
+        # the snake'd type (sm_daemon ← SmDaemon), but some differ
+        # (trace_pump ← TraceStreamPump); without this the supervisor would
+        # push trace to "TraceStreamPump" while the node answers to
+        # "trace_pump". Empty/absent component.art → fall back to el.name.
+        proto_by_type: dict[str, str] = {}
+        comp_path = _Path(_SVCS_ROOT) / short / "component.art"
+        if comp_path.exists():
+            try:
+                cmodel = _parse_file(comp_path)
+                for cel in cmodel.elements:
+                    if type(cel).__name__ != "CompositionDecl":
+                        continue
+                    for pel in getattr(cel, "elements", []) or []:
+                        if type(pel).__name__ != "PrototypeDecl":
+                            continue
+                        ntype = getattr(pel, "type", None)
+                        tn = getattr(ntype, "name", None)
+                        pn = getattr(pel, "name", None)
+                        if tn and pn:
+                            proto_by_type.setdefault(tn, pn)
+            except Exception:
+                pass
+
         out: list[NodeInfo] = []
         for el in model.elements:
             if type(el).__name__ != "NodeDecl":
@@ -470,7 +497,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             # don't have to deal with both shapes.
             reporting_raw = (getattr(el, "reporting", "") or "true").lower()
             out.append(NodeInfo(
-                name=el.name,
+                name=proto_by_type.get(el.name, el.name),
                 reporting=(reporting_raw == "true"),
                 tipc_type=tipc_type,
                 tipc_instance=tipc_instance,
