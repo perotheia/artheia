@@ -54,12 +54,17 @@ class TraceRec:
     content: "Optional[dict]" = None  # the inner msg decoded by msg_type, or None
     kind: str = ""          # TraceKind enum name (e.g. "CALL_OUT"), "" if unset
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, ts: "Optional[str]" = None) -> dict:
         """Full record as JSON-ready dict: header fields + decoded inner proto.
 
         `content` carries the decoded inner message; bytes fields in it are
-        hex-encoded so the dict is JSON-serializable. `payload_hex` keeps the
-        raw inner bytes for callers that want them.
+        hex-encoded so the dict is JSON-serializable.
+
+        `ts`, when given, is a caller-formatted human timestamp emitted as the
+        `ts` field (the raw `ts_ns` is the EMITTING NODE's monotonic-from-start
+        nanoseconds — not a wall clock — so a readable wall-clock stamp is the
+        observer's receive time, supplied by the caller). `dst` is omitted when
+        empty (the producer doesn't populate a peer yet).
         """
         def jsonable(x):
             if isinstance(x, (bytes, bytearray)):
@@ -68,16 +73,21 @@ class TraceRec:
         content = None
         if self.content is not None:
             content = {k: jsonable(v) for k, v in self.content.items()}
-        return {
-            "ts_ns": self.ts_ns,
+        out: dict = {}
+        if ts is not None:
+            out["ts"] = ts
+        else:
+            out["ts_ns"] = self.ts_ns
+        if self.dst:
+            out["dst"] = self.dst
+        out.update({
             "src": self.src,
-            "dst": self.dst,
             "msg_type": self.msg_type,
             "kind": self.kind,
             "corr_id": self.corr_id,
-            "payload_hex": self.payload.hex() if self.payload else "",
             "content": content,
-        }
+        })
+        return out
 
 
 class TraceObserver:
