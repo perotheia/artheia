@@ -55,7 +55,7 @@ def test_bundled_proto_cross_package_import(tmp_path):
     assert 'import "platform_runtime/runtime.proto";' in text
     # field type is package-QUALIFIED so protoc/nanopb resolve via the import
     assert "platform_runtime.TraceControlPush trace_ctrl" in text
-    assert "platform_runtime.LogLevelValue level" in text
+    assert "platform_runtime.LogLevelPush log_level" in text
     # the imported enum is NOT re-emitted locally (it lives in the runtime proto)
     assert "enum TraceKind" not in text
 
