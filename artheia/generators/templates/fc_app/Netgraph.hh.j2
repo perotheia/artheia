@@ -44,7 +44,7 @@ namespace {{ model.cxx_namespace }}::netgraph {
 //
 // Cast (fire-and-forget): cast(*this, msg, netgraph::{{ d.node|lower }}).
 inline constexpr ::theia::runtime::TipcAddr {{ d.node|lower }} = {
-    {{ d.tipc_type }}u, {{ d.tipc_instance }}u
+    {{ d.tipc_type }}u, {{ d.tipc_instance }}u, "{{ d.node_snake }}"
 };
 // Call (sync request/reply): a RemoteRef the caller declares + connect()s,
 //   netgraph::{{ d.node }}Ref ref; ref.connect();
