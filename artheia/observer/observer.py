@@ -44,12 +44,11 @@ SUBSCRIBER_TYPE = 0x8001001A
 @dataclass
 class TraceRec:
     """One decoded trace record: the header fields + the raw payload + JSON."""
-    node_name: str          # source node (src)
+    src: str                # emitting node
     dst: str                # peer node ("" if none)
     msg_type: str           # wire-type name
     corr_id: int
     ts_ns: int
-    kind: int               # TraceKind: 0 OTHER 1 CAST_OUT 2 CAST_IN 3 CALL_OUT 4 CALL_IN 5 STATEM
     payload: bytes          # the wrapped [header][proto-wire] of the traced msg
     json: str               # JSON serialization of the decoded TraceRecord
 
@@ -134,9 +133,12 @@ class TraceObserver:
         cls = self.codec._message_class(_LOG_PKG, _RECORD)  # cached _pb2 class
         msg = cls()
         msg.ParseFromString(payload)
+        # The proto field is `node_name` (= src; back-compat alias per
+        # services/log/system/log/package.art), NOT `src`. Read the real
+        # field name; TraceRec keeps `src` as the observer's vocabulary.
         return TraceRec(
-            node_name=msg.node_name, dst=msg.dst, msg_type=msg.msg_type,
-            corr_id=msg.corr_id, ts_ns=msg.ts_ns, kind=int(msg.kind),
+            src=msg.node_name, dst=msg.dst, msg_type=msg.msg_type,
+            corr_id=msg.corr_id, ts_ns=msg.ts_ns,
             payload=bytes(msg.payload),
             json=json_format.MessageToJson(msg, indent=None),
         )
