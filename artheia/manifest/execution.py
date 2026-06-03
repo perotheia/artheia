@@ -261,6 +261,16 @@ class Process(Identifiable):
     # RPC (#385). One of: "trace"|"debug"|"info"|"warn"|"error".
     log_level: str = "info"
 
+    # Per-process logger SINK kind (#384 follow-up). Serialized into the
+    # child's env map as ``THEIA_LOGGER=<kind>[:<arg>]`` (executor.json);
+    # the supervisor setenvs it, and gen-app's main.cc builds the sink via
+    # theia::runtime::MakeLogger at boot. One of: "stdio" | "null" |
+    # "file:<path>" | "syslog". Empty ("") means "use the generator default"
+    # — a per-process file under /tmp/theia (build_supervisor_tree fills it
+    # in as file:/tmp/theia/<name>.log so each FC's log is separable and off
+    # the shared console).
+    logger: str = ""
+
     # Hosted node (prototype) names — the in-process GenServer instances
     # this Process runs, derived from the .art composition's prototypes.
     # Carried into executor.json so the supervisor knows each app's nodes

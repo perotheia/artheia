@@ -615,6 +615,16 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         if log_level:
             env["THEIA_LOG_LEVEL"] = log_level
 
+        # THEIA_LOGGER selects the per-process logger SINK. Default to a
+        # per-process FILE under /tmp/theia (one file per FC, separable + off
+        # the shared console) so a multi-process rig isn't an interleaved
+        # stderr soup. An explicit Process.logger (set in a rig overlay /
+        # executor.py) wins — e.g. "stdio" for dev, "syslog" for a unit.
+        logger = (getattr(proc, "logger", "") or "").strip()
+        if not logger:
+            logger = f"file:/tmp/theia/{short}.log"
+        env["THEIA_LOGGER"] = logger
+
         # Per-node metadata for the C++ supervisor. FCs get rich NodeInfo
         # from their package.art (_collect_nodes_for_fc); application
         # leaves carry their hosted prototype names on Process.nodes
