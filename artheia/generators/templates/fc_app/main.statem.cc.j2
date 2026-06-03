@@ -11,7 +11,8 @@
 #include "lib/{{ n.name }}.hh"
 {%- endfor %}
 
-#include "Logger.hh"     // parse_log_level / process_logger
+#include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink
+#include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 {% if model.nodes | selectattr("reporting") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
 {% endif %}
@@ -37,18 +38,13 @@ int main() {
 
     using namespace {{ model.cxx_namespace }};
 
-    // Process-wide logger. Pick up THEIA_LOG_LEVEL from the env
-    // (supervisor sets it from executor.json's per-child env map,
-    // sourced from Process.log_level on the rig). Defaults to Info
-    // when unset or unparseable. set_process_logger publishes it so a
-    // reporting node's config service can apply a live ConfigureLogLevel
-    // push (#386) via process_logger().set_level on the node thread.
-    auto logger = MakeContextLogger();
+    // Boot log level — THEIA_LOG_LEVEL from the env (supervisor sets it from
+    // executor.json's per-child env map). Defaults to Info when unset. Applied
+    // to every node's logger below; the SINK kind comes from THEIA_LOGGER.
+    auto boot_level = ::theia::runtime::kDefaultLogLevel;
     if (const char* lvl = std::getenv("THEIA_LOG_LEVEL")) {
-        logger->set_level(::theia::runtime::parse_log_level(lvl));
+        boot_level = ::theia::runtime::parse_log_level(lvl);
     }
-    ::theia::runtime::set_process_logger(logger);
-    (void)logger;
 
     ::theia::runtime::TimerService timers;
     (void)timers;  // wired into statem nodes' send_after
@@ -58,18 +54,35 @@ int main() {
     ::theia::runtime::TipcMux config_mux;
 {% endif %}
 {% for n in model.nodes %}
+    {{ n.name }} {{ n.snake }};
+    // Per-node logger: tagged [#{{ n.snake }}] (kNodeName, matches `tdb ps`),
+    // sink chosen by $THEIA_LOGGER. Installed BEFORE start so init/do_* log
+    // through it; the FIRST node's logger also backs process_logger().
+    {
+        auto {{ n.snake }}_log = MakeContextLogger({{ n.name }}::kNodeName);
+        {{ n.snake }}_log->set_level(boot_level);
+{%- if loop.first %}
+        ::theia::runtime::set_process_logger({{ n.snake }}_log);
+{%- endif %}
+        {{ n.snake }}.set_logger(std::move({{ n.snake }}_log));
+    }
 {%- if n.statem is not none %}
-    {{ n.name }} {{ n.snake }};
     {{ n.snake }}.start_statem(timers);
-    std::fprintf(stderr,
-                 "[{{ n.snake }}] up — TIPC type=0x%x instance=%u; "
-                 "statem initial={{ n.statem.initial }}\n",
-                 {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+    {
+        char _tipc[96];
+        std::snprintf(_tipc, sizeof(_tipc),
+                      "up — TIPC type=0x%x instance=%u; statem initial={{ n.statem.initial }}",
+                      {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+        {{ n.snake }}.log().info(_tipc);
+    }
 {%- else %}
-    {{ n.name }} {{ n.snake }};
     {{ n.snake }}.start();
-    std::fprintf(stderr, "[{{ n.snake }}] up — TIPC type=0x%x instance=%u\n",
-                 {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+    {
+        char _tipc[64];
+        std::snprintf(_tipc, sizeof(_tipc), "up — TIPC type=0x%x instance=%u",
+                      {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+        {{ n.snake }}.log().info(_tipc);
+    }
 {%- endif %}
 {% if n.reporting %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
@@ -93,9 +106,8 @@ int main() {
         config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
     } else {
-        std::fprintf(stderr,
-                     "[{{ n.snake }}] WARN: config service bind failed; "
-                     "live log-level push + signal inject disabled\n");
+        {{ n.snake }}.log().warn("config service bind failed; live log-level "
+                                 "push + signal inject disabled");
     }
 {% endif %}
 {% endfor %}
