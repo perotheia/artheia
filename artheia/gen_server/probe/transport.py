@@ -116,15 +116,30 @@ class TipcClient:
         self._sock: Optional[socket.socket] = None
 
     def connect(self, total_timeout_ms: int = 3000, retry_ms: int = 100) -> bool:
+        # NON-BLOCKING connect. A BLOCKING SOCK_SEQPACKET connect() to an absent
+        # / not-yet-accepting TIPC service hangs in-kernel for TIPC's own ~8s
+        # timeout, which IGNORES total_timeout_ms (the deadline below is only
+        # checked BETWEEN retries — it can't interrupt a blocked syscall). That
+        # made every probe call randomly take ~8s when the first connect didn't
+        # succeed instantly. So: settimeout() bounds each connect attempt to the
+        # remaining budget; on success restore blocking for send/recv.
         deadline = time.monotonic() + total_timeout_ms / 1000.0
         addr = _connect_addr(self.tipc_type, self.tipc_instance)
         while True:
             s = socket.socket(_AF_TIPC, socket.SOCK_SEQPACKET)
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                s.close()
+                return False
+            # Cap a single attempt so a kernel-blocking connect can't overrun
+            # the whole budget; min with retry slice keeps the retry cadence.
+            s.settimeout(min(remain, max(retry_ms / 1000.0, 0.2)))
             try:
                 s.connect(addr)
+                s.settimeout(None)        # back to blocking for send/recv
                 self._sock = s
                 return True
-            except OSError:
+            except (OSError, socket.timeout):
                 s.close()
                 if time.monotonic() > deadline:
                     return False
