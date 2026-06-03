@@ -101,6 +101,14 @@ class Rig:
     # supervisor binary.
     supervisors: list[SupervisorNode] = field(default_factory=list)
 
+    # Rig-wide default logger SINK for every supervised Process (THEIA_LOGGER:
+    # stdio|null|file:<path>|syslog). A Process with its own `logger` overrides
+    # this; if BOTH are empty, build_supervisor_tree falls back to a per-process
+    # file under /tmp/theia. A bare "file:<dir>" (no .log) is treated as a
+    # DIRECTORY — each process gets <dir>/<name>.log (so one rig-level
+    # "file:/var/log/theia" gives separable per-FC files).
+    logger: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Structured-DSL aggregator — new shape (mosaic-style)
@@ -180,6 +188,11 @@ class SoftwareSpecification(Layer):
     # OTP-style supervisor tree.
     supervisors: _SupervisorSet = field(default_factory=Undefined)
 
+    # Rig-wide default logger sink (scalar, like `vehicle`). Undefined → a
+    # squashing layer inherits the base's value; an empty string in the
+    # materialized Rig means "no rig default → per-process /tmp/theia fallback".
+    logger: Union[str, Undefined] = field(default_factory=Undefined)
+
     # -----------------------------------------------------------------
     # Bridge to legacy Rig — until call sites (executor emit, gui emit,
     # generate_manifest) walk SoftwareSpecification directly. New code
@@ -212,6 +225,8 @@ class SoftwareSpecification(Layer):
         if isinstance(vehicle, Undefined):
             vehicle = VehicleIdentity(name="")
 
+        logger = "" if isinstance(self.logger, Undefined) else self.logger
+
         return Rig(
             vehicle=vehicle,
             machines=_resolve(self.machines),
@@ -221,4 +236,5 @@ class SoftwareSpecification(Layer):
             process_to_machine_mappings=_resolve(self.process_to_machine_mappings),
             node_to_cpu_mappings=_resolve(self.node_to_cpu_mappings),
             supervisors=_resolve(self.supervisors),
+            logger=logger,
         )

@@ -232,6 +232,23 @@ class SupervisorNode(Identifiable):
 # ---------------------------------------------------------------------------
 
 
+def _logger_for_process(spec: str, name: str) -> str:
+    """Resolve a THEIA_LOGGER spec for a specific process.
+
+    A "file:<arg>" whose <arg> is a DIRECTORY (no ".log" leaf) expands to
+    "file:<dir>/<name>.log" so one rig-/fallback-level directory yields a
+    separable file per process. An explicit "file:<path>.log", or any other
+    kind (stdio|null|syslog|file:<...>.log), passes through unchanged.
+    """
+    spec = (spec or "").strip()
+    if spec.startswith("file:"):
+        arg = spec[len("file:"):]
+        if not arg.endswith(".log"):
+            arg = f"{arg.rstrip('/')}/{name}.log"
+        return f"file:{arg}"
+    return spec
+
+
 def _topo_sort_services(rig: "object") -> list[str]:
     """Return FC short-names in start order (deps first).
 
@@ -615,15 +632,19 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         if log_level:
             env["THEIA_LOG_LEVEL"] = log_level
 
-        # THEIA_LOGGER selects the per-process logger SINK. Default to a
-        # per-process FILE under /tmp/theia (one file per FC, separable + off
-        # the shared console) so a multi-process rig isn't an interleaved
-        # stderr soup. An explicit Process.logger (set in a rig overlay /
-        # executor.py) wins — e.g. "stdio" for dev, "syslog" for a unit.
+        # THEIA_LOGGER selects the per-process logger SINK. Precedence:
+        #   1. Process.logger        — per-process override (executor.py PROCESS)
+        #   2. rig.logger            — rig-wide default (SoftwareSpecification)
+        #   3. file:/tmp/theia/...   — built-in fallback
+        # A "file:<dir>" with no ".log" leaf is treated as a DIRECTORY: each
+        # process gets <dir>/<short>.log, so ONE rig-level "file:/var/log/theia"
+        # still yields separable per-FC files.
         logger = (getattr(proc, "logger", "") or "").strip()
         if not logger:
-            logger = f"file:/tmp/theia/{short}.log"
-        env["THEIA_LOGGER"] = logger
+            logger = (getattr(rig, "logger", "") or "").strip()
+        if not logger:
+            logger = "file:/tmp/theia"
+        env["THEIA_LOGGER"] = _logger_for_process(logger, short)
 
         # Per-node metadata for the C++ supervisor. FCs get rich NodeInfo
         # from their package.art (_collect_nodes_for_fc); application
