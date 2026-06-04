@@ -1930,15 +1930,28 @@ def executor_emit(
             # for non-FC children (vendor apps without .art decl).
             nodes = getattr(node, "nodes", None) or []
             if nodes:
-                d["nodes"] = [
-                    {
+                node_dicts = []
+                for ni in nodes:
+                    nd = {
                         "name": ni.name,
                         "reporting": ni.reporting,
                         "tipc_type": ni.tipc_type,
                         "tipc_instance": ni.tipc_instance,
                     }
-                    for ni in nodes
-                ]
+                    # Per-node CPU affinity + scheduler (#NodeToCPUMapping).
+                    # Only emitted when set — the supervisor turns these into
+                    # THEIA_NODE_CFG for the hosting process's main.cc to apply.
+                    cpus = list(getattr(ni, "cpus", None) or [])
+                    if cpus:
+                        nd["cpus"] = cpus
+                    sched = (getattr(ni, "sched", "") or "").strip()
+                    if sched:
+                        nd["sched"] = sched
+                        prio = int(getattr(ni, "sched_prio", 0) or 0)
+                        if prio:
+                            nd["sched_prio"] = prio
+                    node_dicts.append(nd)
+                d["nodes"] = node_dicts
         return d
 
     out = json.dumps(_to_dict(tree), indent=2, sort_keys=False) + "\n"

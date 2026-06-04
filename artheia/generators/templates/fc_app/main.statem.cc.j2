@@ -13,6 +13,7 @@
 
 #include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
+#include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
 {% if model.nodes | selectattr("reporting") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
 {% endif %}
@@ -84,6 +85,10 @@ int main() {
         {{ n.snake }}.log().info(_tipc);
     }
 {%- endif %}
+    // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (supervisor sets it
+    // from the rig's NodeToCPUMapping). No-op when unset; soft-fails on EPERM.
+    ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
+        {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
 {% if n.reporting %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.name }}::kTipcType,

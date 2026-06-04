@@ -108,6 +108,14 @@ class NodeInfo:
     tipc_type: str = ""
     tipc_instance: str = "0"
 
+    # Per-node CPU affinity + scheduler (from the rig's NodeToCPUMapping). The
+    # supervisor serializes these into THEIA_NODE_CFG; the hosting process's
+    # main.cc applies them to the node thread (apply_node_affinity). Empty =
+    # leave the node unpinned (inherits its process's affinity).
+    cpus: list[int] = field(default_factory=list)
+    sched: str = ""           # "fifo"|"rr"|"other"|"batch"|"idle"|"deadline"|""
+    sched_prio: int = 0       # rtprio for fifo/rr
+
 
 @identifiable_dataclass
 class ChildSpec(Identifiable):
@@ -443,6 +451,30 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 continue
         return out
 
+    # NodeToCPUMapping lookup by (node, process). Maps the AUTOSAR
+    # SchedulingPolicyEnum onto the short keyword apply_node_affinity parses.
+    _SCHED_KW = {
+        "SCHED_OTHER": "", "SCHED_BATCH": "batch", "SCHED_IDLE": "idle",
+        "SCHED_FIFO": "fifo", "SCHED_RR": "rr", "SCHED_DEADLINE": "deadline",
+    }
+
+    def _fill_node_cfg(ni: "NodeInfo", proc_short: str) -> None:
+        """Attach CPU affinity + scheduler from a matching NodeToCPUMapping in
+        rig.node_to_cpu_mappings (by node name + hosting process). No-op when
+        none matches. shall_run_on wins for the affinity set."""
+        for m in getattr(rig, "node_to_cpu_mappings", None) or []:
+            if getattr(m, "node", "") != ni.name:
+                continue
+            mp = getattr(m, "process", "")
+            if mp and mp != proc_short:
+                continue
+            ni.cpus = _ids_from_refs(getattr(m, "shall_run_on", []) or [])
+            pol = getattr(m, "scheduling_policy", None)
+            pol_name = getattr(pol, "name", pol) if pol is not None else ""
+            ni.sched = _SCHED_KW.get(str(pol_name), "")
+            ni.sched_prio = int(getattr(m, "scheduling_priority", 0) or 0)
+            return
+
     def _collect_nodes_for_fc(short: str) -> list[NodeInfo]:
         """Read services/<short>/system/package.art and return its
         NodeDecls' per-node metadata.
@@ -513,12 +545,14 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             # bool so the executor.yaml emit + downstream consumers
             # don't have to deal with both shapes.
             reporting_raw = (getattr(el, "reporting", "") or "true").lower()
-            out.append(NodeInfo(
+            ni = NodeInfo(
                 name=proto_by_type.get(el.name, el.name),
                 reporting=(reporting_raw == "true"),
                 tipc_type=tipc_type,
                 tipc_instance=tipc_instance,
-            ))
+            )
+            _fill_node_cfg(ni, short)
+            out.append(ni)
         return out
 
     def _collect_nodes_for_app(short: str) -> list[NodeInfo]:
@@ -591,12 +625,14 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             # supervisor's trace-config push target, the trace record nodeName,
             # the Tracer registry key, and `tdb trace <name>` all agree. (Was
             # the node TYPE "CounterNode"; that desynced from the records.)
-            out.append(NodeInfo(
+            ni = NodeInfo(
                 name=getattr(el, "name", getattr(ntype, "name", "")),
                 reporting=(reporting_raw == "true"),
                 tipc_type=tipc_type,
                 tipc_instance=tipc_instance,
-            ))
+            )
+            _fill_node_cfg(ni, short)
+            out.append(ni)
         return out
 
     def _fc_child(short: str) -> ChildSpec | None:
