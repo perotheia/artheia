@@ -88,6 +88,32 @@ def _proto_type_for(field, cur_package: str):
     return ref.name, None
 
 
+def no_arg_op_request_names(model, already_declared=frozenset()):
+    """Names of the implicit request messages a model's NO-ARG clientServer
+    operations need. `operation Stop() returns ControlReply` has no `in` param,
+    so codegen names its request after the operation (`message Stop {}`); gen-app
+    references it (register_call<Stop, ...>). The proto generators must EMIT that
+    empty message or the C type (e.g. system_supervisor_Stop) is undeclared.
+    Shared by both the per-package (gen-app) and per-message (gen-proto) emitters
+    so the two stay consistent. Skips names already declared as real messages.
+    """
+    seen = set(already_declared)
+    out = []
+    for el in model.elements:
+        # clientServer interfaces carry operations (the grammar's InterfaceDecl
+        # resolves to ClientServerInterface / SenderReceiverInterface; only the
+        # former has `operations`).
+        if el.__class__.__name__ != "ClientServerInterface":
+            continue
+        for op in getattr(el, "operations", []) or []:
+            has_in = any(getattr(p, "direction", "") == "in"
+                         for p in getattr(op, "params", []) or [])
+            if not has_in and op.name not in seen:
+                out.append(op.name)
+                seen.add(op.name)
+    return out
+
+
 def _harvest(model):
     messages: List[_Message] = []
     enums: List[_Enum] = []
@@ -116,6 +142,16 @@ def _harvest(model):
             messages.append(_Message(name=el.name, fields=fields))
         elif kind == "EnumDecl":
             enums.append(_Enum(name=el.name, values=el.values))
+    # Synthesize the implicit request message for a NO-ARG clientServer
+    # operation. `operation Stop() returns ControlReply` has no `in` param, so
+    # codegen treats the request as `message <OpName> {}` (named after the op).
+    # gen-app's _cs_ops references it (register_call<Stop, ...>); without emitting
+    # it here the proto lacks `message Stop {}` and the C type
+    # system_supervisor_Stop is undeclared. Add an empty message for each no-arg
+    # op whose name isn't already a declared message. (Same package only — the
+    # op's request lives in the iface's own package, which is this model.)
+    for name in no_arg_op_request_names(model, {m.name for m in messages}):
+        messages.append(_Message(name=name, fields=[]))
     # Emit ONLY enums actually used as a field type. AUTOSAR value tables
     # (the bulk of an autosar bus package) are imported as companion enums
     # but the message fields stay scalar (uint32/float) — the enum is never

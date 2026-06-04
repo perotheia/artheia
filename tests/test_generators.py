@@ -15,7 +15,33 @@ def test_proto_emits_one_file_per_message(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     files = generate_proto(model, tmp_path, source_file="examples/demo.art")
     names = sorted(p.name for p in files)
-    assert names == ["SpeedSignal.proto", "StatusReport.proto", "TorqueRequest.proto"]
+    # GetStatus.proto = the implicit empty request for the NO-ARG operation
+    # `operation GetStatus() returns StatusReport` — synthesized so gen-proto
+    # matches gen-app (both emit a `message <Op> {}` for a paramless op).
+    assert names == [
+        "GetStatus.proto", "SpeedSignal.proto", "StatusReport.proto",
+        "TorqueRequest.proto",
+    ]
+
+
+def test_proto_no_arg_operation_emits_empty_request(tmp_path):
+    """A no-arg clientServer operation → an empty `message <Op> {}`, so the
+    register_call<<Op>, Reply> request type is declared. Regression for the
+    supervisor Stop() gap (gen-app referenced system_supervisor_Stop but the
+    proto didn't define it)."""
+    model = parse_string(
+        """
+        package p
+        message Reply { uint32 ok }
+        interface clientServer Ctl {
+            operation Ping() returns Reply
+        }
+        """
+    )
+    generate_proto(model, tmp_path)
+    ping = (tmp_path / "Ping.proto")
+    assert ping.exists()
+    assert "message Ping {" in ping.read_text()
 
 
 def test_proto_basic_shape(tmp_path):

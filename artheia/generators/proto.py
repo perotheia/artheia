@@ -213,4 +213,21 @@ def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Pa
         path.write_text(rendered)
         written.append(path)
 
+    # Implicit request messages for NO-ARG clientServer operations (e.g.
+    # `operation Stop()` → `message Stop {}`). Same synthesis the per-package
+    # emitter does — keeps gen-proto consistent with gen-app so the shortcut
+    # gives the same result. Empty body, no imports.
+    from .proto_package import no_arg_op_request_names
+    declared = {m.name for m in _messages(model)}
+    for name in no_arg_op_request_names(model, declared):
+        rendered = msg_tpl.render(
+            source_file=source_file,
+            package=package,
+            imports=[],
+            message=_Message(name=name, fields=[]),
+        )
+        path = out_dir / f"{name}.proto"
+        path.write_text(rendered)
+        written.append(path)
+
     return written
