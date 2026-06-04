@@ -84,9 +84,14 @@ def _node_dict(node) -> dict:
             "interface": p.iface.name,
             "messages": _iface_messages(p.iface),
         })
+    # tipc is None only for `extern` forward-decls (empty body); callers skip
+    # those, but stay defensive — emit an empty addr rather than crash.
+    tipc = ({"type": node.tipc.type, "instance": node.tipc.instance}
+            if getattr(node, "tipc", None) is not None
+            else {"type": "", "instance": ""})
     return {
         "name": node.name,
-        "tipc": {"type": node.tipc.type, "instance": node.tipc.instance},
+        "tipc": tipc,
         "ports": ports,
     }
 
@@ -485,6 +490,13 @@ def build_netgraph(
     nodes_by_name: dict[str, dict] = {}
     for m in all_models:
         for n in _iter(m, "NodeDecl"):
+            # Skip `extern` forward-decls: they have an EMPTY body (no tipc/ports)
+            # — the real node with the TIPC address lives in an imported package
+            # (e.g. the gateway's `extern node Kcan_Bus`; the body is in the kcan
+            # bus package, pulled in by -R). _node_dict would crash on the stub's
+            # node.tipc == None. Same rule the scope provider uses.
+            if getattr(n, "extern", False):
+                continue
             if n.name in nodes_by_name:
                 continue
             d = _node_dict(n)
