@@ -37,6 +37,24 @@ from enum import Enum
 from artheia.manifest.transform import Identifiable, identifiable_dataclass
 
 
+def parse_mem_size(v: "int | str | None") -> int:
+    """Bytes from an int or a human size string ("256M", "1G", "512K", "1024").
+
+    Suffixes (case-insensitive, power-of-two): K/KB, M/MB, G/GB, T/TB. A bare
+    number is bytes. None/""/0 → 0 (no cap). Raises ValueError on garbage.
+    """
+    if v is None or v == "" or v == 0:
+        return 0
+    if isinstance(v, int):
+        return v
+    s = str(v).strip().upper().rstrip("B")  # "256MB" → "256M"
+    mult = 1
+    if s and s[-1] in "KMGT":
+        mult = {"K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4}[s[-1]]
+        s = s[:-1]
+    return int(float(s) * mult)
+
+
 # ---------------------------------------------------------------------------
 # State / Mode declarations (§8.4)
 # ---------------------------------------------------------------------------
@@ -270,6 +288,14 @@ class Process(Identifiable):
     # in as file:/tmp/theia/<name>.log so each FC's log is separable and off
     # the shared console).
     logger: str = ""
+
+    # Per-process memory cap, BYTES. Serialized into executor.json as
+    # mem_limit_bytes; the supervisor applies it as RLIMIT_AS in the fork, so it
+    # bounds the WHOLE child process (RLIMIT is per-process, not per-thread — a
+    # true per-node cap would need cgroup v2). 0 = no cap. Authored in rig.py /
+    # executor.py either as an int (bytes) or a human string ("256M", "1G")
+    # parsed by parse_mem_size().
+    mem_limit: int = 0
 
     # Hosted node (prototype) names — the in-process GenServer instances
     # this Process runs, derived from the .art composition's prototypes.

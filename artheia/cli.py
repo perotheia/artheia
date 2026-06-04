@@ -1915,6 +1915,10 @@ def executor_emit(
             d["restart"] = node.restart.value
             d["shutdown"] = node.shutdown
             d["type"] = node.type.value
+            # Per-process memory cap (RLIMIT_AS) — only when set.
+            mlb = int(getattr(node, "mem_limit_bytes", 0) or 0)
+            if mlb > 0:
+                d["mem_limit_bytes"] = mlb
             if node.modules:
                 d["modules"] = list(node.modules)
             if node.env:

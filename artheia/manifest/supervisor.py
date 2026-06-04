@@ -154,6 +154,9 @@ class ChildSpec(Identifiable):
     shall_run_on: list[int] = field(default_factory=list)
     shall_not_run_on: list[int] = field(default_factory=list)
     nodes: list[NodeInfo] = field(default_factory=list)
+    # Per-process memory cap, BYTES (from Process.mem_limit). The C++ supervisor
+    # applies it as RLIMIT_AS in the fork. 0 = no cap.
+    mem_limit_bytes: int = 0
 
 
 @identifiable_dataclass
@@ -696,6 +699,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         if not nodes:
             nodes = [NodeInfo(name=n) for n in getattr(proc, "nodes", []) or []]
 
+        from artheia.manifest.execution import parse_mem_size
         return ChildSpec(
             name=short,
             start_cmd=start_cmd,
@@ -707,6 +711,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             shall_run_on=_ids_from_refs(ptm.shall_run_on) if ptm else [],
             shall_not_run_on=_ids_from_refs(ptm.shall_not_run_on) if ptm else [],
             nodes=nodes,
+            mem_limit_bytes=parse_mem_size(getattr(proc, "mem_limit", 0)),
         )
 
     # Detect cycles in the supervisor graph; bail early on detection.
