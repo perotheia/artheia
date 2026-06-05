@@ -224,6 +224,45 @@ class ArtheiaContext:
             port.ops.append(OpRef(name=op.name, request=request, reply=reply))
         return port
 
+    def msg(self, msg_name: str) -> MsgRef:
+        """Resolve ANY message by name to a MsgRef — this package's own
+        messages OR a message in an imported package (e.g. the runtime's
+        ConfigUpdated). Needed for casts whose type isn't a port type of any
+        local node (framework config-service pushes). The codec can encode/
+        decode any (art_package, proto_type), so this is the missing lookup.
+        """
+        # This .art's own messages first.
+        for el in getattr(self.model, "elements", []):
+            if el.__class__.__name__ == "MessageDecl" and el.name == msg_name:
+                return self._msgref(el)
+        # Then imported packages (same import-follow as extern node resolution).
+        from artheia.model import parse_file as _parse
+        from artheia.model.scope import _import_dir, _PKG_FILE_PRIORITY
+        from pathlib import Path
+        entry = Path(self.art_file)
+        for im in getattr(self.model, "imports", []):
+            raw = (getattr(im, "package", None) or getattr(im, "name", "") or "")
+            raw = raw.rstrip("*").rstrip(".")
+            if not raw:
+                continue
+            d = _import_dir(entry, self.package, raw)
+            if d is None or not d.exists():
+                continue
+            for fname in _PKG_FILE_PRIORITY:
+                f = d / fname
+                if not f.exists():
+                    continue
+                try:
+                    im_model = _parse(str(f))
+                except Exception:
+                    continue
+                for el in getattr(im_model, "elements", []):
+                    if (el.__class__.__name__ == "MessageDecl"
+                            and el.name == msg_name):
+                        return self._msgref(el)
+        raise KeyError(f"message {msg_name!r} not found in {self.package} "
+                       f"or its imports")
+
     def _flat_pkg(self) -> str:
         from artheia.generators.proto import _proto_package_name
         return _proto_package_name(self.package).replace(".", "_")
@@ -261,4 +300,21 @@ class ArtheiaContext:
         ref = self.ref(node_name)
         if instance is not None:
             ref = dataclasses.replace(ref, tipc_instance=instance)
+        return NodeProbe(self, ref)
+
+    def probe_external(self, tipc_type: int, tipc_instance: int = 0,
+                       name: str = "external"):
+        """Create a NodeProbe that binds an ARBITRARY TIPC address NOT tied to
+        any node in the .art — a pure external client/subscriber identity.
+
+        Use this when the probe must NOT impersonate a real node (e.g. to
+        receive a push as a subscriber whose address the FC also runs would
+        collide). The codec/op resolution still comes from this context's .art,
+        so call()/await_cast() work against any FC; only the SOURCE address is
+        synthetic. Pick a type outside the cluster's allocated ranges to avoid
+        clashing with a real binding.
+        """
+        from .node import NodeProbe
+        ref = RemoteRef(name=name, tipc_type=tipc_type,
+                        tipc_instance=tipc_instance)
         return NodeProbe(self, ref)

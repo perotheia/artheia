@@ -37,14 +37,31 @@ class Codec:
         if flat_pkg in self._modules:
             return self._modules[flat_pkg]
 
-        subdir = package_subdir(art_package)
+        # Two on-disk layouts exist:
+        #   (1) dotted dirs  — system.services.per  -> system/services/per/per.proto
+        #   (2) flat single  — platform.runtime     -> platform_runtime/runtime.proto
+        # Most packages use (1) (package_subdir mirrors the .art tree). The
+        # runtime control proto is laid out flat (matching the `import
+        # "platform_runtime/runtime.proto"` convention every consumer uses), so
+        # try the dotted path first, then the flat-underscore dir.
+        from pathlib import Path as _Path
         leaf = art_package.split(".")[-1]
-        proto_rel = subdir / f"{leaf}.proto"
-        proto_abs = self.proto_root / proto_rel
-        if not proto_abs.exists():
+        candidates = [
+            package_subdir(art_package) / f"{leaf}.proto",        # (1) dotted
+            _Path(flat_pkg) / f"{leaf}.proto",                    # (2) flat dir
+        ]
+        proto_rel = None
+        for cand in candidates:
+            if (self.proto_root / cand).exists():
+                proto_rel = cand
+                break
+        if proto_rel is None:
             raise FileNotFoundError(
-                f"no .proto for package {art_package!r} at {proto_abs}"
+                f"no .proto for package {art_package!r} at any of "
+                + ", ".join(str(self.proto_root / c) for c in candidates)
             )
+        subdir = proto_rel.parent
+        proto_abs = self.proto_root / proto_rel
 
         from grpc_tools import protoc  # compiler only; no gRPC runtime imported
 

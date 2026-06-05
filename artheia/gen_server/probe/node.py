@@ -9,7 +9,14 @@ supports every gen_server operation against other nodes/FCs:
   passive (probe mocks a peer the FC talks to):
     on_cast(msg_name, handler)          react to inbound casts
     on_call(op_name, responder)         answer inbound calls (-> reply dict)
+    serve({op: handler, ...})           stand IN as a whole FC (sugar over on_call)
     expect_cast(msg_name, timeout)      block until a cast arrives; return it
+    await_cast(msg_name, timeout)       alias for expect_cast — names the
+                                        subscriber/await-push use case; resolves
+                                        framework cast types (e.g. the runtime's
+                                        ConfigUpdated) via ctx.msg, not just
+                                        this node's port types
+    expect_call(op_name, reply, t)      block until a call arrives; reply + return
 """
 from __future__ import annotations
 
@@ -40,6 +47,10 @@ class NodeProbe:
         self._inbox: dict[int, queue.Queue] = {}
         # received calls, by request service_id, for expect_call()
         self._call_inbox: dict[int, queue.Queue] = {}
+        # service_id -> MsgRef for messages that are NOT a port type of this
+        # node (framework casts like ConfigUpdated). await_cast() registers
+        # them here so _dispatch_cast can decode the inbound payload.
+        self._known_msgs: dict[int, object] = {}
 
     # ---- lifecycle --------------------------------------------------------
     def start(self) -> "NodeProbe":
@@ -128,14 +139,64 @@ class NodeProbe:
         self._call_responders[op.request.service_id] = _CallResponder(op, responder)
 
     def expect_cast(self, msg_name: str, timeout: float = 2.0) -> dict:
-        """Block until a cast of `msg_name` lands on this probe; return fields."""
-        m = self.me.find_msg(msg_name)
+        """Block until a cast of `msg_name` lands on this probe; return fields.
+
+        Resolves `msg_name` first as a port type of THIS node, then as ANY
+        message in the .art or its imports (ctx.msg) — so a framework cast like
+        the runtime's ConfigUpdated, which is not a declared port type of any
+        local node, is awaitable too. This is the receiver-side dual of call():
+        the probe mocks a SUBSCRIBER and asserts the push arrived.
+        """
+        try:
+            m = self.me.find_msg(msg_name)
+        except Exception:
+            m = self.ctx.msg(msg_name)
+        # Make the type decodable in _dispatch_cast even though it isn't a port
+        # type of this node (framework cast).
+        self._known_msgs[m.service_id] = m
         q = self._inbox.setdefault(m.service_id, queue.Queue())
         try:
             return q.get(timeout=timeout)
         except queue.Empty:
             raise TimeoutError(
                 f"{self.me.name} expected cast {msg_name!r} within {timeout}s")
+
+    # await_cast: explicit alias for expect_cast, named for the subscription
+    # use case (mock a subscriber, await the push). Same semantics.
+    await_cast = expect_cast
+
+    def arm_cast(self, msg_name: str) -> None:
+        """Pre-register the inbox for `msg_name` so a cast that arrives BEFORE
+        the matching await_cast()/expect_cast() call is QUEUED, not dropped.
+
+        Casts are async: a subscriber arms a watch, the FC pushes, and the push
+        can land on the server thread before the test reaches await_cast. The
+        dispatcher only queues service_ids it already knows an inbox for — so
+        call arm_cast() up front (e.g. right after subscribing, before the
+        action that triggers the push), then await_cast() to collect it.
+        """
+        try:
+            m = self.me.find_msg(msg_name)
+        except Exception:
+            m = self.ctx.msg(msg_name)
+        self._known_msgs[m.service_id] = m
+        self._inbox.setdefault(m.service_id, queue.Queue())
+
+    def serve(self, responders: dict) -> "NodeProbe":
+        """Stand IN as this FC: register a responder per operation in one call.
+
+        `responders` maps op name -> callable(req_fields_dict) -> reply_dict.
+        Sugar over on_call() for mocking a whole server node, so another
+        component can talk to a fake FC. Returns self for chaining:
+
+            probe = ctx.probe("PerClient").serve({
+                "GetConfig": lambda req: {"config": b"...", "digest": "v1"},
+                "PutConfig": lambda req: {"status": 0, "mod_rev": 1},
+            }).start()
+        """
+        for op_name, fn in responders.items():
+            self.on_call(op_name, fn)
+        return self
 
     def expect_call(self, op_name: str, reply: dict | None = None,
                     timeout: float = 2.0) -> dict:
@@ -182,8 +243,11 @@ class NodeProbe:
 
     def _dispatch_cast(self, hdr: wire.Header, payload: bytes) -> None:
         entry = self._cast_handlers.get(hdr.service_id)
-        # Always feed expect_cast inbox (decode if we can identify the type).
-        m = entry[0] if entry else self._msg_by_service_id(hdr.service_id)
+        # Identify the type: a registered on_cast handler, a port type of this
+        # node, or a framework message registered by await_cast (_known_msgs).
+        m = (entry[0] if entry
+             else self._msg_by_service_id(hdr.service_id)
+             or self._known_msgs.get(hdr.service_id))
         fields = self.ctx.codec.decode(m.art_package, m.proto_type, payload) \
             if m else {"_raw": payload}
         if hdr.service_id in self._inbox:
