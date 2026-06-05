@@ -115,25 +115,40 @@ class TipcClient:
         self.tipc_instance = tipc_instance
         self._sock: Optional[socket.socket] = None
 
-    def connect(self, total_timeout_ms: int = 3000, retry_ms: int = 100) -> bool:
-        # NON-BLOCKING connect. A BLOCKING SOCK_SEQPACKET connect() to an absent
-        # / not-yet-accepting TIPC service hangs in-kernel for TIPC's own ~8s
-        # timeout, which IGNORES total_timeout_ms (the deadline below is only
-        # checked BETWEEN retries — it can't interrupt a blocked syscall). That
-        # made every probe call randomly take ~8s when the first connect didn't
-        # succeed instantly. So: settimeout() bounds each connect attempt to the
-        # remaining budget; on success restore blocking for send/recv.
+    def connect(self, total_timeout_ms: int = 3000,
+                attempt_ms: int = 150, idle_retry_ms: int = 50) -> bool:
+        # NON-BLOCKING, MANY-ATTEMPT connect. Two failure modes have to be
+        # survived, and they pull in opposite directions:
+        #
+        #  (1) Absent / not-yet-accepting service. A BLOCKING SOCK_SEQPACKET
+        #      connect() hangs in-kernel for TIPC's own ~8s timeout, ignoring
+        #      total_timeout_ms. settimeout() bounds each attempt so one blocked
+        #      connect can't eat the whole budget.
+        #
+        #  (2) STALE co-bindings. A TIPC name (type,instance) can have several
+        #      bound ports at once — a supervisor restart briefly overlaps old +
+        #      new, and a SIGKILL'd predecessor leaves a binding the kernel never
+        #      reaped. connect() to a TIPC_ADDR_NAME load-balances across ALL
+        #      bound ports, so it may pick a DEAD one and time out even though a
+        #      live binding exists. The only cure is to RETRY on a fresh socket:
+        #      each attempt re-rolls which port the kernel picks, so within a few
+        #      attempts one lands on the live binding. (Seen in the wild at 1
+        #      live of 13 stale bindings → needs ~13 tries.)
+        #
+        # So: short per-attempt cap + retry immediately on a fresh socket (NO
+        # inter-attempt sleep when the attempt itself consumed real time — that
+        # already paced us and the next attempt re-rolls the port). Only sleep a
+        # little when a connect failed INSTANTLY (ECONNREFUSED on a truly absent
+        # service) to avoid a tight busy-spin burning the budget in microseconds.
         deadline = time.monotonic() + total_timeout_ms / 1000.0
         addr = _connect_addr(self.tipc_type, self.tipc_instance)
         while True:
-            s = socket.socket(_AF_TIPC, socket.SOCK_SEQPACKET)
             remain = deadline - time.monotonic()
             if remain <= 0:
-                s.close()
                 return False
-            # Cap a single attempt so a kernel-blocking connect can't overrun
-            # the whole budget; min with retry slice keeps the retry cadence.
-            s.settimeout(min(remain, max(retry_ms / 1000.0, 0.2)))
+            s = socket.socket(_AF_TIPC, socket.SOCK_SEQPACKET)
+            s.settimeout(min(remain, attempt_ms / 1000.0))
+            t0 = time.monotonic()
             try:
                 s.connect(addr)
                 s.settimeout(None)        # back to blocking for send/recv
@@ -141,9 +156,12 @@ class TipcClient:
                 return True
             except (OSError, socket.timeout):
                 s.close()
-                if time.monotonic() > deadline:
-                    return False
-                time.sleep(retry_ms / 1000.0)
+                # If the attempt returned almost immediately it was a fast
+                # refusal (no port answered) — pace before re-rolling so an
+                # absent service doesn't spin. If it consumed its slice it hit a
+                # (likely dead) port; retry at once to re-roll onto another.
+                if time.monotonic() - t0 < (attempt_ms / 1000.0) / 2:
+                    time.sleep(idle_retry_ms / 1000.0)
 
     def send(self, data: bytes) -> None:
         if self._sock is None and not self.connect():
