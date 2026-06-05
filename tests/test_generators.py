@@ -109,6 +109,26 @@ def test_netgraph_shape(tmp_path):
     assert first["messages"] == ["SpeedSignal"]
 
 
+def test_params_config_shape(tmp_path):
+    """gen-params emits one section per PROTOTYPE (= kNodeName, not node-type),
+    with typed defaults; a param-less node-type contributes no section."""
+    from artheia.generators.params_config import generate_params_config
+    model = parse_file(REPO / "examples" / "demo.art")
+    out = tmp_path / "demo.json"
+    generate_params_config(model, out)
+    data = json.loads(out.read_text())
+    assert data["package"] == "theia.demo"
+    nodes = data["nodes"]
+    # keyed by prototype name (speed_pub), not node-type (SpeedPublisher)
+    assert "speed_pub" in nodes and "SpeedPublisher" not in nodes
+    assert nodes["speed_pub"]["publish_period_ms"] == 10        # uint -> int
+    assert nodes["speed_pub"]["enabled"] is True                # bool
+    assert nodes["speed_pub"]["source_name"] == "front-axle"    # string
+    assert nodes["torque_ctrl"]["gain"] == 1.25                 # float
+    # a prototype whose node-type has NO params block gets no section
+    assert "actuator" not in nodes
+
+
 def test_etcd_schema_shape(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     out = tmp_path / "etcd.json"

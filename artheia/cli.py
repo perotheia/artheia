@@ -964,6 +964,20 @@ def gen_etcd(art_file: str, out_file: str) -> None:
     click.echo(str(path))
 
 
+@main.command("gen-params",
+              help="Emit the per-FC static params JSON (one section per node, "
+                   "keyed by prototype name = kNodeName). Read once at boot by "
+                   "the runtime config singleton; stage at "
+                   "<ROOT>/<machine>/config/<fc>.json.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
+def gen_params(art_file: str, out_file: str) -> None:
+    from .generators.params_config import generate_params_config
+    model = _parse(art_file)
+    path = generate_params_config(model, out_file)
+    click.echo(str(path))
+
+
 # (gen-cpp-stubs retired — conflicted with gen-app, which emits the
 # GenServer/GenStateM daemon (incl. the statem StateMBase) directly from
 # the same .art. There is one C++-from-.art path now: `gen-app --kind fc`.)
