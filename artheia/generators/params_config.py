@@ -51,6 +51,10 @@ def build_params(model) -> dict:
     from artheia.model import flatten_composition
 
     nodes: dict[str, dict] = {}
+    # node -> [param names declared `const` (read-only)]. Kept SEPARATE from the
+    # flat value map so the runtime reader (typed getters) stays unchanged; a
+    # writer / config UI consults this to reject mutating a const param.
+    const: dict[str, list] = {}
     for comp in _compositions(model):
         proto_decls, _connects = flatten_composition(comp)
         for proto in proto_decls:
@@ -61,7 +65,13 @@ def build_params(model) -> dict:
             nodes[proto.name] = {
                 p.name: _coerce_default(p) for p in params
             }
-    return {"package": model.name or "", "nodes": nodes}
+            ro = [p.name for p in params if getattr(p, "is_const", False)]
+            if ro:
+                const[proto.name] = ro
+    out = {"package": model.name or "", "nodes": nodes}
+    if const:
+        out["const"] = const
+    return out
 
 
 def generate_params_config(model, out_file: str | Path) -> Path:

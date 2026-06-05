@@ -129,6 +129,30 @@ def test_params_config_shape(tmp_path):
     assert "actuator" not in nodes
 
 
+def test_params_config_const(tmp_path):
+    """A `const` param is recorded in a separate top-level `const` map (node ->
+    [read-only param names]); values stay flat so the runtime reader is
+    unchanged."""
+    from artheia.generators.params_config import build_params
+    from artheia.model import parse_string
+    model = parse_string(
+        """
+        package p
+        node atomic N {
+            tipc type=0x1 instance=0
+            params {
+                const wire_id : uint32 = 7
+                rate_hz       : uint32 = 100
+            }
+        }
+        composition C { prototype N n }
+        """
+    )
+    data = build_params(model)
+    assert data["nodes"]["n"] == {"wire_id": 7, "rate_hz": 100}   # values flat
+    assert data["const"] == {"n": ["wire_id"]}                    # only the const one
+
+
 def test_etcd_schema_shape(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     out = tmp_path / "etcd.json"

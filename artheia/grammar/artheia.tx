@@ -423,14 +423,20 @@ ClusterConnect:
     'connect' source=PortRef 'to' target=PortRef
 ;
 
-// ---- 5. Params (ROS2-style, etcd-backed; no migrations) -------------------
+// ---- 5. Params (static deployment knobs) ----------------------------------
 //
-// Each node may declare typed parameters with default values. At build time
-// these become an etcd seed schema; at runtime the node receives callbacks
-// when a value changes. System engineers edit defaults pre-install.
+// Each node may declare typed parameters with default values. They become a
+// generated per-FC JSON (gen-params), read ONCE at boot by the runtime config
+// singleton; a change requires a restart. System engineers edit defaults
+// pre-install.
+//
+// A `const` param is read-only — a value the app must never see mutated at
+// runtime (e.g. a wire id). The JSON model has no live writer anyway; `const`
+// documents intent and lets a future writer (a PutParam / config UI) reject the
+// field. gen-params records const param names in the FC JSON.
 
 NodeParam:
-    name=ID ':' type=ParamType '=' default=ParamLiteral
+    (is_const?='const')? name=ID ':' type=ParamType '=' default=ParamLiteral
 ;
 
 ParamType:
