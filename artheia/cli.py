@@ -994,16 +994,22 @@ def gen_schema(art_file: str, out_file: str) -> None:
 
 
 @main.command("gen-transform",
-              help="Generate a migration-plugin .cc from a transform.json "
-                   "rule-set. The plugin is dlopen'd by per (MigrateBulk) and "
-                   "applies the SAME field ops as tools/migrate/migrate.py on "
-                   "the config bytes. Build the .cc as a cc_binary .so "
-                   "(linkshared), like services/per/migrations/example.")
+              help="Generate a migration-plugin .cc (+ a write-once custom "
+                   "sidecar) from a transform.json rule-set. The plugin is "
+                   "dlopen'd by per (MigrateBulk) and works on the nanopb "
+                   "STRUCT — no JSON, no libprotobuf at runtime (JSON lives "
+                   "only in tools/migrate/migrate.py, the design bench). Needs "
+                   "--schema (gen-schema output) for the struct field shapes. "
+                   "Build the .cc(+_custom.cc) as a cc_binary .so (linkshared), "
+                   "like services/per/migrations/example.")
 @click.argument("transform_json", type=click.Path(exists=True, dir_okay=False))
 @click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
-def gen_transform(transform_json: str, out_file: str) -> None:
+@click.option("--schema", "schema_file", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="gen-schema output (config_type -> proto_type + field shape).")
+def gen_transform(transform_json: str, out_file: str, schema_file: str) -> None:
     from .generators.transform_codegen import generate_transform_from_file
-    path = generate_transform_from_file(transform_json, out_file)
+    path = generate_transform_from_file(transform_json, out_file, schema_file)
     click.echo(str(path))
 
 

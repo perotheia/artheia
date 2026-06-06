@@ -190,49 +190,77 @@ def test_params_config_const(tmp_path):
     assert data["const"] == {"n": ["wire_id"]}                    # only the const one
 
 
-def test_gen_transform_emits_rules_and_entry(tmp_path):
-    """gen-transform: transform.json -> a plugin .cc whose rule ops mirror
-    migrate.py and whose entry registers the from->to edge."""
+_TX_SCHEMA = {
+    "package": "p",
+    "configs": {
+        "Cfg": {
+            "digest": "d1", "proto_type": "p_Cfg", "art_package": "p",
+            "nodes": ["n"],
+            "fields": [
+                {"name": "x", "type": "uint32", "repeated": False},
+                {"name": "y", "type": "uint32", "repeated": False},
+                {"name": "label", "type": "string", "repeated": False},
+            ],
+        },
+    },
+}
+
+
+def test_gen_transform_nanopb_struct_ops(tmp_path):
+    """gen-transform emits a nanopb-STRUCT plugin (no JSON): default carry +
+    rule ops as to.X = from.Y, the value-map as an if-chain, and the entry."""
     from artheia.generators.transform_codegen import generate_transform_plugin
     transform = {
         "config_type": "Cfg", "from_digest": "d1", "to_digest": "d2",
         "rules": [
-            {"op": "rename", "from": "old", "to": "new"},
-            {"op": "add", "field": "f", "default": 3},
             {"op": "set", "field": "x", "value": 7},
-            {"op": "remove", "field": "dead"},
+            {"op": "copy", "from": "x", "to": "y"},
+            {"op": "transform", "path": "x", "map": {"100": 200}, "default": 0},
         ],
     }
     out = tmp_path / "plugin.cc"
-    generate_transform_plugin(transform, out)
+    generate_transform_plugin(transform, out, _TX_SCHEMA)
     src = out.read_text()
-    # rule ops -> JSON-pointer helper calls (mirror migrate.py path ops)
-    assert 'jp_rename(cfg, "/old", "/new");' in src
-    assert 'jp_add(cfg, "/f", R"(3)");' in src
-    assert 'jp_set(cfg, "/x", R"(7)");' in src
-    assert 'jp_del(cfg, "/dead");' in src
-    # the jp helpers + the entry registering the edge
-    assert "static void jp_rename" in src
-    assert "per_register_migrations" in src
+    # NO JSON at runtime
+    assert "nlohmann" not in src and "json::" not in src
+    # nanopb decode/encode + the struct type
+    assert "pb_decode" in src and "pb_encode" in src
+    assert "p_Cfg from = p_Cfg_init_zero;" in src
+    # default carry + rule ops as struct members
+    assert "to.x = from.x;" in src          # carry
+    assert "to.x = 7;" in src               # set
+    assert "to.y = from.y;" in src          # carry y (then copy overrides)
+    assert "to.y = from.x;" in src          # copy x->y
+    assert "if (from.x == 100) to.x = 200;" in src  # value-map if-chain
+    # string carry via strncpy
+    assert "std::strncpy(to.label, from.label" in src
     assert 'api->add_edge(api->host, "d1", "d2", &transform_Cfg);' in src
 
 
-def test_gen_transform_jsonpath_and_map(tmp_path):
-    """Nested JSONPath ($.a.b) and the value-map `transform` op emit the
-    matching jp_ helper calls."""
+def test_gen_transform_custom_sidecar(tmp_path):
+    """An {op:custom,fn:name} rule emits an extern decl + a call, and writes a
+    WRITE-ONCE custom sidecar stub with the typed struct signature."""
     from artheia.generators.transform_codegen import generate_transform_plugin
-    out = tmp_path / "p.cc"
+    out = tmp_path / "plug.cc"
     generate_transform_plugin({
-        "config_type": "U", "from_digest": "d1", "to_digest": "d2",
-        "rules": [
-            {"op": "rename", "from": "$.address.city", "to": "$.location.city"},
-            {"op": "transform", "path": "$.status",
-             "map": {"ACTIVE": "enabled"}},
-        ],
-    }, out)
+        "config_type": "Cfg", "from_digest": "d1", "to_digest": "d2",
+        "rules": [{"op": "custom", "fn": "my_reshape"}],
+    }, out, _TX_SCHEMA)
     src = out.read_text()
-    assert 'jp_rename(cfg, "/address/city", "/location/city");' in src
-    assert 'jp_map(cfg, "/status",' in src and '"ACTIVE"' in src and "enabled" in src
+    assert 'extern "C" void my_reshape(const p_Cfg* in, p_Cfg* out);' in src
+    assert "my_reshape(&from, &to);" in src
+    side = out.with_name("plug_custom.cc")
+    assert side.exists()
+    stub = side.read_text()
+    assert 'extern "C" void my_reshape(const p_Cfg* in, p_Cfg* out) {' in stub
+    assert "TODO" in stub
+    # write-once: a second gen with a different body does NOT clobber the sidecar
+    side.write_text("// user code\n")
+    generate_transform_plugin({
+        "config_type": "Cfg", "from_digest": "d1", "to_digest": "d2",
+        "rules": [{"op": "custom", "fn": "my_reshape"}],
+    }, out, _TX_SCHEMA)
+    assert side.read_text() == "// user code\n"
 
 
 def test_config_schema_shape(tmp_path):
