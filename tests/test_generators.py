@@ -153,6 +153,32 @@ def test_params_config_const(tmp_path):
     assert data["const"] == {"n": ["wire_id"]}                    # only the const one
 
 
+def test_gen_transform_emits_rules_and_entry(tmp_path):
+    """gen-transform: transform.json -> a plugin .cc whose rule ops mirror
+    migrate.py and whose entry registers the from->to edge."""
+    from artheia.generators.transform_codegen import generate_transform_plugin
+    transform = {
+        "config_type": "Cfg", "from_digest": "d1", "to_digest": "d2",
+        "rules": [
+            {"op": "rename", "from": "old", "to": "new"},
+            {"op": "add", "field": "f", "default": 3},
+            {"op": "set", "field": "x", "value": 7},
+            {"op": "remove", "field": "dead"},
+        ],
+    }
+    out = tmp_path / "plugin.cc"
+    generate_transform_plugin(transform, out)
+    src = out.read_text()
+    # rule ops -> nlohmann/json mutations
+    assert 'cfg["new"] = cfg["old"]; cfg.erase("old");' in src
+    assert 'if (!cfg.contains("f")) cfg["f"] = json::parse(R"(3)");' in src
+    assert 'cfg["x"] = json::parse(R"(7)");' in src
+    assert 'cfg.erase("dead");' in src
+    # the entry registers the edge
+    assert "per_register_migrations" in src
+    assert 'api->add_edge(api->host, "d1", "d2", &transform_Cfg);' in src
+
+
 def test_config_schema_shape(tmp_path):
     """gen-schema: a node's `config <Msg>` binding → one schema entry per
     config_type with a stable shape digest, proto type, bound nodes, fields."""

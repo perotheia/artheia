@@ -993,6 +993,20 @@ def gen_schema(art_file: str, out_file: str) -> None:
     click.echo(str(path))
 
 
+@main.command("gen-transform",
+              help="Generate a migration-plugin .cc from a transform.json "
+                   "rule-set. The plugin is dlopen'd by per (MigrateBulk) and "
+                   "applies the SAME field ops as tools/migrate/migrate.py on "
+                   "the config bytes. Build the .cc as a cc_binary .so "
+                   "(linkshared), like services/per/migrations/example.")
+@click.argument("transform_json", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
+def gen_transform(transform_json: str, out_file: str) -> None:
+    from .generators.transform_codegen import generate_transform_from_file
+    path = generate_transform_from_file(transform_json, out_file)
+    click.echo(str(path))
+
+
 # (gen-cpp-stubs retired — conflicted with gen-app, which emits the
 # GenServer/GenStateM daemon (incl. the statem StateMBase) directly from
 # the same .art. There is one C++-from-.art path now: `gen-app --kind fc`.)
