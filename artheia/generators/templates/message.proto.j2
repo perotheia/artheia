@@ -11,4 +11,7 @@ message {{ message.name }} {
 {%- for f in message.fields %}
     {% if f.repeated %}repeated {% endif %}{{ f.proto_type }} {{ f.name }} = {{ f.number }}{% if f.options %} [{{ f.options }}]{% endif %};
 {%- endfor %}
+{%- if message.reserved %}
+    reserved {{ message.reserved | join(', ') }};
+{%- endif %}
 }

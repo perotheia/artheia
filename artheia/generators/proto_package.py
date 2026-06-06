@@ -46,6 +46,7 @@ class _Field:
 class _Message:
     name: str
     fields: List[_Field]
+    reserved: List[int] = None  # tags of deleted fields (proto3 reserved)
 
 
 @dataclass
@@ -124,7 +125,16 @@ def _harvest(model):
         kind = el.__class__.__name__
         if kind == "MessageDecl":
             fields = []
-            for idx, f in enumerate(el.fields):
+            reserved: list[int] = []
+            # POSITIONAL tags: each body item (field OR `reserved` marker)
+            # consumes the next tag, 1..N in body order. A `reserved` slot
+            # advances the tag + emits `reserved <tag>;` so deleting a field
+            # (→ reserved) doesn't shift later fields' tags. See proto.py.
+            for tag, item in enumerate(el.fields, start=1):
+                if item.__class__.__name__ == "MessageReserved":
+                    reserved.append(tag)
+                    continue
+                f = item
                 pt, imp = _proto_type_for(f, cur_pkg)
                 # used_types is for LOCAL enum pruning — only same-package bare
                 # names count; a cross-package qualified type (a.b.X) is defined
@@ -135,11 +145,12 @@ def _harvest(model):
                     imports.add(imp)
                 fields.append(_Field(
                     name=f.name,
-                    number=idx + 1,
+                    number=tag,
                     proto_type=pt,
                     repeated=bool(f.repeated),
                 ))
-            messages.append(_Message(name=el.name, fields=fields))
+            messages.append(_Message(name=el.name, fields=fields,
+                                     reserved=reserved))
         elif kind == "EnumDecl":
             enums.append(_Enum(name=el.name, values=el.values))
     # Synthesize the implicit request message for a NO-ARG clientServer
@@ -205,11 +216,14 @@ def _render_proto(model, package: str, source_file: str) -> str:
 
     for msg in messages:
         lines.append(f"message {msg.name} {{")
-        if not msg.fields:
+        resv = msg.reserved or []
+        if not msg.fields and not resv:
             lines.append("    // empty body")
         for f in msg.fields:
             prefix = "repeated " if f.repeated else ""
             lines.append(f"    {prefix}{f.proto_type} {f.name} = {f.number};")
+        if resv:
+            lines.append(f"    reserved {', '.join(str(t) for t in resv)};")
         lines.append("}")
         lines.append("")
 

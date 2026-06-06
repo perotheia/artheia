@@ -44,6 +44,43 @@ def test_proto_no_arg_operation_emits_empty_request(tmp_path):
     assert "message Ping {" in ping.read_text()
 
 
+def test_proto_reserved_holds_tag(tmp_path):
+    """A `reserved` marker consumes its positional tag + emits `reserved N;`, so
+    deleting a field (→ reserved) doesn't shift later fields' tags."""
+    model = parse_string(
+        """
+        package p
+        message Addr { string city }
+        message User {
+            string name
+            reserved old_city
+            Addr address
+        }
+        """
+    )
+    generate_proto(model, tmp_path)
+    user = (tmp_path / "User.proto").read_text()
+    assert "string name = 1;" in user
+    assert "Addr address = 3;" in user          # tag 3, NOT shifted to 2
+    assert "reserved 2;" in user                # the dead tag is reserved
+
+
+def test_proto_package_reserved(tmp_path):
+    """Same, through the per-package generator (gen-app path)."""
+    from artheia.generators.proto_package import _render_proto
+    from artheia.model import parse_string as _ps
+    model = _ps(
+        """
+        package q
+        message M { uint32 a  reserved b  uint32 c }
+        """
+    )
+    txt = _render_proto(model, "q", "")
+    assert "uint32 a = 1;" in txt
+    assert "uint32 c = 3;" in txt
+    assert "reserved 2;" in txt
+
+
 def test_proto_basic_shape(tmp_path):
     model = parse_string(
         """

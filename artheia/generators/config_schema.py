@@ -45,9 +45,11 @@ def _compositions(model):
 
 
 def _field_shape(msg) -> list[dict]:
-    """Ordered field list of a MessageDecl: name + scalar/ref type + repeated."""
+    """Ordered REAL field list of a MessageDecl (reserved slots filtered):
+    name + scalar/ref type + repeated. Body order = wire order."""
+    from artheia.generators.proto import real_fields
     out = []
-    for f in getattr(msg, "fields", []) or []:
+    for f in real_fields(msg):
         t = f.type
         # PrimitiveType carries `.kind`; a message/enum ref carries `.ref.name`.
         kind = getattr(t, "kind", None)

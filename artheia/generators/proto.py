@@ -29,6 +29,7 @@ class _Field:
 class _Message:
     name: str
     fields: list[_Field]
+    reserved: list[int] = None  # tag numbers of deleted fields (proto3 reserved)
 
 
 @dataclass
@@ -87,6 +88,19 @@ def _messages(model) -> Iterable:
     for el in model.elements:
         if el.__class__.__name__ == "MessageDecl":
             yield el
+
+
+def _is_reserved(item) -> bool:
+    """A message-body item is a `reserved` marker (deleted-field slot), not a
+    real field. MessageReserved has no `.type`; MessageField does."""
+    return item.__class__.__name__ == "MessageReserved"
+
+
+def real_fields(msg):
+    """The actual MessageField items of a message (reserved slots filtered).
+    Use this everywhere that walks a message's fields for SHAPE (params,
+    config-schema, validators) — body order is preserved, tags are NOT here."""
+    return [it for it in getattr(msg, "fields", []) or [] if not _is_reserved(it)]
 
 
 def _enums(model) -> Iterable:
@@ -188,16 +202,23 @@ def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Pa
     for msg in _messages(model):
         imports: list[str] = []
         fields: list[_Field] = []
-        # Artheia message fields are unnumbered; we assign 1..N in
-        # declaration order. Any trailing nanopb options block is passed
-        # through verbatim — the generator does not parse it.
-        for idx, f in enumerate(msg.fields):
+        reserved: list[int] = []
+        # Artheia message tags are POSITIONAL: each body item (field OR
+        # `reserved` marker) consumes the next tag, 1..N in body order. A
+        # `reserved` slot emits `reserved <tag>;` and NO field, so deleting a
+        # field (replacing it with `reserved`) keeps every later field's tag
+        # stable + the dead tag unreusable.
+        for tag, item in enumerate(msg.fields, start=1):
+            if _is_reserved(item):
+                reserved.append(tag)
+                continue
+            f = item
             proto_type, imp, imp_path = _proto_type_for(f, model.name or "")
             if imp and imp != msg.name and imp_path and imp_path not in imports:
                 imports.append(imp_path)
             fields.append(_Field(
                 name=f.name,
-                number=idx + 1,
+                number=tag,
                 proto_type=proto_type,
                 repeated=bool(f.repeated),
                 options=(getattr(f, "options", "") or "").strip(),
@@ -207,7 +228,7 @@ def generate_proto(model, out_dir: str | Path, source_file: str = "") -> list[Pa
             source_file=source_file,
             package=package,
             imports=sorted(imports),
-            message=_Message(name=msg.name, fields=fields),
+            message=_Message(name=msg.name, fields=fields, reserved=reserved),
         )
         path = out_dir / f"{msg.name}.proto"
         path.write_text(rendered)

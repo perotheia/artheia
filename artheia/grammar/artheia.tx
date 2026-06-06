@@ -61,8 +61,20 @@ MessageOrEnum:
 
 MessageDecl:
     'message' name=ID '{'
-        fields*=MessageField
+        fields*=MessageItem
     '}'
+;
+
+// A message body is a SEQUENCE of fields and `reserved` markers (kept under the
+// `fields` attribute so existing consumers keep working; they filter out
+// reserved entries by class). Field tags are POSITIONAL (assigned 1..N in body
+// order by the proto generator), so a `reserved` marker is how you DELETE a
+// field without shifting every later field's tag down — it consumes the tag
+// slot but emits no field, keeping already-stored values wire-compatible. (Body
+// order IS the tag; assumes fields stay sorted — see
+// docs/artheia/transform.md.)
+MessageItem:
+    MessageReserved | MessageField
 ;
 
 MessageField:
@@ -70,6 +82,14 @@ MessageField:
     type=FieldType
     name=ID
     ('[' options=/[^\]]*/ ']')?
+;
+
+// `reserved` — a deleted field's slot. Carries an optional dropped name as a
+// comment-grade note; the generator emits `reserved <tag>;` (proto3) so the tag
+// can never be reused. Place it where the deleted field used to be (body order
+// IS the tag), so subsequent fields keep their numbers.
+MessageReserved:
+    'reserved' (name=ID)?
 ;
 
 FieldType:
