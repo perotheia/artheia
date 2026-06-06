@@ -153,6 +153,36 @@ def test_params_config_const(tmp_path):
     assert data["const"] == {"n": ["wire_id"]}                    # only the const one
 
 
+def test_config_schema_shape(tmp_path):
+    """gen-schema: a node's `config <Msg>` binding → one schema entry per
+    config_type with a stable shape digest, proto type, bound nodes, fields."""
+    from artheia.generators.config_schema import build_config_schema, _digest
+    from artheia.model import parse_string
+    model = parse_string(
+        """
+        package p
+        message Cfg { uint32 step  bool wrap }
+        interface clientServer Foo { operation Get() }
+        node atomic N {
+            tipc type=0x1 instance=0
+            config Cfg
+            ports { server s provides Foo }
+        }
+        composition C { prototype N n }
+        """
+    )
+    data = build_config_schema(model)
+    assert "Cfg" in data["configs"]
+    e = data["configs"]["Cfg"]
+    assert e["proto_type"] == "p_Cfg"
+    assert e["nodes"] == ["n"]                              # prototype name
+    assert [f["name"] for f in e["fields"]] == ["step", "wrap"]
+    assert e["fields"][0]["type"] == "uint32"
+    # digest is stable + order-sensitive
+    assert e["digest"] == _digest("Cfg", e["fields"])
+    assert e["digest"].startswith("cfg_")
+
+
 def test_etcd_schema_shape(tmp_path):
     model = parse_file(REPO / "examples" / "demo.art")
     out = tmp_path / "etcd.json"

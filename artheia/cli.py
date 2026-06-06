@@ -978,6 +978,21 @@ def gen_params(art_file: str, out_file: str) -> None:
     click.echo(str(path))
 
 
+@main.command("gen-schema",
+              help="Emit ONE combined config-schema JSON for all FC `config "
+                   "<Msg>` bindings in a system .art: per config_type, the "
+                   "stable shape DIGEST + proto type + field shape + bound "
+                   "nodes. The spine of the migration tooling (snapshot decode, "
+                   "transform validation/codegen).")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
+def gen_schema(art_file: str, out_file: str) -> None:
+    from .generators.config_schema import generate_config_schema
+    model = _parse(art_file)
+    path = generate_config_schema(model, out_file)
+    click.echo(str(path))
+
+
 # (gen-cpp-stubs retired — conflicted with gen-app, which emits the
 # GenServer/GenStateM daemon (incl. the statem StateMBase) directly from
 # the same .art. There is one C++-from-.art path now: `gen-app --kind fc`.)
