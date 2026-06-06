@@ -103,6 +103,11 @@ def load_all(
     targets = list(shorts) if shorts is not None else [fc.short for fc in CLUSTERS]
     out: list[LoadedFc] = []
     for short in targets:
+        # When walking the whole catalog (shorts=None), skip a short with no
+        # package.art under art_root — a FC named in CLUSTERS but not deployed
+        # here (e.g. com, retired). An EXPLICITLY-requested short still errors.
+        if shorts is None and not (art_root / short / "package.art").exists():
+            continue
         out.append(load_fc(short, art_root))
     return out
 
