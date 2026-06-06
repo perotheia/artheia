@@ -169,14 +169,33 @@ def test_gen_transform_emits_rules_and_entry(tmp_path):
     out = tmp_path / "plugin.cc"
     generate_transform_plugin(transform, out)
     src = out.read_text()
-    # rule ops -> nlohmann/json mutations
-    assert 'cfg["new"] = cfg["old"]; cfg.erase("old");' in src
-    assert 'if (!cfg.contains("f")) cfg["f"] = json::parse(R"(3)");' in src
-    assert 'cfg["x"] = json::parse(R"(7)");' in src
-    assert 'cfg.erase("dead");' in src
-    # the entry registers the edge
+    # rule ops -> JSON-pointer helper calls (mirror migrate.py path ops)
+    assert 'jp_rename(cfg, "/old", "/new");' in src
+    assert 'jp_add(cfg, "/f", R"(3)");' in src
+    assert 'jp_set(cfg, "/x", R"(7)");' in src
+    assert 'jp_del(cfg, "/dead");' in src
+    # the jp helpers + the entry registering the edge
+    assert "static void jp_rename" in src
     assert "per_register_migrations" in src
     assert 'api->add_edge(api->host, "d1", "d2", &transform_Cfg);' in src
+
+
+def test_gen_transform_jsonpath_and_map(tmp_path):
+    """Nested JSONPath ($.a.b) and the value-map `transform` op emit the
+    matching jp_ helper calls."""
+    from artheia.generators.transform_codegen import generate_transform_plugin
+    out = tmp_path / "p.cc"
+    generate_transform_plugin({
+        "config_type": "U", "from_digest": "d1", "to_digest": "d2",
+        "rules": [
+            {"op": "rename", "from": "$.address.city", "to": "$.location.city"},
+            {"op": "transform", "path": "$.status",
+             "map": {"ACTIVE": "enabled"}},
+        ],
+    }, out)
+    src = out.read_text()
+    assert 'jp_rename(cfg, "/address/city", "/location/city");' in src
+    assert 'jp_map(cfg, "/status",' in src and '"ACTIVE"' in src and "enabled" in src
 
 
 def test_config_schema_shape(tmp_path):

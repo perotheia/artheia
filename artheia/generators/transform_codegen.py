@@ -61,25 +61,86 @@ def _emit_rule_ops(rules: list[dict]) -> str:
     lines = []
     for r in rules:
         op = r.get("op")
+
+        def jp(path):
+            # "$.a.b" / "a.b" / "a" -> a JSON-pointer literal "/a/b". Mirrors
+            # migrate._path_parts. Emitted as a C++ json::json_pointer arg.
+            p = path[2:] if path.startswith("$.") else (
+                "" if path == "$" else path)
+            segs = [s for s in p.split(".") if s]
+            return '"/' + "/".join(segs) + '"'
+
         if op == "rename":
-            s, d = r["from"], r["to"]
-            lines.append(f'    if (cfg.contains("{s}")) {{ cfg["{d}"] = '
-                         f'cfg["{s}"]; cfg.erase("{s}"); }}')
+            s, d = jp(r["from"]), jp(r["to"])
+            lines.append(f'    jp_rename(cfg, {s}, {d});')
         elif op == "add":
-            d = json.dumps(r.get("default"))
-            lines.append(f'    if (!cfg.contains("{r["field"]}")) '
-                         f'cfg["{r["field"]}"] = json::parse(R"({d})");')
+            path = jp(r.get("field") or r.get("path"))
+            dv = json.dumps(r.get("default"))
+            lines.append(f'    jp_add(cfg, {path}, R"({dv})");')
         elif op == "remove":
-            lines.append(f'    cfg.erase("{r["field"]}");')
+            lines.append(f'    jp_del(cfg, {jp(r.get("field") or r.get("path"))});')
         elif op == "set":
+            path = jp(r.get("field") or r.get("path"))
             v = json.dumps(r["value"])
-            lines.append(f'    cfg["{r["field"]}"] = json::parse(R"({v})");')
+            lines.append(f'    jp_set(cfg, {path}, R"({v})");')
         elif op == "copy":
-            s, d = r["from"], r["to"]
-            lines.append(f'    if (cfg.contains("{s}")) cfg["{d}"] = cfg["{s}"];')
+            lines.append(f'    jp_copy(cfg, {jp(r["from"])}, {jp(r["to"])});')
+        elif op == "transform":
+            path = jp(r.get("path") or r.get("field"))
+            mapping = r.get("map") or r.get("expression") or {}
+            mp = json.dumps(mapping)
+            has_def = "default" in r
+            dv = json.dumps(r.get("default")) if has_def else "null"
+            lines.append(f'    jp_map(cfg, {path}, R"({mp})", {str(has_def).lower()}, R"({dv})");')
         else:
             raise ValueError(f"unknown rule op: {op!r}")
     return "\n".join(lines) if lines else "    // (no rules)"
+
+
+# JSON-pointer helpers emitted into every generated plugin — they mirror
+# migrate.py's path_get/set/del + the transform value-map, so the generated C
+# plugin and the Python reference applier produce identical results.
+_JP_HELPERS = r'''
+// ---- JSON-pointer field ops (mirror tools/migrate/migrate.py) -------------
+static bool jp_has(const json& c, const char* p) {
+    return c.contains(json::json_pointer(p));
+}
+static void jp_set(json& c, const char* p, const char* val) {
+    c[json::json_pointer(p)] = json::parse(val);
+}
+static void jp_add(json& c, const char* p, const char* dflt) {
+    if (!jp_has(c, p)) c[json::json_pointer(p)] = json::parse(dflt);
+}
+static void jp_del(json& c, const char* p) {
+    json::json_pointer ptr(p);
+    // erase the leaf from its parent (nlohmann has no pointer-erase).
+    auto parent = ptr.parent_pointer();
+    const std::string leaf = ptr.back();
+    if (c.contains(ptr)) c.at(parent).erase(leaf);
+}
+static void jp_rename(json& c, const char* from, const char* to) {
+    json::json_pointer fp(from);
+    if (!c.contains(fp)) return;
+    json v = c.at(fp);
+    jp_del(c, from);
+    c[json::json_pointer(to)] = v;
+}
+static void jp_copy(json& c, const char* from, const char* to) {
+    json::json_pointer fp(from);
+    if (c.contains(fp)) c[json::json_pointer(to)] = c.at(fp);
+}
+static void jp_map(json& c, const char* p, const char* table,
+                   bool has_default, const char* dflt) {
+    json::json_pointer ptr(p);
+    if (!c.contains(ptr)) return;
+    json m = json::parse(table);
+    // key the map by the value's string form (mirrors migrate.py str(v)).
+    json v = c.at(ptr);
+    std::string key = v.is_string() ? v.get<std::string>() : v.dump();
+    if (m.contains(key)) c.at(ptr) = m[key];
+    else if (has_default) c.at(ptr) = json::parse(dflt);
+}
+'''
 
 
 def generate_transform_plugin(transform: dict, out_file: str | Path,
@@ -101,6 +162,7 @@ def generate_transform_plugin(transform: dict, out_file: str | Path,
         src=src or "(inline)", config_type=ct, from_digest=frm, to_digest=to,
         field_summary=field_summary,
     )
+    body += _JP_HELPERS
     body += f'''
 // The transform: input bytes (FROM proto3) -> output bytes (TO proto3). The
 // proto bytes are exchanged with the JSON object via the per-type bridge the
