@@ -685,6 +685,14 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             logger = "file:/tmp/theia"
         env["THEIA_LOGGER"] = _logger_for_process(logger, short)
 
+        # THEIA_CONFIG_DIR points the runtime config singleton at this machine's
+        # static-params dir: init_config(<fc>) reads <THEIA_CONFIG_DIR>/<fc>.json
+        # at boot. The supervisor runs each child with CWD = root_dir, and
+        # stage-local emits config/<fc>.json next to executor.json, so "config"
+        # (CWD-relative) resolves for every FC. A missing file is fine (lookups
+        # fall back to the .art defaults).
+        env["THEIA_CONFIG_DIR"] = "config"
+
         # Per-node metadata for the C++ supervisor. FCs get rich NodeInfo
         # from their package.art (_collect_nodes_for_fc); application
         # leaves carry their hosted prototype names on Process.nodes
