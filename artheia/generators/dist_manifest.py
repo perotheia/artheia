@@ -287,7 +287,8 @@ def emit_dist_manifest(rig, out_dir: Path) -> list[Path]:
         ]:
             written.append(_write_json(mdir / stem, payload))
 
-    # Top-level index — Puppet's bootstrap finds the per-host dir here.
+    # Top-level machines manifest — Puppet's bootstrap finds the per-host dir
+    # here. (Also the GUI's machine index; the GUI is the sole consumer today.)
     index = {
         "kind": "RigIndex",
         "vehicle": _serialize(rig.vehicle),
@@ -300,6 +301,6 @@ def emit_dist_manifest(rig, out_dir: Path) -> list[Path]:
             for m in rig.machines
         ],
     }
-    written.append(_write_json(out_dir / "index", index))
+    written.append(_write_json(out_dir / "machines", index))
 
     return written
