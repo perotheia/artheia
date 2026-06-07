@@ -83,6 +83,22 @@ ShutdownSpec = Union[int, str]
 
 
 @dataclass
+class Supervisor:
+    """The machine's supervisor — the node that IMPLEMENTS the AUTOSAR Execution
+    Management (ARA Executor) spec for this machine.
+
+    Identity = its TIPC instance. Multiple machines on one TIPC namespace
+    (network_mode: host) run the same supervisor binary, so each binds a distinct
+    instance (central=0, compute=1) to avoid collision. This flows into the
+    machine's execution.json as ``supervisor_instance``; the supervisor binary
+    reads it (THEIA_SUPERVISOR_INSTANCE) and run-supervisor.sh sets it from the
+    manifest — no hardcoded env. Models the .art ComputeSupervisor prototype
+    (which declares the SupervisorCtl/Worker nodes at instance=1).
+    """
+    instance: int = 0
+
+
+@dataclass
 class NodeInfo:
     """One artheia node hosted inside a child process.
 

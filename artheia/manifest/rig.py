@@ -101,6 +101,13 @@ class Rig:
     # supervisor binary.
     supervisors: list[SupervisorNode] = field(default_factory=list)
 
+    # Per-machine supervisor identity — the node implementing ARA Execution
+    # Management on each machine. Keyed by Machine.name → Supervisor (its TIPC
+    # instance). Lets two machines on one TIPC namespace run distinct supervisors
+    # (central=0, compute=1). Flows into <machine>/execution.json as
+    # supervisor_instance. Empty = every machine's supervisor at instance 0.
+    supervisor: dict = field(default_factory=dict)
+
     # Rig-wide default logger SINK for every supervised Process (THEIA_LOGGER:
     # stdio|null|file:<path>|syslog). A Process with its own `logger` overrides
     # this; if BOTH are empty, build_supervisor_tree falls back to a per-process
@@ -188,6 +195,10 @@ class SoftwareSpecification(Layer):
     # OTP-style supervisor tree.
     supervisors: _SupervisorSet = field(default_factory=Undefined)
 
+    # Per-machine supervisor identity (machine name → Supervisor; its TIPC
+    # instance). Scalar dict like `logger` — not a set transform. Undefined → {}.
+    supervisor: Union[dict, Undefined] = field(default_factory=Undefined)
+
     # Rig-wide default logger sink (scalar, like `vehicle`). Undefined → a
     # squashing layer inherits the base's value; an empty string in the
     # materialized Rig means "no rig default → per-process /tmp/theia fallback".
@@ -236,5 +247,6 @@ class SoftwareSpecification(Layer):
             process_to_machine_mappings=_resolve(self.process_to_machine_mappings),
             node_to_cpu_mappings=_resolve(self.node_to_cpu_mappings),
             supervisors=_resolve(self.supervisors),
+            supervisor={} if isinstance(self.supervisor, Undefined) else self.supervisor,
             logger=logger,
         )

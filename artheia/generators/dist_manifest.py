@@ -200,9 +200,16 @@ def _execution_payload(rig, machine_name: str) -> dict:
         if getattr(m, "machine", "") == machine_name
     ]
 
+    # This machine's supervisor TIPC instance (ARA Executor identity). rig.
+    # supervisor maps machine name → Supervisor; default 0 if unset. run-
+    # supervisor.sh reads this from execution.json → THEIA_SUPERVISOR_INSTANCE.
+    sup = getattr(rig, "supervisor", {}).get(machine_name)
+    sup_instance = getattr(sup, "instance", 0) if sup is not None else 0
+
     payload = {
         "kind": "ExecutionManifest",
         "host_machine": machine_name,
+        "supervisor_instance": sup_instance,
         "processes": [_serialize(p) for p in procs],
         "process_to_machine_mappings": [
             _serialize(m) for m in ptm_for_machine

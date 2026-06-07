@@ -68,6 +68,7 @@ from artheia.manifest.service import (  # noqa: F401
 from artheia.manifest.supervisor import (  # noqa: F401
     RestartStrategy,
     RestartType,
+    Supervisor,
     SupervisorNode,
 )
 from artheia.manifest.transform import (  # noqa: F401
@@ -105,6 +106,7 @@ __all__ = [
     "ServiceInstance",
     "ServiceInterface",
     "ServiceManifest",
+    "Supervisor",
     "SupervisorNode",
     "SwComponent",
     "TipcAddress",
