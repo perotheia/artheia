@@ -229,3 +229,42 @@ def test_distinct_tipc_different_instance_ok(tmp_path):
     model_b = parse_file(str(b / "package.art"))
     doc = build_netgraph(model_a, extra_models=[model_b])
     assert {n["name"] for n in doc["nodes"]} == {"Alpha", "Beta"}
+
+
+# ---- `artheia check-addresses` CLI gate ------------------------------------
+
+def _aggregator_over(sysroot, *pkg_names):
+    """An import-driven aggregator unioning the given sibling packages."""
+    agg = sysroot / "system.art"
+    imports = "\n".join(f"import system.{p}.*" for p in pkg_names)
+    agg.write_text(f"package system\n\n{imports}\n")
+    return agg
+
+
+def test_check_addresses_cli_ok(tmp_path):
+    """check-addresses exits 0 + reports the node count when every TIPC
+    address across the unioned packages is distinct."""
+    sysroot = tmp_path / "platform" / "system"
+    _write_node_pkg(sysroot / "a", "a", "Alpha", "0x95000010")
+    _write_node_pkg(sysroot / "b", "b", "Beta", "0x95000011")
+    agg = _aggregator_over(sysroot, "a", "b")
+
+    res = CliRunner().invoke(main, ["check-addresses", str(agg)])
+    assert res.exit_code == 0, res.output
+    assert "all TIPC addresses distinct" in res.output
+
+
+def test_check_addresses_cli_detects_cross_fc_collision(tmp_path):
+    """The gate's reason for existing: two SEPARATE packages (the com/per
+    case) whose nodes share a TIPC address. Each parses clean alone; the
+    recursive union the CLI builds is what catches it. Exit non-zero, name
+    both nodes + the address."""
+    sysroot = tmp_path / "platform" / "system"
+    _write_node_pkg(sysroot / "a", "a", "Alpha", "0x80010008")
+    _write_node_pkg(sysroot / "b", "b", "Beta", "0x80010008")
+    agg = _aggregator_over(sysroot, "a", "b")
+
+    res = CliRunner().invoke(main, ["check-addresses", str(agg)])
+    assert res.exit_code == 1, res.output
+    assert "Alpha" in res.output and "Beta" in res.output
+    assert "0x80010008" in res.output

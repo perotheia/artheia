@@ -955,6 +955,47 @@ def gen_netgraph(
     click.echo(str(path))
 
 
+@main.command(
+    "check-addresses",
+    help="Assert every node's TIPC (type, instance) is unique across the "
+    "system. Follows `import` recursively (like -R gen-netgraph), so it "
+    "catches CROSS-FC collisions (e.g. two FCs both claiming 0x80010008). "
+    "Exits non-zero on a clash. Run before manifest/dist generation.",
+)
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--catalog",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Gateway catalog JSON (so bus mega-nodes resolve their addresses).",
+)
+def check_addresses(art_file: str, catalog: str | None) -> None:
+    """Pure address-collision gate. Unions every reachable model (recursive
+    import-follow), then runs the netgraph's system-wide TIPC uniqueness check
+    — without writing any output. The right pre-flight before generate-manifest
+    / theia dist: a duplicate (type, instance) silently mis-wires the runtime
+    (TIPC routes purely by address), so we fail the build instead.
+
+    Point it at the WIDEST aggregator that imports the FCs you deploy —
+    e.g. system/services/cluster.art (imports com + per + every service)."""
+    import json as _json
+
+    from .generators.netgraph import build_netgraph, DuplicateTipcAddress
+    model = _parse(art_file)
+    cat = _json.loads(Path(catalog).read_text()) if catalog else None
+    extras = [m for _p, m in _collect_imported_models(art_file, model)]
+    try:
+        ng = build_netgraph(model, catalog=cat, extra_models=extras)
+    except DuplicateTipcAddress as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(1)
+    n = len(ng.get("nodes", []))
+    click.secho(
+        f"check-addresses: OK — {n} node(s), all TIPC addresses distinct",
+        fg="green",
+    )
+
+
 @main.command("gen-etcd", help="Emit the etcd seed schema for all node params.")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
@@ -1384,6 +1425,60 @@ def gen_app(kind: str,
         click.echo(f"  overwrote:  {path}")
     for path in results.get("skipped-exists", []):
         click.echo(f"  skipped:    {path}  (exists; --force to overwrite)")
+
+    # Cross-FC TIPC address sanity (fc mode only). The FC we just (re)generated
+    # may have introduced an address that collides with ANOTHER FC's node — the
+    # single-file parse validator can't see that. Re-run the system-wide
+    # netgraph check over the canonical aggregators and WARN if it clashes
+    # (gen-app is a dev tool; the hard gate is `theia manifest`'s
+    # check-addresses). Best-effort: skipped when the aggregators aren't found.
+    if kind == "fc":
+        _warn_cross_fc_address_collision(art_file)
+
+
+def _warn_cross_fc_address_collision(art_file: str | None) -> None:
+    """Best-effort cross-FC TIPC collision warning after gen-app. Walks up from
+    the .art to find the workspace root (the dir holding system/services/
+    cluster.art), then runs the system-wide netgraph check over the canonical
+    aggregators. Prints a WARNING (not an error — doesn't fail gen-app) naming
+    the clash; the `theia manifest` gate is what actually blocks the build."""
+    if not art_file:
+        return
+    from .generators.netgraph import build_netgraph, DuplicateTipcAddress
+
+    # Find the workspace root by walking up for system/services/cluster.art.
+    cur = Path(art_file).resolve().parent
+    root = None
+    for cand in [cur, *cur.parents]:
+        if (cand / "system" / "services" / "cluster.art").is_file():
+            root = cand
+            break
+    if root is None:
+        return   # not in a recognizable workspace; the manifest gate covers it
+
+    aggregators = [
+        root / "system" / "services" / "cluster.art",
+        root / "system" / "system.art",
+    ]
+    for agg in aggregators:
+        if not agg.is_file():
+            continue
+        try:
+            model = _parse(str(agg))
+            extras = [m for _p, m in _collect_imported_models(str(agg), model)]
+            build_netgraph(model, extra_models=extras)
+        except DuplicateTipcAddress as e:
+            click.secho(
+                f"\nWARNING: TIPC address collision after this gen-app "
+                f"(via {agg.name}):\n{e}\n"
+                "Pick a distinct `tipc type=…` in the .art. "
+                "`theia manifest` will refuse to build until this is fixed.",
+                fg="yellow", err=True)
+            return
+        except Exception:
+            # A broken/incomplete aggregator (mid-refactor) shouldn't make
+            # gen-app noisy — the manifest gate is the authority.
+            return
 
 
 @main.command(
