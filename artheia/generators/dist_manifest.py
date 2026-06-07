@@ -274,18 +274,26 @@ def emit_dist_manifest(rig, out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    # Per-machine: 4 JSON manifests each.
+    # Per-machine: 4 JSON manifests each, plus a ready-to-run executor.json.
     machine_names = [m.name for m in rig.machines]
     for machine in rig.machines:
         mdir = out_dir / machine.name
         mdir.mkdir(parents=True, exist_ok=True)
+        execution = _execution_payload(rig, machine.name)
         for stem, payload in [
             ("machine",     _machine_payload(machine)),
             ("application", _application_payload(rig, machine.name)),
             ("service",     _service_payload(rig, machine.name)),
-            ("execution",   _execution_payload(rig, machine.name)),
+            ("execution",   execution),
         ]:
             written.append(_write_json(mdir / stem, payload))
+        # executor.json — the supervisor tree extracted from execution.json,
+        # ready to drop at /opt/theia/config/executor.json (puppet orchestrate
+        # copies it verbatim; the supervisor reads it). Saves a JSON re-serialize
+        # in puppet (no stdlib to_json needed).
+        tree = execution.get("supervisor_tree")
+        if tree is not None:
+            written.append(_write_json(mdir / "executor", tree))
 
     # Top-level machines manifest — Puppet's bootstrap finds the per-host dir
     # here. (Also the GUI's machine index; the GUI is the sole consumer today.)
