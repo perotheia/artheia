@@ -126,6 +126,18 @@ public:
     static constexpr uint32_t kTipcType     = {{ n.tipc_type }}u;
     static constexpr uint32_t kTipcInstance = {{ n.tipc_instance }}u;
 
+    // State enum → its .art name. The GenStateM base calls this when it emits
+    // a STATEM trace so the record carries from/to state names (OFF→STARTING),
+    // not just the bare ordinal — what `tdb logcat` / the GUI / rf assert on.
+    static const char* state_name({{ n.name }}State s) {
+        switch (s) {
+{%- for st in n.statem.states %}
+        case {{ n.name }}State::{{ st }}: return "{{ st }}";
+{%- endfor %}
+        }
+        return "?";
+    }
+
     // AUTOSAR Reporting / Non-Reporting flag (per .art `reporting`
     // field). See doc on the non-statem Daemon template for full
     // semantics. statem-flavour FCs use the same per-(node, msg_type)

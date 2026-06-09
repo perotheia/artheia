@@ -53,6 +53,8 @@ class TraceRec:
     json: str               # JSON serialization of the TraceRecord ENVELOPE
     content: "Optional[dict]" = None  # the inner msg decoded by msg_type, or None
     kind: str = ""          # TraceKind enum name (e.g. "CALL_OUT"), "" if unset
+    from_state: str = ""    # STATEM only: state left ("OFF"); "" otherwise
+    to_state: str = ""      # STATEM only: state entered ("STARTING")
 
     def to_dict(self, *, ts: "Optional[str]" = None) -> dict:
         """Full record as JSON-ready dict: header fields + decoded inner proto.
@@ -188,6 +190,10 @@ class TraceObserver:
             json=json_format.MessageToJson(msg, indent=None),
             content=inner,
             kind=kind_name,
+            # STATEM transition state names (fields 8/9); "" on non-STATEM
+            # records + on an older .so that predates the proto extension.
+            from_state=str(getattr(msg, "from_state", "") or ""),
+            to_state=str(getattr(msg, "to_state", "") or ""),
         )
 
     def _decode_inner(self, msg_type: str, payload: bytes) -> Optional[dict]:
