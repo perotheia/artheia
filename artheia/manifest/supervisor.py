@@ -556,6 +556,16 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         for el in model.elements:
             if type(el).__name__ != "NodeDecl":
                 continue
+            # Only DEPLOYED nodes belong in the supervisor tree: a node type
+            # must appear as a prototype in the composition. Skip test-only /
+            # client nodes (e.g. SmTester, DemoFsmTester — senders the probe
+            # binds, declared in package.art but in NO composition). Without
+            # this they leak into executor.json as phantom workers the
+            # supervisor would watchdog + push trace to. Guarded on a
+            # non-empty proto map so an FC with no/absent component.art (the
+            # fall-through above kept el.name) still emits all its nodes.
+            if proto_by_type and el.name not in proto_by_type:
+                continue
             tipc = getattr(el, "tipc", None)
             tipc_type = getattr(tipc, "type", "") if tipc else ""
             tipc_instance = getattr(tipc, "instance", "0") if tipc else "0"
