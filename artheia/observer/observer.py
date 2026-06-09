@@ -55,6 +55,9 @@ class TraceRec:
     kind: str = ""          # TraceKind enum name (e.g. "CALL_OUT"), "" if unset
     from_state: str = ""    # STATEM only: state left ("OFF"); "" otherwise
     to_state: str = ""      # STATEM only: state entered ("STARTING")
+    data_type: str = ""     # STATEM only: type name of the `data` msg in payload
+    data: "Optional[dict]" = None  # STATEM only: the decoded FSM data (OTP Data
+                            # term), keyed on data_type; None if absent/undecodable
 
     def to_dict(self, *, ts: "Optional[str]" = None) -> dict:
         """Full record as JSON-ready dict: header fields + decoded inner proto.
@@ -89,6 +92,13 @@ class TraceRec:
             "corr_id": self.corr_id,
             "content": content,
         })
+        # STATEM records: surface the transition + the decoded FSM data (OTP
+        # `{State, Data}`). Omitted on non-STATEM records so the dict stays lean.
+        if self.to_state:
+            out["from_state"] = self.from_state
+            out["to_state"] = self.to_state
+        if self.data is not None:
+            out["data"] = {k: jsonable(v) for k, v in self.data.items()}
         return out
 
 
@@ -175,7 +185,17 @@ class TraceObserver:
         # The proto field is `node_name` (= src; back-compat alias per
         # services/log/system/log/package.art), NOT `src`. Read the real
         # field name; TraceRec keeps `src` as the observer's vocabulary.
-        inner = self._decode_inner(msg.msg_type, bytes(msg.payload))
+        # For a STATEM record the payload is the FSM `data` message (decoded
+        # via the data_type field), NOT the triggering event — so decode it
+        # under data_type. Every other record's payload is the traced message
+        # itself, decoded under msg_type.
+        data_type = str(getattr(msg, "data_type", "") or "")
+        if data_type:
+            fsm_data = self._decode_inner(data_type, bytes(msg.payload))
+            inner = None
+        else:
+            fsm_data = None
+            inner = self._decode_inner(msg.msg_type, bytes(msg.payload))
         # kind is a TraceKind enum (field 6). Resolve its symbolic name from
         # the enum descriptor; fall back to the raw int if unnamed.
         try:
@@ -194,6 +214,9 @@ class TraceObserver:
             # records + on an older .so that predates the proto extension.
             from_state=str(getattr(msg, "from_state", "") or ""),
             to_state=str(getattr(msg, "to_state", "") or ""),
+            # STATEM FSM data (OTP Data term): field 10 type name + decoded dict.
+            data_type=data_type,
+            data=fsm_data,
         )
 
     def _decode_inner(self, msg_type: str, payload: bytes) -> Optional[dict]:

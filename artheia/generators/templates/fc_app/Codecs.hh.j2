@@ -27,7 +27,7 @@
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
 {% set _incl = [model.package_subpath ~ "/" ~ model.fc_short] -%}
 {%- for n in model.nodes -%}
-{%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
+{%- for d in n.unique_receiver_data() + n.unique_outbound_data() + ([n.statem_data] if n.statem_data else []) -%}
 {%- set hdr = d.proto_subpath ~ "/" ~ d.proto_leaf -%}
 {%- if d.proto_subpath and hdr not in _incl %}{{ _incl.append(hdr) or "" }}
 #include "{{ hdr }}.pb.h"
@@ -50,7 +50,7 @@ THEIA_DECLARE_REMOTE_CODEC({{ op.req_proto }})
 THEIA_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
 {%- endif -%}
 {%- endfor -%}
-{%- for d in n.unique_receiver_data() + n.unique_outbound_data() -%}
+{%- for d in n.unique_receiver_data() + n.unique_outbound_data() + ([n.statem_data] if n.statem_data else []) -%}
 {%- if d.proto_type and not d.runtime_owned and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
 THEIA_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}

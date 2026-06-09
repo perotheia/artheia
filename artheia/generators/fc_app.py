@@ -158,6 +158,12 @@ class _NodeView:
     # GenServer-shaped FCs. Templates branch on `node.statem` being
     # truthy / None to pick GenStateM-vs-GenServer skeleton.
     statem: Optional[StateMSpec] = None
+    # The FSM's `data <Msg>` resolved to a _DataEl, when the statem block
+    # declared one. The GenStateM base encodes this message into the STATEM
+    # trace record's payload on every transition (OTP `{State, Data}` — the
+    # Data half), so it needs a RemoteCodec<Data>, declared in Codecs.hh.
+    # None when the node is plain GenServer or the FSM carries no data.
+    statem_data: Optional[_DataEl] = None
     # Static signal-routing slice projected from
     # artheia.generators.netgraph.build_netgraph() —
     # per-(msg) `direction + destinations[]` for the runtime LUT.
@@ -434,6 +440,16 @@ def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
         log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
     )
+    # Resolve the FSM `data <Msg>` to a _DataEl so Codecs.hh declares a
+    # RemoteCodec<Data> — GenStateM encodes it into the STATEM trace payload
+    # (the OTP `{State, Data}` snapshot). The statem block stores the data
+    # MessageDecl cross-ref as `data_type`; reuse the same resolution as a
+    # port data element so the service_id keys on the defining package.
+    if nv.statem is not None:
+        _sm_body = getattr(node, "statem", None)
+        _data_ref = getattr(_sm_body, "data_type", None) if _sm_body else None
+        if _data_ref is not None:
+            nv.statem_data = _data_el("data", _data_ref)
     for p in (node.ports or []):
         nv.ports.append(_port_view(p))
     return nv
