@@ -554,6 +554,43 @@ def _prototype_name_by_type(model, composition_name: str) -> dict[str, str]:
     return out
 
 
+def _resolved_node_by_type(model, composition_name: str) -> dict:
+    """Map node-TYPE name → the RESOLVED real NodeDecl from the composition's
+    prototypes.
+
+    A composition may prototype an `extern node` whose real body (tipc, ports)
+    lives in an IMPORTED package — e.g. the gateway prototypes the PSP
+    `Kcan_Bus` / `Flexray_Bus` mega-nodes, declared locally only as
+    `extern node atomic Kcan_Bus { }`. The scope provider resolves the
+    prototype's cross-ref (`proto.type`) to the real node (with tipc), even
+    though the LOCAL top-level NodeDecl is still the bare extern stub
+    (tipc=None). The node loop iterates local NodeDecls, so without this it
+    would hit the stub and crash on the missing tipc. This map lets it
+    substitute the resolved real node. Returns {} if the composition isn't
+    found. (For the PSP buses the resolved node is a node-only PROJECTION —
+    ports stripped — via scope._resolve_in_component_only, so the per-PDU
+    O(N²) parse is still avoided; the gateway only needs the node identity +
+    tipc, the PDU routing lives in the netgraph.)
+    """
+    from ..model.flatten import flatten_composition
+
+    comp = None
+    for el in model.elements:
+        if el.__class__.__name__ == "CompositionDecl" and el.name == composition_name:
+            comp = el
+            break
+    if comp is None:
+        return {}
+    prototypes, _connects = flatten_composition(comp)
+    out: dict = {}
+    for proto in prototypes:
+        t = getattr(proto, "type", None)
+        tn = getattr(t, "name", None)
+        if tn and t is not None:
+            out.setdefault(tn, t)
+    return out
+
+
 def _build_model_view(art_path: Path,
                        cxx_namespace_override: Optional[str] = None,
                        composition: Optional[str] = None) -> _ModelView:
@@ -603,6 +640,18 @@ def _build_model_view(art_path: Path,
             for t, p in _prototype_name_by_type(model, el.name).items():
                 proto_by_type.setdefault(t, p)
 
+    # type → RESOLVED real NodeDecl. Lets the node loop substitute a local
+    # `extern node` stub (tipc=None) with the imported real node the
+    # composition prototype's cross-ref resolves to (e.g. the PSP Kcan_Bus /
+    # Flexray_Bus). Unioned across EVERY composition (like proto_by_type), so
+    # the substitution works whether or not a specific --composition is
+    # selected — an extern is resolved wherever it's prototyped.
+    resolved_by_type: dict = {}
+    for el in model.elements:
+        if el.__class__.__name__ == "CompositionDecl":
+            for t, node in _resolved_node_by_type(model, el.name).items():
+                resolved_by_type.setdefault(t, node)
+
     nodes: list[_NodeView] = []
     has_statem = False
     state_enum = ""
@@ -610,6 +659,11 @@ def _build_model_view(art_path: Path,
         if el.__class__.__name__ == "NodeDecl":
             if wanted is not None and el.name not in wanted:
                 continue
+            # An `extern node` stub carries no body (tipc/ports live in an
+            # imported package). Substitute the real node the composition
+            # prototype resolves to, so its tipc + identity are available.
+            if getattr(el, "extern", False) and el.name in resolved_by_type:
+                el = resolved_by_type[el.name]
             nv = _node_view(el, proto_name=proto_by_type.get(el.name))
             nodes.append(nv)
             if not daemon_class:
