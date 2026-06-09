@@ -22,9 +22,22 @@ class Codec:
     proto_root is where the committed .proto tree lives (platform/proto/).
     """
 
+    # ONE process-shared _pb2 output dir across ALL Codec instances. protoc lays
+    # each package under <_out>/<pkg-tree>/ with __init__.py's, and _ensure_package
+    # imports them as `<pkg>.<leaf>_pb2`. Python caches the TOP package (e.g.
+    # `system`) as a namespace package the first time ANY sub-package is imported.
+    # If a second Codec used its OWN temp dir, that cached `system` namespace
+    # would NOT span the second dir, so a different sub-package
+    # (system.services.log vs system.supervisor) would fail with
+    # "No module named 'system.services'". Sharing one dir makes every
+    # sub-package live under the same `system`/`platform` namespace root.
+    _SHARED_OUT: "Path | None" = None
+
     def __init__(self, proto_root: str | Path):
         self.proto_root = Path(proto_root)
-        self._out = Path(tempfile.mkdtemp(prefix="artheia_probe_pb2_"))
+        if Codec._SHARED_OUT is None:
+            Codec._SHARED_OUT = Path(tempfile.mkdtemp(prefix="artheia_probe_pb2_"))
+        self._out = Codec._SHARED_OUT
         # flattened proto package (e.g. 'system_demo') -> the _pb2 module
         self._modules: dict[str, object] = {}
         # message class cache: flat type name 'system_demo_Inc' -> class
