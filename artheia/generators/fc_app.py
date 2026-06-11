@@ -591,6 +591,28 @@ def _resolved_node_by_type(model, composition_name: str) -> dict:
     return out
 
 
+def _is_test_sender_node(el) -> bool:
+    """True for a probe-tester node: a `node atomic` whose ONLY ports are
+    `sender` (so it can cast events but serves/receives nothing) — the shape
+    of SmTester / DemoFsmTester, declared so artheia.probe can bind a tester
+    identity. Such a node is never deployed (it's in no composition) and must
+    NOT be generated into an FC's lib/main.
+
+    Deliberately narrow: it requires AT LEAST one port and EVERY port to be a
+    sender, so it never matches a real co-resident worker (e.g. com's
+    TraceForwarder — a port-less runnable) or any node with a server/receiver/
+    client surface. An extern stub (no body) isn't matched either (no ports).
+    """
+    if getattr(el, "extern", False):
+        return False
+    if getattr(el, "kind", "atomic") != "atomic":
+        return False   # runnables / others are real workers
+    ports = getattr(el, "ports", None) or []
+    if not ports:
+        return False
+    return all(p.__class__.__name__ == "SenderPort" for p in ports)
+
+
 def _build_model_view(art_path: Path,
                        cxx_namespace_override: Optional[str] = None,
                        composition: Optional[str] = None) -> _ModelView:
@@ -627,21 +649,13 @@ def _build_model_view(art_path: Path,
     wanted: Optional[set[str]] = None
     if composition is not None:
         wanted = _nodes_prototyped_by_composition(model, composition)
-    else:
-        # Flat mode (no --composition): emit the union of every composition's
-        # prototyped node-types — NOT every NodeDecl. This excludes test-only /
-        # client nodes declared in the package but in NO composition (e.g. the
-        # SmTester / DemoFsmTester sender nodes the probe binds): they're not
-        # deployed, so generating them into the FC's lib/main both pulls in a
-        # phantom node and (for a sender-only node) references a _state.hh the
-        # FC never builds. When the model has NO compositions at all, wanted
-        # stays None → legacy "emit every NodeDecl" (single-node bring-up FCs).
-        _union: set[str] = set()
-        for _el in model.elements:
-            if _el.__class__.__name__ == "CompositionDecl":
-                _union |= _nodes_prototyped_by_composition(model, _el.name)
-        if _union:
-            wanted = _union
+
+    # Names prototyped by SOME composition — used (flat mode only) to spare a
+    # composition member from the test-node exclusion below.
+    _composed: set[str] = set()
+    for _el in model.elements:
+        if _el.__class__.__name__ == "CompositionDecl":
+            _composed |= _nodes_prototyped_by_composition(model, _el.name)
 
     # type→prototype name map (e.g. {"CounterNode": "counter"}) — the canonical
     # runtime identity. ALWAYS unioned across EVERY composition in the .art
@@ -673,6 +687,16 @@ def _build_model_view(art_path: Path,
     for el in model.elements:
         if el.__class__.__name__ == "NodeDecl":
             if wanted is not None and el.name not in wanted:
+                continue
+            # Skip a TEST-ONLY sender node (e.g. SmTester / DemoFsmTester): a
+            # node declared in the package purely so artheia.probe can bind a
+            # tester identity and cast events — it has ONLY sender port(s), is
+            # in NO composition, and isn't deployed. Generating it pulls a
+            # phantom node into the FC's lib/main + references a _state.hh the
+            # FC never builds. This is a NARROW shape check (sender-only +
+            # uncomposed) so it never drops a real co-resident worker like com's
+            # TraceForwarder (a runnable with no ports, not in the composition).
+            if _is_test_sender_node(el) and el.name not in _composed:
                 continue
             # An `extern node` stub carries no body (tipc/ports live in an
             # imported package). Substitute the real node the composition
