@@ -13,8 +13,11 @@
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 #include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
-{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
-#include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
+{% if model.nodes | selectattr("reporting") | list %}
+#include "TipcMux.hh"    // config-service receiver for reporting nodes (#386).
+                         // GenServer nodes use bind_node + register_cast;
+                         // reporting runnables use bind_listener +
+                         // register_cast_inline (no mailbox).
 {% endif %}
 
 #include <atomic>
@@ -63,12 +66,12 @@ int main() {
 {%- else %}
     (void)timers;  // no node requires_timers
 {%- endif %}
-{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
-    // Config-service receiver (#386). A reporting node binds its TIPC
-    // name and register_cast's the supervisor's control push; the cast
-    // lands in GenServer's base handle_cast(LogLevelPush) on the node
-    // thread. Same standard GwMessageHeader path as any app message —
-    // no bespoke control frame.
+{% if model.nodes | selectattr("reporting") | list %}
+    // Config-service receiver (#386). A reporting node binds its TIPC name
+    // and registers the supervisor's control pushes. A GenServer node's cast
+    // lands in its base handle_cast on the node thread; a reporting runnable
+    // (no mailbox) takes them INLINE on the mux thread (register_cast_inline).
+    // Same standard GwMessageHeader path as any app message — no bespoke frame.
     ::theia::runtime::TipcMux config_mux;
     // Publish the one per-app mux (the single epoll/select loop) so a
     // handler's ad-hoc RemoteRef registers its call-reply fd here via
@@ -134,8 +137,26 @@ int main() {
                                  "push + signal inject disabled");
     }
 {% endif %}
+{% if n.reporting and n.runnable %}
+    // GenRunnable has no mailbox, so it can't take the supervisor's control
+    // pushes via the GenServer handle_cast/mailbox path. Bind a listener and
+    // register the LogLevelPush / TraceControlPush INLINE — the mux dispatch
+    // thread applies them directly (on_log_level_push / on_trace_control_push,
+    // touching only atomics). This is what makes a runnable's log level + trace
+    // live-controllable (`tdb loglevel`/`trace <node>`), same as a gen_server.
+    if (auto* {{ n.snake }}_cfg = config_mux.bind_listener(
+            {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance)) {
+        config_mux.register_cast_inline<platform_runtime_LogLevelPush>(
+            {{ n.snake }}_cfg, {{ n.snake }}, &{{ n.name }}::on_log_level_push);
+        config_mux.register_cast_inline<platform_runtime_TraceControlPush>(
+            {{ n.snake }}_cfg, {{ n.snake }}, &{{ n.name }}::on_trace_control_push);
+    } else {
+        {{ n.snake }}.log().warn("config service bind failed; live log-level "
+                                 "push disabled");
+    }
+{% endif %}
 {% endfor %}
-{% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
+{% if model.nodes | selectattr("reporting") | list %}
     config_mux.start();
 {% endif %}
 
