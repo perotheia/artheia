@@ -13,6 +13,7 @@
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 #include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
+#include "tombstone/tombstone.h"  // install_handlers — crash → tombstone file
 {% if model.nodes | selectattr("reporting") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386).
                          // GenServer nodes use bind_node + register_cast;
@@ -43,6 +44,15 @@ void on_signal(int /*sig*/) { g_running.store(false); }
 int main() {
     std::signal(SIGINT,  on_signal);
     std::signal(SIGTERM, on_signal);
+
+    // Crash forensics: install the libtombstone fatal-signal handler BEFORE any
+    // node starts, so a SIGSEGV/SIGABRT/etc — even during startup — writes a
+    // tombstone (backtrace + maps) to $THEIA_TOMBSTONE_DIR (the supervisor sets
+    // it per child). The supervisor's GetTombstone serves it back (GUI
+    // "Download tombstone"). No dir set (standalone run) → handler not armed.
+    if (const char* td = std::getenv("THEIA_TOMBSTONE_DIR")) {
+        if (td[0]) tombstone::install_handlers("{{ model.fc_short }}", td);
+    }
 
     using namespace {{ model.cxx_namespace }};
 

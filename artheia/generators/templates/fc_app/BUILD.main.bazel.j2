@@ -19,6 +19,8 @@ cc_binary(
     deps = [
         "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
         "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_impl",
+        # Crash forensics — main.cc installs the fatal-signal handler.
+        "//platform/supervisor/tombstone:tombstone",
     ],
     linkopts = [
         "-lpthread",
