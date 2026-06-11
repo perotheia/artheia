@@ -627,6 +627,21 @@ def _build_model_view(art_path: Path,
     wanted: Optional[set[str]] = None
     if composition is not None:
         wanted = _nodes_prototyped_by_composition(model, composition)
+    else:
+        # Flat mode (no --composition): emit the union of every composition's
+        # prototyped node-types — NOT every NodeDecl. This excludes test-only /
+        # client nodes declared in the package but in NO composition (e.g. the
+        # SmTester / DemoFsmTester sender nodes the probe binds): they're not
+        # deployed, so generating them into the FC's lib/main both pulls in a
+        # phantom node and (for a sender-only node) references a _state.hh the
+        # FC never builds. When the model has NO compositions at all, wanted
+        # stays None → legacy "emit every NodeDecl" (single-node bring-up FCs).
+        _union: set[str] = set()
+        for _el in model.elements:
+            if _el.__class__.__name__ == "CompositionDecl":
+                _union |= _nodes_prototyped_by_composition(model, _el.name)
+        if _union:
+            wanted = _union
 
     # type→prototype name map (e.g. {"CounterNode": "counter"}) — the canonical
     # runtime identity. ALWAYS unioned across EVERY composition in the .art

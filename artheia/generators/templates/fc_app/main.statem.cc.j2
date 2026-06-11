@@ -17,6 +17,11 @@
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
 {% if model.nodes | selectattr("reporting") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
+#include "HeartbeatPublisher.hh"  // periodic liveness beat to the supervisor
+                         // watchdog — every reporting node. Hand-framed cast,
+                         // no supervisor-proto dep.
+#include <memory>
+#include <vector>
 {% endif %}
 
 #include <atomic>
@@ -58,6 +63,10 @@ int main() {
     // Config-service receiver (#386): reporting nodes register_cast the
     // supervisor's LogLevelPush, applied by GenServer's base handler.
     ::theia::runtime::TipcMux config_mux;
+    // Heartbeat publishers — one per reporting node, kept alive for the
+    // process lifetime (each owns a timer thread). Started after the node's
+    // own start() below.
+    std::vector<std::unique_ptr<::theia::runtime::HeartbeatPublisher>> heartbeats;
 {% endif %}
 {% for n in model.nodes %}
     {{ n.name }} {{ n.snake }};
@@ -123,6 +132,20 @@ int main() {
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "
                                  "push + signal inject disabled");
+    }
+    // Liveness beat to the supervisor watchdog (#PHM). A reporting node must
+    // beat or the watchdog SIGTERMs it after K missed deadlines. One publisher
+    // per node, own timer thread (1s default = the supervisor's check cadence).
+    {
+        auto {{ n.snake }}_hb = std::make_unique<
+            ::theia::runtime::HeartbeatPublisher>({{ n.name }}::kNodeName);
+        if ({{ n.snake }}_hb->open()) {
+            {{ n.snake }}_hb->start(/*period_ms=*/1000);
+            heartbeats.push_back(std::move({{ n.snake }}_hb));
+        } else {
+            {{ n.snake }}.log().warn("heartbeat publisher open failed; "
+                                     "supervisor watchdog will not see beats");
+        }
     }
 {% endif %}
 {% endfor %}
