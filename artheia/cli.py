@@ -1054,6 +1054,40 @@ def gen_transform(transform_json: str, out_file: str, schema_file: str) -> None:
     click.echo(str(path))
 
 
+@main.command("gen-migration",
+              help="Diff two gen-schema outputs (OLD vs NEW) and SCAFFOLD the "
+                   "per-node migration transforms: one <node>_v1_to_v2.json per "
+                   "config whose shape digest changed, pre-filled with the "
+                   "from/to digests + the auto-derivable rules (add/remove, a "
+                   "same-tag RENAME heuristic, and a custom-hook stub for type "
+                   "changes — each guess flagged in a `_review` note to confirm). "
+                   "Also regenerates the migration BUILD plugin entries (the "
+                   "managed block). Then run `gen-transform` on each .json to "
+                   "emit the plugin .cc. Configs with an unchanged digest emit "
+                   "nothing; a config only in NEW is a fresh binding (skipped).")
+@click.option("--from", "from_schema", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="gen-schema output for the OLD (v1) shapes.")
+@click.option("--to", "to_schema", required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="gen-schema output for the NEW (v2) shapes.")
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Directory for the <node>_v1_to_v2.json files (+ BUILD).")
+@click.option("--no-build", "no_build", is_flag=True, default=False,
+              help="Don't (re)write the BUILD.bazel plugin entries.")
+def gen_migration(from_schema: str, to_schema: str, out_dir: str,
+                  no_build: bool) -> None:
+    from .generators.migration_diff import generate_migrations
+    written = generate_migrations(from_schema, to_schema, out_dir,
+                                  emit_build=not no_build)
+    if not written:
+        click.echo("no config-shape changes between the two schemas "
+                   "(nothing to migrate)")
+        return
+    for ct, path in written.items():
+        click.echo(f"{ct} -> {path}")
+
+
 # (gen-cpp-stubs retired — conflicted with gen-app, which emits the
 # GenServer/GenStateM daemon (incl. the statem StateMBase) directly from
 # the same .art. There is one C++-from-.art path now: `gen-app --kind fc`.)
