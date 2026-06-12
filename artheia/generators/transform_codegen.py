@@ -88,7 +88,20 @@ def _emit_rules(rules, fields_by_name, customs) -> list[str]:
         op = r.get("op")
         if op == "rename":
             s, d = member(r["from"]), member(r["to"])
-            out.append(_field_copy(d, s, kind_of(s)))
+            # The plugin decodes BOTH from/to with the SAME (to-version) nanopb
+            # struct — migration relies on proto FIELD-NUMBER stability. So if a
+            # rename keeps the field number (the common case: just a name change),
+            # the old bytes already decoded into the NEW member via default carry,
+            # and there is no `from.<old>` member to read. Detect that: when the
+            # source name is NOT a struct field but the destination IS, the value
+            # is already carried — emit a no-op note instead of `to.d = from.s`
+            # (which wouldn't compile). A true field-NUMBER change is a `copy`
+            # between two members that both exist, or a {op:custom}.
+            if s not in fields_by_name and d in fields_by_name:
+                out.append(f"    // rename {s}->{d}: same field number, value "
+                           f"already carried (from.{d}).")
+            else:
+                out.append(_field_copy(d, s, kind_of(s)))
         elif op == "copy":
             s, d = member(r["from"]), member(r["to"])
             out.append(_field_copy(d, s, kind_of(s)))
