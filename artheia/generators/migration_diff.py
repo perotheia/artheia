@@ -85,10 +85,13 @@ def _diff_fields(old_fields: list[dict], new_fields: list[dict]) -> tuple[list[d
                              f"field renamed; if it's an unrelated "
                              f"remove+add, split into two rules).")
         elif v and not o:
-            # appended field in NEW.
-            rules.append({"op": "add", "field": v["name"],
-                          "default": _default_for(v.get("type", ""),
-                                                  v.get("repeated", False))})
+            # appended field in NEW. Prefer the field's DECLARED default (from
+            # the .art `= value`, carried by gen-schema) — declare the value
+            # ONCE and both the migration add-rule + first-boot seed use it.
+            # Fall back to a neutral zero/""/false when none is declared.
+            dflt = v["default"] if "default" in v else \
+                _default_for(v.get("type", ""), v.get("repeated", False))
+            rules.append({"op": "add", "field": v["name"], "default": dflt})
         elif o and not v:
             # truncated tail in NEW.
             rules.append({"op": "remove", "field": o["name"]})

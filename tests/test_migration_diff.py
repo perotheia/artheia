@@ -43,6 +43,21 @@ def test_add_field_defaults_by_type():
     assert {"op": "add", "field": "f", "default": False} in rules
 
 
+def test_add_field_uses_declared_default():
+    # When the NEW schema's added field carries a DECLARED default (from the
+    # .art `= value`), the add-rule uses IT, not the neutral zero.
+    old = _schema({"C": _cfg("d1", [("a", "uint32")])})
+    new = {"configs": {"C": {"digest": "d2", "proto_type": "p",
+                             "art_package": "a", "nodes": ["n"],
+                             "fields": [
+                                 {"name": "a", "type": "uint32",
+                                  "repeated": False},
+                                 {"name": "hyst", "type": "uint32",
+                                  "repeated": False, "default": 3}]}}}
+    rules = diff_schemas(old, new)["C"]["rules"]
+    assert {"op": "add", "field": "hyst", "default": 3} in rules
+
+
 def test_remove_tail_field():
     old = _schema({"C": _cfg("d1", [("a", "uint32"), ("b", "string")])})
     new = _schema({"C": _cfg("d2", [("a", "uint32")])})

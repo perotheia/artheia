@@ -44,9 +44,33 @@ def _compositions(model):
             yield el
 
 
+def _coerce_field_default(kind: str, default):
+    """Coerce a MessageField's `= ParamLiteral` default to a JSON value, typed
+    by the field's scalar kind. BoolLit arrives as the string 'true'/'false';
+    NUMBER as int/float text. None when the field declares no default."""
+    if default is None:
+        return None
+    v = getattr(default, "value", None)
+    if isinstance(v, str) and v in ("true", "false"):
+        return v == "true"
+    if kind in ("int32", "int64", "uint32", "uint64", "sint32", "sint64"):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return v
+    if kind in ("float", "double"):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return v
+    return v
+
+
 def _field_shape(msg) -> list[dict]:
     """Ordered REAL field list of a MessageDecl (reserved slots filtered):
-    name + scalar/ref type + repeated. Body order = wire order."""
+    name + scalar/ref type + repeated (+ declared default, if any). Body order
+    = wire order. The default is NOT part of the digest (it doesn't change the
+    wire shape) — it's metadata the migration `add` rule + first-boot seed read."""
     from artheia.generators.proto import real_fields
     out = []
     for f in real_fields(msg):
@@ -56,11 +80,15 @@ def _field_shape(msg) -> list[dict]:
         if kind is None:
             ref = getattr(t, "ref", None)
             kind = getattr(ref, "name", str(t))
-        out.append({
+        entry = {
             "name": f.name,
             "type": kind,
             "repeated": bool(getattr(f, "repeated", False)),
-        })
+        }
+        dflt = _coerce_field_default(kind, getattr(f, "default", None))
+        if dflt is not None:
+            entry["default"] = dflt
+        out.append(entry)
     return out
 
 

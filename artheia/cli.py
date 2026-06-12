@@ -1034,6 +1034,23 @@ def gen_schema(art_file: str, out_file: str) -> None:
     click.echo(str(path))
 
 
+@main.command("gen-config-defaults",
+              help="Emit the DECLARED config-field defaults (the .art `field = "
+                   "value` on a `config <Msg>` message), keyed by node prototype "
+                   "+ config_type + digest. The first-boot seed source: a node "
+                   "whose config has no stored value in etcd starts at these "
+                   "instead of proto3 zeros. Parallel to gen-params (the static "
+                   "side); same declare-once source feeds the migration `add` "
+                   "rule (via gen-schema) AND this seed.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_file", required=True, type=click.Path(dir_okay=False))
+def gen_config_defaults(art_file: str, out_file: str) -> None:
+    from .generators.config_defaults import generate_config_defaults
+    model = _parse(art_file)
+    path = generate_config_defaults(model, out_file)
+    click.echo(str(path))
+
+
 @main.command("gen-transform",
               help="Generate a migration-plugin .cc (+ a write-once custom "
                    "sidecar) from a transform.json rule-set. The plugin is "

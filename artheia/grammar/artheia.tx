@@ -81,6 +81,7 @@ MessageField:
     repeated?='repeated'?
     type=FieldType
     name=ID
+    ('=' default=ParamLiteral)?       // optional DEFAULT value (config<Msg> fields)
     ('[' options=/[^\]]*/ ']')?
 ;
 
