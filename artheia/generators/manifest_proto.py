@@ -302,16 +302,18 @@ MACHINES: list = []
 
 
 # ---------------------------------------------------------------------------
-# Supervisor tree — SIDECARED in services/manifest/executor.py.
+# Supervisor tree — SIDECARED in the sibling ``executor.py`` (same package).
 #
-# The supervisor hierarchy (restart strategies + child grouping) is
-# hand-authored and has NO .art declaration, so it must survive any
-# regeneration of THIS file. It lives in the executor.py sidecar; we
-# re-export it here so existing consumers keep reading ``SUPERVISORS``
-# unchanged. Edit the tree in executor.py.
+# The supervisor hierarchy (restart strategies + child grouping) has NO .art
+# declaration, so it lives in a sidecar that survives regeneration of THIS file.
+# gen-manifest emits executor.py alongside this module; we re-export its
+# SUPERVISORS so consumers read ``<this>.SUPERVISORS`` unchanged. Edit the tree
+# in executor.py. (For an apps manifest the sidecar is a single ``app_sup`` node
+# with the app members as children; the full platform tree is the services
+# sidecar — the rig combines them.)
 # ---------------------------------------------------------------------------
 
-from services.manifest.executor import SUPERVISORS  # noqa: E402,F401
+from .executor import SUPERVISORS  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------
@@ -463,19 +465,54 @@ def _render_sections(
     return "\n".join(lines), exports, layers
 
 
-def generate_manifest_proto(art_file: str, out_file: str) -> Path:
-    """Render the manifest module from *art_file*'s clusters and write
-    it to *out_file*. Returns the written path.
+# Apps supervisor-tree sidecar (generated next to applications.py). One
+# ``app_sup`` SupervisorNode (one_for_one) with every app member as a child —
+# the mount point the rig grafts onto the services tree's empty app_sup. The
+# generated applications.py imports SUPERVISORS from here (`from .executor`).
+_EXECUTOR_SIDECAR = '''\
+"""Apps supervisor-tree sidecar — GENERATED from {source} by gen-manifest.
 
-    The application directory-convention is keyed on *base_dir* — the
-    name of the directory holding the manifest module (e.g. ``demo`` for
-    ``apps/manifest/applications.py``). That's the source-tree root each
-    member's ``<base_dir>/<ident>`` app dir hangs off.
+One ``app_sup`` node (one_for_one) whose children are this manifest's app
+members. The generic rig grafts it onto the services supervisor tree's empty
+``app_sup`` mount. Regenerate with applications.py (gen-manifest); the app set is
+.art-derived, so DON'T hand-edit the children — change the cluster in the .art.
+"""
+from __future__ import annotations
+
+from artheia.manifest.supervisor import RestartStrategy, SupervisorNode
+
+# Every app member from the generated cluster sections (one_for_one: apps are
+# peer-independent, like the platform app_sup).
+SUPERVISORS: list[SupervisorNode] = [
+    SupervisorNode(
+        name="app_sup",
+        strategy=RestartStrategy.ONE_FOR_ONE,
+        children={children!r},
+    ),
+]
+'''
+
+
+def _app_shorts(clusters) -> "list[str]":
+    """Every member ident across all clusters (the app_sup children)."""
+    out: list[str] = []
+    for _name, _bdir, members in clusters:
+        out.extend(ident for ident, _comp, _nodes in members)
+    return out
+
+
+def generate_manifest_proto(art_file: str, out_file: str) -> Path:
+    """Render the manifest module from *art_file*'s clusters and write it to
+    *out_file*; ALSO emit the sibling ``executor.py`` supervisor-tree sidecar
+    (one ``app_sup`` node with the app members as children). Returns the
+    applications.py path.
+
+    The application directory-convention is keyed on *base_dir* — the name of the
+    directory holding the manifest module (e.g. ``apps`` for
+    ``apps/manifest/applications.py``). That's the source-tree root each member's
+    ``<base_dir>/<ident>`` app dir hangs off.
     """
     out = Path(out_file)
-    # base_dir = the component root: parent of the `manifest/` dir if the
-    # output lives in `<base_dir>/manifest/<file>.py`, else the file's
-    # own parent dir name.
     parent = out.parent
     base_dir = parent.parent.name if parent.name == "manifest" else parent.name
 
@@ -488,4 +525,13 @@ def generate_manifest_proto(art_file: str, out_file: str) -> Path:
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)
+
+    # Sidecar: executor.py next to applications.py, with the app_sup node.
+    sidecar = out.parent / "executor.py"
+    sidecar.write_text(
+        _EXECUTOR_SIDECAR.format(source=art_file, children=_app_shorts(clusters)))
+    # Ensure the package is importable (relative `from .executor`).
+    init = out.parent / "__init__.py"
+    if not init.exists():
+        init.write_text("")
     return out
