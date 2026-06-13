@@ -79,16 +79,13 @@ _RUNTIME_SRC = _WORKSPACE_ROOT / "platform" / "runtime"
 
 
 def _copy_runtime(dst: Path) -> list[str]:
-    """Mirror platform/runtime/{include,src} into <dst>, plus the libgw
-    headers the runtime transitively includes (gw_proto.h etc.).
-    Idempotent; overwrites existing files (regen semantics — never
-    user-edited).
+    """Mirror platform/runtime/{include,src} into <dst>. Idempotent;
+    overwrites existing files (regen semantics — never user-edited).
 
-    The libgw .cpp sources are NOT vendored: the deployed target
-    receives libgw at runtime via the gateway service .ipk
-    (cross-compiled on the host) and the app links against the
-    binary, not source. We only need the headers for the runtime
-    to compile.
+    The runtime is self-contained: its RPC wire header is the runtime's own
+    TheiaMsgHeader.hh — the old libgw `gw_proto.h` dependency was SEVERED
+    (platform/runtime no longer #includes anything from gateway/libs/libgw).
+    So a --kind lib app vendors only platform/runtime/, nothing from gateway.
 
     Returns the list of paths written, for the "wrote" bucket.
     """
@@ -110,24 +107,6 @@ def _copy_runtime(dst: Path) -> list[str]:
             t = target / f.name
             shutil.copy2(f, t)
             wrote.append(str(t))
-
-    # gateway/libs/libgw/include → <dst>/include   (co-located so the
-    # runtime headers can `#include "gw_proto.h"` unmodified).
-    libgw_include = _WORKSPACE_ROOT / "gateway" / "libs" / "libgw" / "include"
-    if not libgw_include.is_dir():
-        raise RuntimeError(
-            f"gateway/libs/libgw/include not found at {libgw_include}; "
-            f"--kind lib needs the libgw headers (the runtime's "
-            f"RemoteCodec/Tracer/TipcMux #include gw_proto.h)."
-        )
-    libgw_target = dst / "include"  # same dir as runtime headers
-    libgw_target.mkdir(parents=True, exist_ok=True)
-    for f in libgw_include.iterdir():
-        if not f.is_file():
-            continue
-        t = libgw_target / f.name
-        shutil.copy2(f, t)
-        wrote.append(str(t))
 
     return wrote
 
