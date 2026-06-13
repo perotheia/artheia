@@ -423,7 +423,7 @@ def test_demo_software_routes_components_to_three_machines():
     Three machines: admin_host (the HostMachine running the GUI /
     observability stack), central_host, and compute_host.
     """
-    from demo.manifest.zonal_rig import DemoSoftware
+    from apps.manifest.zonal_rig import DemoSoftware
     rig = DemoSoftware.to_rig()
 
     assert {m.name for m in rig.machines} == {
@@ -466,7 +466,7 @@ def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():
     The application shape and machine list ARE expected to differ
     between the two paths now.
     """
-    from demo.manifest.zonal_rig import DemoRig, DemoSoftware
+    from apps.manifest.zonal_rig import DemoRig, DemoSoftware
     materialized = DemoSoftware.to_rig()
 
     assert materialized.vehicle == DemoRig.vehicle

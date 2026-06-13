@@ -2,7 +2,7 @@
 
 The audit left-joins ``platform/system/system.art`` (the workspace
 .art tree, transitively resolved via ``import`` lines) against
-``demo.manifest.rig`` (the Python-side manifest) and reports gaps —
+``apps.manifest.rig`` (the Python-side manifest) and reports gaps —
 missing :class:`ApplicationManifest` / :class:`SwComponent` /
 :class:`Process` entries for clusters/compositions/prototypes
 declared in the .art.
@@ -26,7 +26,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
 ART_FILE = REPO / "platform" / "system" / "system.art"
-RIG_TARGET = "demo.manifest.rig"
+RIG_TARGET = "apps.manifest.rig"
 
 
 def _artheia_bin() -> str | None:
@@ -42,14 +42,14 @@ def _artheia_bin() -> str | None:
 
 def test_audit_manifest_demo_rig_is_clean():
     """``artheia audit-manifest platform/system/system.art
-    demo.manifest.rig`` exits 0 with no gaps."""
+    apps.manifest.rig`` exits 0 with no gaps."""
     artheia = _artheia_bin()
     if artheia is None:
         pytest.skip("artheia CLI not on PATH and not in workspace .venv")
     if not ART_FILE.exists():
         pytest.skip(f"{ART_FILE} not present in this checkout")
 
-    # Run from REPO so Python picks up `demo.manifest.rig` as a top-
+    # Run from REPO so Python picks up `apps.manifest.rig` as a top-
     # level module (it lives at REPO/demo/manifest/rig.py).
     #
     # Do NOT add REPO to PYTHONPATH: the repo root contains an

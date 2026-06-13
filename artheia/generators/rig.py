@@ -130,12 +130,12 @@ def _process_name(vehicle: str, art_proc: str) -> str:
 
 
 def _bazel_target(bazel_package: str, vehicle: str, art_proc: str) -> str:
-    """`//demo` + vehicle=demo + art_proc=P1 → `//demo:p1_main`. The
-    `_main` suffix is the rig-manifest convention; `//demo:p1_main`
+    """`//apps` + vehicle=demo + art_proc=P1 → `//apps:p1_main`. The
+    `_main` suffix is the rig-manifest convention; `//apps:p1_main`
     aliases the per-composition fc app binary
-    (//demo/Demo3Way_P1/main:demo — see demo/BUILD.bazel). The bazel
+    (//apps/Demo3WayP1/main:demo — see apps/BUILD.bazel). The bazel
     target name is just the art_proc token lowercased (no vehicle prefix
-    — the package already says `//demo`)."""
+    — the package already says `//apps`)."""
     pkg = bazel_package.rstrip(":/")
     return f"{pkg}:{art_proc.lower()}_main"
 

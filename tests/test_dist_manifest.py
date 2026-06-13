@@ -7,7 +7,7 @@ Asserts the **strict** ServiceInstance filter behavior:
 - No loose fallback that spreads compute-only services to every
   machine.
 
-Drives ``artheia generate-manifest demo.manifest.rig`` as a subprocess
+Drives ``artheia generate-manifest apps.manifest.rig`` as a subprocess
 to exercise the full CLI → emitter → YAML round-trip.
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-RIG_TARGET = "demo.manifest.zonal_rig"  # multi-host spec (central trimmed to single-machine)
+RIG_TARGET = "apps.manifest.zonal_rig"  # multi-host spec (central trimmed to single-machine)
 
 
 def _artheia_bin() -> str | None:

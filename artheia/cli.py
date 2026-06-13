@@ -1782,7 +1782,7 @@ def _resolve_rig(target: str, rig_attr: str | None):
     "in ART_FILE (transitively via `import` statements) and checks "
     "that the rig.py module declares matching SwComponent/Application/"
     "Process entries.\n\n"
-    "RIG_TARGET is a dotted module path, like `demo.manifest.rig`.",
+    "RIG_TARGET is a dotted module path, like `apps.manifest.rig`.",
 )
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.argument("rig_target")

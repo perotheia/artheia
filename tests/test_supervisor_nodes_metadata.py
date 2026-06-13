@@ -69,7 +69,7 @@ def test_executor_yaml_carries_nodes_block(tmp_path):
     result = subprocess.run(
         [
             artheia, "executor", "emit",
-            "demo.manifest.rig",
+            "apps.manifest.rig",
             "--machine", "central_host",
             "--out", str(out),
         ],
@@ -134,7 +134,7 @@ def test_app_worker_nodes_carry_resolved_tipc_addr(tmp_path):
     result = subprocess.run(
         [
             artheia, "executor", "emit",
-            "demo.manifest.rig", "--rig", "CentralRig",
+            "apps.manifest.rig", "--rig", "CentralRig",
             "--out", str(out),
         ],
         capture_output=True, text=True, env=env, cwd=str(repo),

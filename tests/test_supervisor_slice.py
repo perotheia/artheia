@@ -24,9 +24,9 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
 # The multi-host (central + compute + admin) spec these slice tests assert on
-# now lives in zonal_rig.py — demo.manifest.rig was trimmed to single-machine
+# now lives in zonal_rig.py — apps.manifest.rig was trimmed to single-machine
 # (central only). zonal_rig carries DemoSoftware / ComputeHost / AdminHost.
-RIG_TARGET = "demo.manifest.zonal_rig"
+RIG_TARGET = "apps.manifest.zonal_rig"
 
 
 def _artheia_bin() -> str | None:
@@ -201,7 +201,7 @@ def test_logger_precedence_fallback_and_rig_and_process():
     """THEIA_LOGGER precedence: Process.logger > rig.logger > /tmp/theia."""
     import dataclasses
     from artheia.manifest.supervisor import build_supervisor_tree
-    import demo.manifest.rig as R
+    import apps.manifest.rig as R
 
     def _logger_of(spec, name):
         stack = [spec]
