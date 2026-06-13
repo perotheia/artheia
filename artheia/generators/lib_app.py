@@ -332,7 +332,13 @@ def generate_lib(
     Returns ``{status: [path,...]}`` for "wrote", "overwrote",
     "skipped-exists" — same shape as :func:`fc_app.generate_fc`.
     """
-    art_path = Path(art_path).resolve()
+    # .absolute() NOT .resolve(): a consuming workspace links the app's .art in
+    # (system/<app> -> ../../<app>/system/<app>) so its `import system.autosar.*`
+    # resolves against the WORKSPACE's system/ tree (where system/autosar is
+    # linked). .resolve() would follow the symlink to the app's own repo, where
+    # the PSP import dir doesn't exist — defeating import resolution. .absolute()
+    # keeps the in-workspace path so _import_dir climbs the right tree.
+    art_path = Path(art_path).absolute()
     out_dir = Path(out_dir)
 
     # Default proto output lives inside the app tree — `--kind lib`'s
