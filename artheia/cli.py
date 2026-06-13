@@ -1219,6 +1219,37 @@ def gen_rig(
 
 
 @main.command(
+    "gen-rig-combine",
+    help="Combine generated manifest modules (services + apps, each emitted by "
+    "gen-manifest with a *Software + an executor.py sidecar) into one rig.py. "
+    "The services software is the base (full supervisor tree); the rest squash "
+    "in; the apps fill app_sup. MODULES are dotted module paths "
+    "(`apps.manifest.applications`) or .py file paths "
+    "(`apps/manifest/applications.py`). The modules must be importable.",
+)
+@click.argument("modules", nargs=-1, required=True)
+@click.option("--out", "out_path", required=True,
+              type=click.Path(dir_okay=False),
+              help="Where to write the combiner rig.py.")
+@click.option("--rig-name", default=None,
+              help="Symbol prefix for the emitted <Name>Software/<Name>Rig "
+                   "(default: from --vehicle or 'Combined').")
+@click.option("--vehicle", default=None,
+              help="VehicleIdentity.name (default: lowercased rig name).")
+@click.option("--force", is_flag=True,
+              help="Overwrite an existing non-empty out path.")
+def gen_rig_combine(modules, out_path, rig_name, vehicle, force):
+    from .generators.rig_combine import write_rig_combine
+    try:
+        out = write_rig_combine(list(modules), out_path,
+                                rig_name=rig_name, vehicle=vehicle, force=force)
+    except (FileExistsError, ValueError, ModuleNotFoundError) as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+    click.echo(str(out))
+
+
+@main.command(
     "import-dbc",
     help="Import a DBC file. Emits package.art (message per CAN frame "
     "with scalar signal fields + companion enum decls for value tables) "
