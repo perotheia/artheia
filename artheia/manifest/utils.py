@@ -17,6 +17,7 @@ manifest element:
 from __future__ import annotations
 
 import importlib
+import os
 
 from artheia.manifest.application import (
     BuildTypeEnum,
@@ -39,12 +40,30 @@ def _daemon_class(short: str) -> str:
     return "".join(p.capitalize() for p in short.split("_")) + "Daemon"
 
 
+def _prebuilt_owners() -> "frozenset[str]":
+    """Cluster owners (base_dir) whose binaries are INSTALLED, not built — listed
+    in $THEIA_PREBUILT_OWNERS (comma/space-separated). A downstream workspace that
+    installed the theia-services .deb sets THEIA_PREBUILT_OWNERS=services, so the
+    Services components are marked non-bazel-buildable and run in place from
+    $THEIA_ROOT/bin instead of being compiled from a (absent) source tree."""
+    raw = os.environ.get("THEIA_PREBUILT_OWNERS", "")
+    return frozenset(t for t in raw.replace(",", " ").split() if t)
+
+
+def _prebuilt_bin(ident: str) -> str:
+    """Absolute on-target path of a prebuilt component's binary —
+    $THEIA_ROOT/bin/<ident> (default /opt/theia/bin/<ident>, where the deb
+    installs it). Used as the run-in-place start_cmd."""
+    root = os.environ.get("THEIA_ROOT", "/opt/theia").rstrip("/")
+    return f"{root}/bin/{ident}"
+
+
 # ---------------------------------------------------------------------------
 # Directory-structure convention for application clusters.
 #
 # Nothing in this block guesses: it encodes one filesystem discipline, keyed
 # on (base_dir, ident), so every build/deploy path is derivable instead of
-# hand-listed. base_dir is the manifest module's directory (e.g. ``demo``);
+# hand-listed. base_dir is the manifest module's directory (e.g. ``apps``);
 # ident is the cluster-member handle (e.g. ``p1``):
 #
 #   app source dir   <base_dir>/<ident>          (gen-app --base-dir/<ident>
@@ -70,8 +89,8 @@ def app_bazel_target(base_dir: str, ident: str, composition: str) -> str:
       - services FCs:  ``//services/<ident>/main:<ident>``  (per-FC dir + binary
         named after the FC short — e.g. log → //services/log/main:log).
       - app members:   ``//<base_dir>/<composition>/main:demo``  (per-composition
-        app dir whose cc_binary is conventionally named ``demo`` — e.g.
-        demo/Demo3WayP1 → //demo/Demo3WayP1/main:demo).
+        app dir whose cc_binary is conventionally named ``apps`` — e.g.
+        apps/Demo3WayP1 → //apps/Demo3WayP1/main:demo).
     """
     if base_dir == "services":
         return f"//services/{ident}/main:{ident}"
@@ -98,7 +117,9 @@ def app_component_for(
         bazel_target=app_bazel_target(base_dir, ident, composition),
         owner=base_dir,
         art_node=f"system.{base_dir}.{ident}/{composition}",
-        bazel_buildable=True,
+        # A prebuilt owner (installed via deb, no source tree) is NOT bazel-built;
+        # it runs in place from $THEIA_ROOT/bin (see app_process_for).
+        bazel_buildable=base_dir not in _prebuilt_owners(),
     )
 
 
@@ -121,11 +142,15 @@ def app_process_for(
     if mod is not None and hasattr(mod, "PROCESS"):
         return mod.PROCESS
 
+    # Prebuilt owner → run in place from the installed deb ($THEIA_ROOT/bin/<ident>,
+    # absolute); else the on-target install convention bin/<ident>.
+    start_cmd = ([_prebuilt_bin(ident)] if base_dir in _prebuilt_owners()
+                 else app_start_cmd(ident))
     return Process(
         name=ident,
         executable=ident,
         function_cluster_affiliation="",
-        start_cmd=app_start_cmd(ident),
+        start_cmd=start_cmd,
         nodes=list(nodes or []),
         state_dependent_startup_config=[
             StateDependentStartupConfig(
