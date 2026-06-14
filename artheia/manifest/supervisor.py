@@ -620,10 +620,18 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         )
         from artheia.model.loader import parse_file as _parse_file
 
-        # _SVCS_ROOT is <repo>/system/services; the cluster art root is a
-        # sibling <repo>/system/<cluster>/component.art.
-        art_path = _Path(_SVCS_ROOT).parent / cluster / "component.art"
-        if not art_path.exists():
+        # The cluster's component.art lives at <root>/system/<cluster>/. Try the
+        # CONSUMING-WORKSPACE root first (cwd-relative system/<cluster>, where a
+        # consuming workspace links its app's spec — e.g. gataway_ws's
+        # system/gateway), then the platform-services root's sibling
+        # (_SVCS_ROOT is <repo>/system/services → <repo>/system/<cluster> for the
+        # in-tree apps). cwd-first means a workspace needs no env override.
+        candidates = [
+            _Path.cwd() / "system" / cluster / "component.art",
+            _Path(_SVCS_ROOT).parent / cluster / "component.art",
+        ]
+        art_path = next((p for p in candidates if p.exists()), None)
+        if art_path is None:
             return []
         try:
             model = _parse_file(art_path)
