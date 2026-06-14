@@ -103,7 +103,7 @@ def app_start_cmd(ident: str) -> list[str]:
 
 
 def app_component_for(
-    base_dir: str, ident: str, composition: str
+    base_dir: str, ident: str, composition: str, cluster: "str | None" = None
 ) -> SwComponent:
     """SwComponent for an application member, paths derived from the
     (base_dir, ident) directory convention — no guessing, no hand-listing.
@@ -111,12 +111,23 @@ def app_component_for(
     ``composition`` is the .art composition the member instantiates
     (``member.type.name``); it's carried into ``art_node`` so the handle
     points at the real composition rather than a synthesized class name.
+
+    ``cluster`` is the member's .art PACKAGE cluster (the segment after
+    ``system.`` in its ``package`` decl, e.g. ``demo`` for ``system.demo``).
+    The ``art_node`` MUST name the real package — that's how the supervisor
+    re-resolves each prototype to its node's TIPC address
+    (``_collect_nodes_for_app`` parses ``system/<cluster>/component.art``).
+    It defaults to ``base_dir`` for back-compat, but ``base_dir`` is the
+    SOURCE DIRECTORY (the bazel-target prefix, e.g. ``apps``) which is NOT
+    always the package cluster (the demo lives in ``apps/`` but its package
+    is ``system.demo``). Pass it explicitly whenever they differ.
     """
+    art_cluster = cluster or base_dir
     return SwComponent(
         name=ident,
         bazel_target=app_bazel_target(base_dir, ident, composition),
         owner=base_dir,
-        art_node=f"system.{base_dir}.{ident}/{composition}",
+        art_node=f"system.{art_cluster}/{composition}",
         # A prebuilt owner (installed via deb, no source tree) is NOT bazel-built;
         # it runs in place from $THEIA_ROOT/bin (see app_process_for).
         bazel_buildable=base_dir not in _prebuilt_owners(),

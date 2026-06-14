@@ -120,13 +120,29 @@ def _members_of_cluster_in(art_file: str, cluster_name: str):
     return []
 
 
+def _pkg_cluster(art_file: "str | Path") -> str:
+    """The PACKAGE cluster of *art_file* — the segment after ``system.`` in its
+    ``package`` decl (``system.demo`` → ``demo``, ``system.services.com`` →
+    ``services``). This is the cluster the ``art_node`` must name so the
+    supervisor resolves each node's TIPC addr from
+    ``system/<cluster>/component.art`` — DISTINCT from base_dir (the source
+    DIRECTORY, e.g. ``apps`` for the demo whose package is ``system.demo``)."""
+    pkg = _extract_package(str(art_file))
+    parts = pkg.split(".") if pkg else []
+    # system.<cluster>[.<ident>...] → <cluster>; bare <cluster> → itself.
+    if len(parts) >= 2 and parts[0] == "system":
+        return parts[1]
+    return parts[-1] if parts else ""
+
+
 def _resolve_cluster_members_via_imports(art_file: str, cluster_name: str):
     """An empty cluster STUB in an aggregator (system/system.art) is materialized
     from an `import`. Walk the imports, resolve each to its package dir (the
     symlinked `system/` layout), parse the defining file, and return that
-    cluster's real (members, base_dir) — base_dir is the SOURCE-TREE root the
-    members live under, so the bazel-target prefix is right per cluster. Layout-
-    independent (reuses scope._import_dir). Returns ([], "") if unresolved."""
+    cluster's real (members, base_dir, pkg_cluster) — base_dir is the SOURCE-TREE
+    root the members live under (bazel-target prefix); pkg_cluster is the .art
+    PACKAGE cluster (the art_node cluster). Layout-independent (reuses
+    scope._import_dir). Returns ([], "", "") if unresolved."""
     entry = Path(art_file)
     entry_pkg = _extract_package(art_file)
     for imp_pkg in _extract_imports(art_file):
@@ -139,8 +155,8 @@ def _resolve_cluster_members_via_imports(art_file: str, cluster_name: str):
                 continue
             members = _members_of_cluster_in(str(cand), cluster_name)
             if members:
-                return members, _base_dir_for(cand)
-    return [], ""
+                return members, _base_dir_for(cand), _pkg_cluster(cand)
+    return [], "", ""
 
 
 def _model_defines_composition(model, members) -> bool:
@@ -174,6 +190,29 @@ def _base_dir_for_composition(art_file: str, composition: str) -> str:
     return ""
 
 
+def _pkg_cluster_for_composition(art_file: str, composition: str) -> str:
+    """Package cluster (art_node) for a member *composition* forward-decl'd in
+    the aggregator — walk imports to the file that DEFINES it with a body, take
+    its package cluster. Sibling of :func:`_base_dir_for_composition`."""
+    entry = Path(art_file)
+    entry_pkg = _extract_package(art_file)
+    for imp_pkg in _extract_imports(art_file):
+        pkg_dir = _import_dir(entry, entry_pkg, imp_pkg)
+        if pkg_dir is None or not pkg_dir.is_dir():
+            continue
+        for fname in _PKG_FILE_PRIORITY:
+            cand = pkg_dir / fname
+            if not cand.is_file():
+                continue
+            try:
+                m = parse_file(str(cand))
+            except Exception:
+                continue
+            if _composition_nodes(m, composition):
+                return _pkg_cluster(cand)
+    return ""
+
+
 # One cluster member, fully derived from the .art:
 #   ident       — the member handle (``p1``), == app dir / target / bin name.
 #   composition — the .art composition it instantiates (member.type.name).
@@ -197,9 +236,13 @@ def _composition_nodes(model, composition_name: str) -> "list[str]":
     return []
 
 
-def _cluster_members(art_file: str) -> "list[tuple[str, str, list]]":
-    """Return ``[(cluster_name, base_dir, [(ident, composition, [nodes]), ...]),
-    ...]`` for every ``cluster`` declared in *art_file*, in source order.
+def _cluster_members(art_file: str) -> "list[tuple[str, str, str, list]]":
+    """Return ``[(cluster_name, base_dir, pkg_cluster,
+    [(ident, composition, [nodes]), ...]), ...]`` for every ``cluster`` declared
+    in *art_file*, in source order. ``base_dir`` is the SOURCE DIR (bazel-target
+    prefix); ``pkg_cluster`` is the .art PACKAGE cluster (the art_node cluster) —
+    they DIFFER when a cluster lives in a dir != its package (the demo: dir
+    ``apps``, package ``system.demo``).
 
     A member's ``ident`` is ``ClusterMember.name``; ``composition`` is
     ``member.type.name``; ``nodes`` are its hosted prototype names — all read
@@ -215,23 +258,29 @@ def _cluster_members(art_file: str) -> "list[tuple[str, str, list]]":
     cluster is declared.
     """
     model = parse_file(art_file)
-    out: list[tuple[str, str, list]] = []
+    out: list[tuple[str, str, str, list]] = []
     for el in getattr(model, "elements", []):
         if type(el).__name__ != "ClusterDecl":
             continue
         members = _extract_members(model, el)
         base_dir = ""   # inline members → caller's default (output-path base_dir)
+        # pkg_cluster: the .art PACKAGE cluster (art_node), distinct from base_dir.
+        # Inline members live in THIS file → its package; resolved later otherwise.
+        pkg_cluster = _pkg_cluster(art_file)
         if not members:
-            # Aggregator stub → resolve real members + their source-tree base_dir.
-            members, base_dir = _resolve_cluster_members_via_imports(
+            # Aggregator stub → resolve real members + their source-tree base_dir
+            # + the defining file's package cluster.
+            members, base_dir, pkg_cluster = _resolve_cluster_members_via_imports(
                 art_file, el.name)
         elif not _model_defines_composition(model, members):
             # Inline cluster whose member compositions are forward-decl'd from
             # imports (Platform's Supervisor/GatewayBridge) → derive base_dir
-            # from where the first composition is really defined.
-            base_dir = (_base_dir_for_composition(art_file, members[0][1])
-                        if members else "")
-        out.append((el.name, base_dir, members))
+            # AND the package cluster from where the first composition is defined.
+            if members:
+                base_dir = _base_dir_for_composition(art_file, members[0][1])
+                pkg_cluster = (_pkg_cluster_for_composition(art_file, members[0][1])
+                               or pkg_cluster)
+        out.append((el.name, base_dir, pkg_cluster, members))
     if not out:
         raise ValueError(
             f"{art_file}: no `cluster` declaration found — nothing to "
@@ -372,8 +421,10 @@ def _render_sections(
     all_prefixes: list[str] = []
     layer_lines: list[str] = []
 
-    for name, cluster_base_dir, members in clusters:
+    for name, cluster_base_dir, pkg_cluster, members in clusters:
         bdir = cluster_base_dir or base_dir   # per-cluster, else the default
+        # art_node cluster (the .art package), distinct from bdir (source dir).
+        acluster = pkg_cluster or bdir
         pfx = _py_ident(name)          # SERVICES — section var prefix
         cls = _pascal(name)            # Services — Layer/Software symbol
         lname = name.lower()           # services — Layer.name= string
@@ -399,7 +450,7 @@ def _render_sections(
             f"]\n"
             f"{pfx}_SHORTS = [m[0] for m in {pfx}_MEMBERS]\n"
             f"{pfx}_COMPONENTS = [\n"
-            f"    app_component_for({bdir!r}, ident, comp)\n"
+            f"    app_component_for({bdir!r}, ident, comp, {acluster!r})\n"
             f"    for ident, comp, _ in {pfx}_MEMBERS\n"
             f"]\n"
             f"{pfx}_EXECUTABLES = [_executable_for(ident) "
@@ -496,7 +547,7 @@ SUPERVISORS: list[SupervisorNode] = [
 def _app_shorts(clusters) -> "list[str]":
     """Every member ident across all clusters (the app_sup children)."""
     out: list[str] = []
-    for _name, _bdir, members in clusters:
+    for _name, _bdir, _cluster, members in clusters:
         out.extend(ident for ident, _comp, _nodes in members)
     return out
 
