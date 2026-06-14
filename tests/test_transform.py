@@ -412,16 +412,17 @@ def test_software_specification_squashes_machines_via_transforms():
 
 
 def test_demo_software_routes_components_to_three_machines():
-    """``DemoSoftware`` is the central/compute multi-host shape:
-      - platform_app on central — the platform binaries
-        (gateway + supervisor)
-      - compute_app  on compute — the demo apps p1/p2/p3
-      - services_app — the FC services (unpinned host; they're sliced
-        onto machines by the supervisor tree / PTM, not by app host),
-        including shwa
+    """``DemoSoftware`` is the central/compute multi-host shape, built from the
+    explicit per-machine partition (_COMPUTE_FCS={shwa}, _COMPUTE_APPS={p3}):
 
-    Three machines: admin (the HostMachine running the GUI /
-    observability stack), central, and compute.
+      - platform_app on central — the central FCs (com/log/per/sm/ucm; shwa
+        excluded) + the supervisor binary.
+      - central_app  on central — the demo apps that stay central: p1/p2/p4.
+      - compute_app  on compute — the accelerator slice: shwa + p3 (+ the
+        supervisor binary, which every target runs).
+
+    Three machines: admin (the HostMachine running the GUI / observability
+    stack), central, and compute.
     """
     from apps.manifest.zonal_rig import DemoSoftware
     rig = DemoSoftware.to_rig()
@@ -430,27 +431,28 @@ def test_demo_software_routes_components_to_three_machines():
         "admin", "central", "compute",
     }
     assert {a.name for a in rig.applications} == {
-        "platform_app", "compute_app", "services_app",
+        "platform_app", "central_app", "compute_app",
     }
 
     by_app = {a.name: a for a in rig.applications}
 
-    # platform_app → central, the platform binaries. (gateway was dropped from
-    # the rig pending its gen-app modernization — supervisor only for now.)
+    # platform_app → central: the central FCs (minus compute-only shwa) + the
+    # supervisor binary. (gateway was dropped — moved to gataway_ws.)
     platform = by_app["platform_app"]
     assert platform.host_machine == "central"
-    assert {c.name for c in platform.components} == {"supervisor"}
+    assert {c.name for c in platform.components} == {
+        "com", "log", "per", "sm", "ucm", "supervisor",
+    }
 
-    # compute_app → compute, the three demo apps.
+    # central_app → central: the demo apps that stay central.
+    central = by_app["central_app"]
+    assert central.host_machine == "central"
+    assert {c.name for c in central.components} == {"p1", "p2", "p4"}
+
+    # compute_app → compute: the accelerator slice — shwa + p3.
     compute = by_app["compute_app"]
     assert compute.host_machine == "compute"
-    assert {c.name for c in compute.components} == {"p1", "p2", "p3"}
-
-    # services_app → the FC services (host assigned by the supervisor
-    # slice, not the app), including the compute-only shwa.
-    services = by_app["services_app"]
-    fc_names = {c.name for c in services.components}
-    assert {"log", "per", "sm", "ucm", "shwa"}.issubset(fc_names)  # com retired
+    assert {"shwa", "p3"}.issubset({c.name for c in compute.components})
 
 
 def test_demo_software_to_rig_carries_legacy_demo_rig_artifacts():

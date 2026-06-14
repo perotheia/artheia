@@ -130,20 +130,24 @@ def test_platform_fabric_not_in_supervised_tree(emitted):
             )
 
 
-def test_demo_binaries_pinned_to_compute(emitted):
-    """The three demo per-process binaries (compute_app) all land on
-    compute and on NO other machine. Idents come from `cluster
-    Applications` in the .art (p1/p2/p3 — the generated applications.py
-    drives them now, no longer the hand-written demo_p* names)."""
+def test_demo_binaries_split_central_compute(emitted):
+    """The demo per-process binaries split across the two TARGET machines per the
+    rig's _COMPUTE_APPS partition: p1/p2/p4 run on central, p3 on compute (the
+    accelerator box, alongside shwa). Each lands on its OWN machine and no other.
+    Idents come from `cluster Applications` in the .art via the generated
+    applications.py."""
     compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute"))
     central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central"))
-    for demo in ("p1", "p2", "p3"):
-        assert demo in compute_leaves, (
-            f"{demo!r} must be on compute; got {sorted(compute_leaves)}"
+    # p3 → compute only.
+    assert "p3" in compute_leaves, f"p3 must be on compute; got {sorted(compute_leaves)}"
+    assert "p3" not in central_leaves, f"p3 must NOT leak to central; got {sorted(central_leaves)}"
+    # p1/p2/p4 → central only.
+    for demo in ("p1", "p2", "p4"):
+        assert demo in central_leaves, (
+            f"{demo!r} must be on central; got {sorted(central_leaves)}"
         )
-        assert demo not in central_leaves, (
-            f"{demo!r} must NOT leak to central; got "
-            f"{sorted(central_leaves)}"
+        assert demo not in compute_leaves, (
+            f"{demo!r} must NOT leak to compute; got {sorted(compute_leaves)}"
         )
 
 
