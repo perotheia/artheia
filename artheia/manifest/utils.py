@@ -82,19 +82,24 @@ def app_dir(base_dir: str, ident: str) -> str:
     return f"{base_dir}/{ident}"
 
 
-def app_bazel_target(base_dir: str, ident: str, composition: str) -> str:
+def app_bazel_target(base_dir: str, ident: str, composition: str,
+                     cluster: "str | None" = None) -> str:
     """Bazel label for a gen-app member's binary. Two layout conventions, by
     base_dir:
 
       - services FCs:  ``//services/<ident>/main:<ident>``  (per-FC dir + binary
         named after the FC short — e.g. log → //services/log/main:log).
-      - app members:   ``//<base_dir>/<composition>/main:demo``  (per-composition
-        app dir whose cc_binary is conventionally named ``apps`` — e.g.
-        apps/Demo3WayP1 → //apps/Demo3WayP1/main:demo).
+      - app members:   ``//<base_dir>/<composition>/main:<cluster>`` (per-composition
+        app dir whose cc_binary is named after the .art PACKAGE cluster — gen-app
+        names the binary ``model.fc_short`` = the package's last segment. e.g.
+        apps/Demo3WayP1 → //apps/Demo3WayP1/main:apps for package ``system.apps``).
+
+    ``cluster`` is the package's last segment (= the generated binary name).
+    Defaults to ``base_dir`` for back-compat (the common case dir==cluster).
     """
     if base_dir == "services":
         return f"//services/{ident}/main:{ident}"
-    return f"//{base_dir}/{composition}/main:demo"
+    return f"//{base_dir}/{composition}/main:{cluster or base_dir}"
 
 
 def app_start_cmd(ident: str) -> list[str]:
@@ -125,7 +130,9 @@ def app_component_for(
     art_cluster = cluster or base_dir
     return SwComponent(
         name=ident,
-        bazel_target=app_bazel_target(base_dir, ident, composition),
+        # The binary is named after the package cluster (gen-app's fc_short =
+        # package last segment), so the bazel_target must use art_cluster too.
+        bazel_target=app_bazel_target(base_dir, ident, composition, art_cluster),
         owner=base_dir,
         art_node=f"system.{art_cluster}/{composition}",
         # A prebuilt owner (installed via deb, no source tree) is NOT bazel-built;
