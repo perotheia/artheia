@@ -4,9 +4,9 @@ Phase C of docs/tasks/PROGRESS/per-app-supervisor/. Asserts that
 ``build_supervisor_tree(rig, machine=...)`` produces the right
 sub-tree for each machine in the demo rig:
 
-  - central_host gets the platform FCs + supervisor/gateway app_sup
-  - compute_host gets shwa + the three demo binaries
-  - admin_host gets an empty tree (no supervised processes)
+  - central gets the platform FCs + supervisor/gateway app_sup
+  - compute gets shwa + the three demo binaries
+  - admin gets an empty tree (no supervised processes)
 
 These tests also exercise the dist_manifest's per-machine
 ``execution.json`` emission (the file the supervisor-gui reads to
@@ -47,7 +47,7 @@ def emitted(tmp_path):
         pytest.skip("artheia CLI not on PATH and not in workspace .venv")
     # --rig DemoSoftware: the central/compute/admin multi-host spec.
     # Without it the default *Software ranking picks CentralSoftware
-    # (single machine), which has no compute_host/admin_host dirs.
+    # (single machine), which has no compute/admin dirs.
     result = subprocess.run(
         [artheia, "generate-manifest", RIG_TARGET,
          "--rig", "DemoSoftware", "--out", str(tmp_path)],
@@ -99,15 +99,15 @@ def _process_names(emitted: Path, machine: str) -> set[str]:
 
 
 def test_shwa_pinned_to_compute(emitted):
-    """``shwa`` (the only compute-pinned FC) lands on compute_host and
-    is NOT in central_host's tree."""
-    central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central_host"))
-    compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute_host"))
+    """``shwa`` (the only compute-pinned FC) lands on compute and
+    is NOT in central's tree."""
+    central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central"))
+    compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute"))
     assert "shwa" in compute_leaves, (
-        f"shwa must be on compute_host; got {sorted(compute_leaves)}"
+        f"shwa must be on compute; got {sorted(compute_leaves)}"
     )
     assert "shwa" not in central_leaves, (
-        f"shwa must NOT leak to central_host; got {sorted(central_leaves)}"
+        f"shwa must NOT leak to central; got {sorted(central_leaves)}"
     )
 
 
@@ -121,7 +121,7 @@ def test_platform_fabric_not_in_supervised_tree(emitted):
     AUTO_APPS_CHILDREN expansion. With apps now resolving through real
     execution-manifest Processes, only genuine supervised children — the
     demo binaries — land under app_sup.)"""
-    for machine in ("central_host", "compute_host"):
+    for machine in ("central", "compute"):
         leaves = _tree_leaf_names(_supervisor_tree(emitted, machine))
         for fabric in ("supervisor", "gateway"):
             assert fabric not in leaves, (
@@ -132,30 +132,30 @@ def test_platform_fabric_not_in_supervised_tree(emitted):
 
 def test_demo_binaries_pinned_to_compute(emitted):
     """The three demo per-process binaries (compute_app) all land on
-    compute_host and on NO other machine. Idents come from `cluster
+    compute and on NO other machine. Idents come from `cluster
     Applications` in the .art (p1/p2/p3 — the generated applications.py
     drives them now, no longer the hand-written demo_p* names)."""
-    compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute_host"))
-    central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central_host"))
+    compute_leaves = _tree_leaf_names(_supervisor_tree(emitted, "compute"))
+    central_leaves = _tree_leaf_names(_supervisor_tree(emitted, "central"))
     for demo in ("p1", "p2", "p3"):
         assert demo in compute_leaves, (
-            f"{demo!r} must be on compute_host; got {sorted(compute_leaves)}"
+            f"{demo!r} must be on compute; got {sorted(compute_leaves)}"
         )
         assert demo not in central_leaves, (
-            f"{demo!r} must NOT leak to central_host; got "
+            f"{demo!r} must NOT leak to central; got "
             f"{sorted(central_leaves)}"
         )
 
 
-def test_admin_host_has_empty_supervisor_tree(emitted):
+def test_admin_has_empty_supervisor_tree(emitted):
     """The HOST/admin machine runs no supervisor of its own — its
     tree is just the root with no children."""
-    tree = _supervisor_tree(emitted, "admin_host")
+    tree = _supervisor_tree(emitted, "admin")
     assert tree.get("name") == "root", (
-        f"admin_host tree's root should be named 'root'; got {tree}"
+        f"admin tree's root should be named 'root'; got {tree}"
     )
     assert (tree.get("children") or []) == [], (
-        f"admin_host tree must have no children; got "
+        f"admin tree must have no children; got "
         f"{tree.get('children')}"
     )
 
@@ -166,7 +166,7 @@ def test_processes_list_matches_tree_leaves(emitted):
 
     Walks the tree, collects leaf names; compares to the processes list.
     """
-    for machine in ("central_host", "compute_host", "admin_host"):
+    for machine in ("central", "compute", "admin"):
         tree = _supervisor_tree(emitted, machine)
         leaves = _tree_leaf_names(tree)
         procs = _process_names(emitted, machine)

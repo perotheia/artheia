@@ -9,7 +9,7 @@ The rig parsing path:
     executor.yaml
 
 These tests check the slice from .art parse → NodeInfo. The YAML emit
-side is exercised end-to-end by the demo rig's central_host_executor
+side is exercised end-to-end by the demo rig's central_executor
 .yaml regeneration (manual smoke; the file in scenarios/fixtures/
 carries the nodes: blocks).
 """
@@ -61,7 +61,7 @@ def test_executor_yaml_carries_nodes_block(tmp_path):
         pytest.skip("artheia CLI not on PATH")
 
     repo = Path(__file__).resolve().parent.parent.parent
-    out = tmp_path / "central_host_executor.yaml"
+    out = tmp_path / "central_executor.yaml"
     env = {
         **__import__("os").environ,
         "PYTHONPATH": f"{repo}:{repo / 'artheia'}",
@@ -70,7 +70,7 @@ def test_executor_yaml_carries_nodes_block(tmp_path):
         [
             artheia, "executor", "emit",
             "apps.manifest.rig",
-            "--machine", "central_host",
+            "--machine", "central",
             "--out", str(out),
         ],
         capture_output=True, text=True, env=env, cwd=str(repo),

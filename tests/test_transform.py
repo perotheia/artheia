@@ -413,21 +413,21 @@ def test_software_specification_squashes_machines_via_transforms():
 
 def test_demo_software_routes_components_to_three_machines():
     """``DemoSoftware`` is the central/compute multi-host shape:
-      - platform_app on central_host — the platform binaries
+      - platform_app on central — the platform binaries
         (gateway + supervisor)
-      - compute_app  on compute_host — the demo apps p1/p2/p3
+      - compute_app  on compute — the demo apps p1/p2/p3
       - services_app — the FC services (unpinned host; they're sliced
         onto machines by the supervisor tree / PTM, not by app host),
         including shwa
 
-    Three machines: admin_host (the HostMachine running the GUI /
-    observability stack), central_host, and compute_host.
+    Three machines: admin (the HostMachine running the GUI /
+    observability stack), central, and compute.
     """
     from apps.manifest.zonal_rig import DemoSoftware
     rig = DemoSoftware.to_rig()
 
     assert {m.name for m in rig.machines} == {
-        "admin_host", "central_host", "compute_host",
+        "admin", "central", "compute",
     }
     assert {a.name for a in rig.applications} == {
         "platform_app", "compute_app", "services_app",
@@ -438,12 +438,12 @@ def test_demo_software_routes_components_to_three_machines():
     # platform_app → central, the platform binaries. (gateway was dropped from
     # the rig pending its gen-app modernization — supervisor only for now.)
     platform = by_app["platform_app"]
-    assert platform.host_machine == "central_host"
+    assert platform.host_machine == "central"
     assert {c.name for c in platform.components} == {"supervisor"}
 
     # compute_app → compute, the three demo apps.
     compute = by_app["compute_app"]
-    assert compute.host_machine == "compute_host"
+    assert compute.host_machine == "compute"
     assert {c.name for c in compute.components} == {"p1", "p2", "p3"}
 
     # services_app → the FC services (host assigned by the supervisor

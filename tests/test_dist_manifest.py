@@ -42,7 +42,7 @@ def emitted_manifest(tmp_path):
         pytest.skip("artheia CLI not on PATH and not in workspace .venv")
     # --rig DemoSoftware: the central/compute/admin multi-host spec.
     # Without it the default *Software ranking picks CentralSoftware
-    # (single machine), so the compute_host/admin_host dirs are absent.
+    # (single machine), so the compute/admin dirs are absent.
     result = subprocess.run(
         [artheia, "generate-manifest", RIG_TARGET,
          "--rig", "DemoSoftware", "--out", str(tmp_path)],
@@ -72,52 +72,52 @@ def _instance_names(manifest_dir: Path, machine: str) -> set[str]:
     return names
 
 
-def test_shwa_only_on_compute_host(emitted_manifest):
-    """shwa is compute-only: present in compute_host, ABSENT from
-    central_host and admin_host."""
-    compute = _instance_names(emitted_manifest, "compute_host")
-    central = _instance_names(emitted_manifest, "central_host")
-    admin = _instance_names(emitted_manifest, "admin_host")
+def test_shwa_only_on_compute(emitted_manifest):
+    """shwa is compute-only: present in compute, ABSENT from
+    central and admin."""
+    compute = _instance_names(emitted_manifest, "compute")
+    central = _instance_names(emitted_manifest, "central")
+    admin = _instance_names(emitted_manifest, "admin")
 
     assert "shwa" in compute, (
-        f"shwa must be on compute_host; got {sorted(compute)}"
+        f"shwa must be on compute; got {sorted(compute)}"
     )
     assert "shwa" not in central, (
-        f"shwa must NOT leak to central_host; got {sorted(central)}"
+        f"shwa must NOT leak to central; got {sorted(central)}"
     )
     assert "shwa" not in admin, (
-        f"shwa must NOT leak to admin_host; got {sorted(admin)}"
+        f"shwa must NOT leak to admin; got {sorted(admin)}"
     )
 
 
 def test_central_services_pinned_to_central(emitted_manifest):
-    """The control-plane FCs (per/log/sm/ucm/com) belong on central_host
-    and NOT on compute_host."""
-    central = _instance_names(emitted_manifest, "central_host")
-    compute = _instance_names(emitted_manifest, "compute_host")
+    """The control-plane FCs (per/log/sm/ucm/com) belong on central
+    and NOT on compute."""
+    central = _instance_names(emitted_manifest, "central")
+    compute = _instance_names(emitted_manifest, "compute")
 
     for svc in ["per", "log", "sm", "ucm"]:  # com retired
         assert svc in central, (
-            f"{svc!r} must be on central_host; got {sorted(central)}"
+            f"{svc!r} must be on central; got {sorted(central)}"
         )
         assert svc not in compute, (
-            f"{svc!r} must NOT leak to compute_host; got {sorted(compute)}"
+            f"{svc!r} must NOT leak to compute; got {sorted(compute)}"
         )
 
 
-def test_admin_host_has_no_service_instances(emitted_manifest):
+def test_admin_has_no_service_instances(emitted_manifest):
     """The admin (HostMachine) doesn't host any FC service instances —
     its service.yaml should be empty."""
-    admin = _instance_names(emitted_manifest, "admin_host")
+    admin = _instance_names(emitted_manifest, "admin")
     assert admin == set(), (
-        f"admin_host should host no service instances; got {sorted(admin)}"
+        f"admin should host no service instances; got {sorted(admin)}"
     )
 
 
 def test_strict_filter_no_unpinned_instances_anywhere(emitted_manifest):
     """Every emitted ServiceInstance has a remote_machine matching its
     host. Catches regressions where the loose fallback creeps back in."""
-    for machine in ["admin_host", "central_host", "compute_host"]:
+    for machine in ["admin", "central", "compute"]:
         path = emitted_manifest / machine / "service.json"
         doc = json.loads(path.read_text())
         for sm in doc.get("service_manifests", []) or []:
