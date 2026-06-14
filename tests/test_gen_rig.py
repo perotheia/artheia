@@ -27,7 +27,7 @@ from artheia.generators.rig import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEMO_ART = REPO_ROOT / "demo" / "system" / "demo" / "package.art"
+DEMO_ART = REPO_ROOT / "apps" / "system" / "demo" / "package.art"
 
 
 def test_extract_composition_groups_prototypes_by_process():
