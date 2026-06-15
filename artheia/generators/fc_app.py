@@ -158,6 +158,12 @@ class _NodeView:
     # GenServer-shaped FCs. Templates branch on `node.statem` being
     # truthy / None to pick GenStateM-vs-GenServer skeleton.
     statem: Optional[StateMSpec] = None
+    # The node's `config <Msg>` binding (the structured, etcd-backed config the
+    # node observes via services/per). Holds the config message's TYPE NAME (a
+    # str) when the .art node has a `config` line, else None. Templates branch on
+    # it to declare the on_config_update hook (a node with config can apply it
+    # live; the GenServer base delivers ConfigUpdated → this hook).
+    config: Optional[str] = None
     # The FSM's `data <Msg>` resolved to a _DataEl, when the statem block
     # declared one. The GenStateM base encodes this message into the STATEM
     # trace record's payload on every transition (OTP `{State, Data}` — the
@@ -439,6 +445,11 @@ def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
         runnable=(getattr(node, "kind", "atomic") == "runnable"),
         log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
+        # `config <Msg>` binding → the config message's type name (str), else
+        # None. The cross-ref may be the MessageDecl object or a bare name.
+        config=(getattr(getattr(node, "config", None), "name", None)
+                or (getattr(node, "config", None) if isinstance(
+                        getattr(node, "config", None), str) else None)),
     )
     # Resolve the FSM `data <Msg>` to a _DataEl so Codecs.hh declares a
     # RemoteCodec<Data> — GenStateM encodes it into the STATEM trace payload
