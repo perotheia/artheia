@@ -150,9 +150,30 @@ def _import_dir(entry: "Path", entry_pkg: str, import_pkg: str) -> "Path | None"
     for _ in range(up):
         base = base.parent
 
+    remainder = i_parts[common:]
+
+    # Layout-robustness: the naive ascent assumes the entry's directory
+    # mirrors its package FQN 1:1. That holds via the canonical `system/`
+    # symlink tree, but the PHYSICAL file (e.g. services/per/system/per for
+    # package system.services.per) carries an extra `system/<fc>` suffix that
+    # is NOT in the FQN — so the ascent undershoots the real root. If the
+    # computed base doesn't actually contain the import's head segment, keep
+    # walking up until it does (bounded by the filesystem root). This makes
+    # resolution work from either path — the layout-independence the docstring
+    # promises. (Catches the recurring `platform.runtime.*` / ChildControlIf
+    # break when gen-app is handed the physical FC path.)
+    if remainder:
+        head = remainder[0]
+        probe = base
+        while not (probe / head).exists() and probe.parent != probe:
+            probe = probe.parent
+            if (probe / head).exists():
+                base = probe
+                break
+
     # Descend the import's remainder past the common prefix.
     p = base
-    for seg in i_parts[common:]:
+    for seg in remainder:
         p = p / seg
     return p
 

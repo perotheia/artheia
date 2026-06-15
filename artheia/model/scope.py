@@ -70,8 +70,26 @@ def _import_dir(entry: Path, entry_pkg: str, import_pkg: str) -> Optional[Path]:
     for _ in range(up):
         base = base.parent
 
+    remainder = i_parts[common:]
+
+    # Layout-robustness (mirror of cli._import_dir): the naive ascent assumes
+    # the entry dir mirrors its package FQN 1:1 — true via the canonical
+    # `system/` symlink tree, but the PHYSICAL file (services/per/system/per
+    # for system.services.per) has an extra `system/<fc>` suffix not in the
+    # FQN, so the ascent undershoots. If `base` doesn't contain the import's
+    # head segment, walk up until it does. Fixes the recurring
+    # platform.runtime.* / ChildControlIf break on the physical path.
+    if remainder:
+        head = remainder[0]
+        probe = base
+        while not (probe / head).exists() and probe.parent != probe:
+            probe = probe.parent
+            if (probe / head).exists():
+                base = probe
+                break
+
     p = base
-    for seg in i_parts[common:]:
+    for seg in remainder:
         p = p / seg
     return p
 
