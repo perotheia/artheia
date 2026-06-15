@@ -716,6 +716,22 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
         if log_level:
             env["THEIA_LOG_LEVEL"] = log_level
 
+        # Per-process TLS / crypto env for the com FC (crypto/TLS plan). The
+        # supervisor builds each child's env from this map (not arbitrary
+        # inherited env), so com's gRPC TLS settings must ride executor.json.
+        # When the manifest is generated with these set (deploy/rig env or the
+        # local dev shell), bake them into com's process env so the engine-mode
+        # TLS (key never in com, via the crypto FC) activates. Empty/unset → com
+        # stays insecure (the dev default).
+        if short == "com":
+            import os as _os
+            for _v in ("THEIA_COM_TLS_SLOT", "THEIA_COM_TLS_CERT",
+                       "THEIA_COM_TLS_KEY", "THEIA_COM_TLS_CA",
+                       "THEIA_CRYPTO_ENGINE", "THEIA_CRYPTO_SLOT_DIR"):
+                _val = _os.environ.get(_v, "")
+                if _val:
+                    env[_v] = _val
+
         # THEIA_LOGGER selects the per-process logger SINK. Precedence:
         #   1. Process.logger        — per-process override (executor.py PROCESS)
         #   2. Machine.logger        — per-machine sink policy (this machine's
