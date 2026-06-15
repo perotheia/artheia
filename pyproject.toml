@@ -16,6 +16,7 @@ dependencies = [
     "Jinja2>=3.1",
     "click>=8.1",
     "PyYAML>=6.0",
+    "fastmcp>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ lsp = [
 [project.scripts]
 artheia = "artheia.cli:main"
 artheia-lsp = "artheia.lsp.server:main"
+artheia-mcp = "artheia.adapters.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
