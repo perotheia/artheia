@@ -10,7 +10,7 @@ description = "Host-side DSL for Adaptive-AUTOSAR-style nodes that talk to Class
 # subrepo). The package's pip-visible description is the line above.
 requires-python = ">=3.10"
 authors = [{ name = "Artheia" }]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 dependencies = [
     "textX>=4.0",
     "Jinja2>=3.1",
