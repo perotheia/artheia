@@ -197,10 +197,15 @@ class TraceObserver:
             fsm_data = None
             inner = self._decode_inner(msg.msg_type, bytes(msg.payload))
         # kind is a TraceKind enum (field 6). Resolve its symbolic name from
-        # the enum descriptor; fall back to the raw int if unnamed.
+        # the enum descriptor; fall back to the raw int if unnamed. gen-proto
+        # prefixes enum members with the enum name (nanopb compat) →
+        # "TraceKind_CALL_OUT"; strip it so every consumer (human + json) sees
+        # just CALL_OUT.
         try:
             kind_name = msg.DESCRIPTOR.fields_by_name["kind"].enum_type \
                 .values_by_number[msg.kind].name
+            if kind_name.startswith("TraceKind_"):
+                kind_name = kind_name[len("TraceKind_"):]
         except Exception:
             kind_name = str(getattr(msg, "kind", "") or "")
         return TraceRec(
