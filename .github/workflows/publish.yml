@@ -1,0 +1,73 @@
+name: build & publish
+
+# Build the artheia sdist + wheel on every push/PR; publish to PyPI on a version
+# tag (vX.Y.Z). Auth is an API token stored as the PYPI_API_TOKEN repo secret.
+# (TestPyPI publish on push is opt-in: it runs only if a TEST_PYPI_API_TOKEN
+# secret is set.)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # TestPyPI on every push to main — a dry run. The job is gated on the
+  # TEST_PYPI_API_TOKEN secret being present (mapped to an env var, which CAN be
+  # used in a job-level `if`); with no TestPyPI token the job is simply skipped.
+  publish-testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      HAS_TEST_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN != '' }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to TestPyPI
+        if: env.HAS_TEST_TOKEN == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          user: __token__
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          skip-existing: true
+
+  # Real PyPI publish — only on a vX.Y.Z tag.
+  publish-pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
