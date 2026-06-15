@@ -403,6 +403,17 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
     # FC short → its Process. Process.name == FC short by convention.
     process_by_short = {p.name: p for p in rig.execution_manifests}
 
+    # Per-machine logger SINK (THEIA_LOGGER tier between Process and rig). When
+    # building this machine's tree, its Machine.logger applies to every Process
+    # on it — the sink is a machine property (the log[] hose tails one dir / one
+    # journald per machine). Empty when no machine filter or no field set.
+    machine_logger = ""
+    if machine:
+        for m in getattr(rig, "machines", []) or []:
+            if getattr(m, "name", "") == machine:
+                machine_logger = (getattr(m, "logger", "") or "").strip()
+                break
+
     # Worker short → its SwComponent.art_node ("system.<cluster>.<ident>/
     # <Composition>"). Application workers (demo p1/p2/p3) host their nodes
     # via a composition whose prototypes resolve to node types carrying the
@@ -707,12 +718,17 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
 
         # THEIA_LOGGER selects the per-process logger SINK. Precedence:
         #   1. Process.logger        — per-process override (executor.py PROCESS)
-        #   2. rig.logger            — rig-wide default (SoftwareSpecification)
-        #   3. file:/tmp/theia/...   — built-in fallback
+        #   2. Machine.logger        — per-machine sink policy (this machine's
+        #                              one log dir / journald — the log[] hose
+        #                              tails it; the sink is a machine property)
+        #   3. rig.logger            — rig-wide default (SoftwareSpecification)
+        #   4. file:/tmp/theia/...   — built-in fallback
         # A "file:<dir>" with no ".log" leaf is treated as a DIRECTORY: each
         # process gets <dir>/<short>.log, so ONE rig-level "file:/var/log/theia"
         # still yields separable per-FC files.
         logger = (getattr(proc, "logger", "") or "").strip()
+        if not logger:
+            logger = machine_logger
         if not logger:
             logger = (getattr(rig, "logger", "") or "").strip()
         if not logger:

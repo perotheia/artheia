@@ -206,10 +206,29 @@ def _execution_payload(rig, machine_name: str) -> dict:
     sup = getattr(rig, "supervisor", {}).get(machine_name)
     sup_instance = getattr(sup, "instance", 0) if sup is not None else 0
 
+    # This machine's logger SINK policy — the MACHINE-level THEIA_LOGGER before
+    # per-node expansion (e.g. "file:/var/log/theia" or "syslog"). The per-process
+    # THEIA_LOGGER in the supervisor tree expands this to <dir>/<node>.log, but
+    # the log[logging] hose needs the un-expanded policy to know WHAT to tail (a
+    # directory of *.log, or journald) — it can't reverse a single node's path.
+    # run-supervisor.sh exports this as THEIA_LOGGER_POLICY; GetLoggerPolicy
+    # serves it back to log[]. Precedence mirrors build_supervisor_tree:
+    # Machine.logger > rig.logger > file:/tmp/theia.
+    logger_policy = ""
+    for m in getattr(rig, "machines", []) or []:
+        if getattr(m, "name", "") == machine_name:
+            logger_policy = (getattr(m, "logger", "") or "").strip()
+            break
+    if not logger_policy:
+        logger_policy = (getattr(rig, "logger", "") or "").strip()
+    if not logger_policy:
+        logger_policy = "file:/tmp/theia"
+
     payload = {
         "kind": "ExecutionManifest",
         "host_machine": machine_name,
         "supervisor_instance": sup_instance,
+        "logger_policy": logger_policy,
         "processes": [_serialize(p) for p in procs],
         "process_to_machine_mappings": [
             _serialize(m) for m in ptm_for_machine

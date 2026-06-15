@@ -319,6 +319,13 @@ class Machine(Identifiable):
     # Project-local fields below this line.
     hardware: HardwareResource = field(default_factory=HardwareResource)
     network_interfaces: list[NetworkInterface] = field(default_factory=list)
+    # Per-machine logger SINK policy (THEIA_LOGGER: stdio|null|file:<dir>|syslog).
+    # The log[] FC's LogStreamPump tails this machine's logs and re-hoses them to
+    # tdb/rtdb `logcat`, so the sink is a MACHINE property (one dir / one journald
+    # per machine) — the hose can't chase a separate sink per node. Precedence at
+    # build_supervisor_tree: Process.logger > Machine.logger > rig.logger >
+    # file:/tmp/theia fallback. A bare "file:<dir>" gives <dir>/<node>.log per FC.
+    logger: str = ""
     # Operator endpoint(s) for this machine — used by tooling on a
     # different host (e.g. the supervisor GUI) to find services on the
     # machine. The supervisor is *not* exposed directly; instead, a
