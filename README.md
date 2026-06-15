@@ -35,7 +35,7 @@ across packages.
 
 ## Example
 
-```art
+```scala
 package system.demo
 
 // --- data ----------------------------------------------------------------
