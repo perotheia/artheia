@@ -40,7 +40,7 @@ cc_library(
         "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_state",
 {%- if model.nodes | selectattr("requires_rds") | list %}
         # RDS handles (RdsStreams.hh → ara::rds::StreamWriter/Reader).
-        "//services/rds/lib:rds",
+        "//services/rds/transport:rds",
 {%- endif %}
     ],
 )

@@ -192,6 +192,16 @@ NodeDecl:
         // inheritance. An `extern node X { }` carries no tipc at all.
         // See model/loader.py for the enforced invariant.
         (tipc=TipcAddress)?
+        // `node prebuilt` only: the absolute path to a third-party binary
+        // (iox-roudi, etcd) that is NOT a Theia FC. gen-app emits a fully-
+        // GENERATED GenRunnable for the node: its do_start forks + execvp's this
+        // path (argv = path + the node's `args` string param, whitespace-split),
+        // do_loop drains the child's stdout/stderr line-by-line INTO the node's
+        // logger (behave-like-a-pipe), do_stop SIGTERMs + reaps. The supervisor
+        // supervises that runnable like any worker. A prebuilt node is normally
+        // reporting=false (the child sends no HeartbeatReport, so the watchdog —
+        // which only tracks nodes that beat — never touches it).
+        ('path' '=' path=STRING)?
         // Lifecycle / dependency annotations. Each is independently
         // optional; the generator uses them to drop hand-tables
         // (which nodes auto-start, which need TimerService).
@@ -345,7 +355,7 @@ Duration:
 //               do_start/do_loop/do_stop bodies in impl. Not message-driven.
 //               (platform/runtime/GenRunnable.hh)
 NodeKind:
-    'atomic' | 'runnable'
+    'atomic' | 'runnable' | 'prebuilt'
 ;
 
 TipcAddress:

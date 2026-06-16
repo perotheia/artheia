@@ -15,7 +15,9 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "{{ model.fc_short }}_state",
     hdrs = [
-{%- for n in model.nodes if not n.statem %}
+{#- statem nodes carry their data in the FSM holder, and prebuilt nodes have no
+    user state (the child binary is third-party) — neither emits a _state.hh. #}
+{%- for n in model.nodes if not n.statem and not n.prebuilt %}
         "{{ n.name }}_state.hh",
 {%- endfor %}
     ],

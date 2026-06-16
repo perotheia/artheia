@@ -23,7 +23,7 @@ cc_binary(
         "//platform/supervisor/tombstone:tombstone",
 {%- if model.nodes | selectattr("requires_rds") | list %}
         # RDS zero-copy data plane (a requires_rds node) — ara::rds + iceoryx.
-        "//services/rds/lib:rds",
+        "//services/rds/transport:rds",
 {%- endif %}
     ],
     linkopts = [

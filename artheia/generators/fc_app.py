@@ -162,6 +162,19 @@ class _NodeView:
     # `node runnable` — a GenRunnable free worker (do_start/do_loop/do_stop),
     # e.g. a gRPC proxy thread. Templates branch on this to pick the base.
     runnable: bool = False
+    # `node prebuilt` — a third-party binary (iox-roudi, etcd). gen-app emits a
+    # FULLY-GENERATED GenRunnable for it: do_start forks + execvp's `path` (with
+    # `prebuilt_args` as argv), do_loop drains the child's stdout/stderr through
+    # callbacks INTO this node's logger (behave-like-a-pipe), do_stop SIGTERMs +
+    # reaps. Normally reporting=false (no HeartbeatPublisher → the supervisor
+    # forks/reaps it but never watchdogs it). `path` is the binary; argv comes
+    # from the node's `args` string param (whitespace-split into prebuilt_args).
+    prebuilt: bool = False
+    path: str = ""
+    # argv tail for a prebuilt child — from the `args : string = "..."` node
+    # param, whitespace-split. Empty when no `args` param. Each element is a
+    # single argv token (no shell parsing — the runnable execvp's directly).
+    prebuilt_args: list[str] = field(default_factory=list)
     ports: list[_Port] = field(default_factory=list)
     # When the .art's NodeDecl has a `statem { ... }` block, this is
     # the validated StateMSpec lowered from the AST. None for plain
@@ -442,6 +455,24 @@ def _rds_streams_from_ast(node, fc_short: str) -> list:
     return out
 
 
+def _prebuilt_args_from_ast(node) -> list[str]:
+    """argv tail for a `node prebuilt`, from its `args : string = "..."` param.
+
+    A prebuilt node forks a third-party binary (`path`); the flat command-line
+    tail (iox-roudi/etcd take a plain argv) is carried in one `args` string
+    param, whitespace-split into argv tokens. No shell parsing — the generated
+    runnable execvp's the tokens directly. Empty list when there's no `args`
+    param (the binary is launched with no arguments).
+    """
+    for p in getattr(node, "params", None) or []:
+        if getattr(p, "name", "") != "args":
+            continue
+        lit = getattr(p, "default", None)
+        val = getattr(lit, "value", lit)
+        return str(val).split() if val is not None else []
+    return []
+
+
 def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
     # model/inherit's _apply_node_defaults guarantees reporting is
     # always populated as the string "true" or "false" by the time
@@ -474,6 +505,11 @@ def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
         # NodeKind from the .art: `node runnable Foo` → GenRunnable; the
         # default `node atomic` → GenServer (or GenStateM with a statem block).
         runnable=(getattr(node, "kind", "atomic") == "runnable"),
+        # `node prebuilt Foo path="..."` → a fully-generated runnable that
+        # forks the third-party binary. argv tail is the `args` string param.
+        prebuilt=(getattr(node, "kind", "atomic") == "prebuilt"),
+        path=(getattr(node, "path", "") or ""),
+        prebuilt_args=_prebuilt_args_from_ast(node),
         log_tag=log_tag,
         statem=statem_from_ast(node),  # None when node has no statem block
         # `config <Msg>` binding → the config message's type name (str), else
@@ -925,7 +961,17 @@ def generate_fc(
         # from gen_statem, a plain node from gen_server. Mixed FCs are fine —
         # each node picks its own skeleton. runnable wins over statem (a
         # `node runnable` carries no statem block anyway).
-        if nv.runnable:
+        #
+        # A `node prebuilt` is a fully-GENERATED runnable: it derives from
+        # GenRunnable but its do_start/do_loop/do_stop are emitted whole — fork
+        # + execvp the declared `path` (with params as argv), drain the child's
+        # stdout/stderr through callbacks INTO this node's logger, reap + restart
+        # on death. No hand-written handlers, no user state struct: the binary is
+        # third-party (iox-roudi, etcd). reporting=false so the supervisor
+        # supervises it (fork/reap) without expecting a heartbeat.
+        if nv.prebuilt:
+            node_suffix = ".prebuilt"
+        elif nv.runnable:
             node_suffix = ".runnable"
         elif nv.statem is not None:
             node_suffix = ".statem"
@@ -946,16 +992,19 @@ def generate_fc(
         # fields are behaviour, not derivable from the .art, so the user
         # owns this file and regen never clobbers it. lib/<Node>.hh
         # #includes it. (statem nodes carry their data in the FSM holder,
-        # so no per-node state header for them.)
-        if not nv.statem:
+        # so no per-node state header for them. prebuilt nodes have no user
+        # state — the child binary is third-party; everything is generated.)
+        if not nv.statem and not nv.prebuilt:
             p = impl_dir / f"{nv.name}_state.hh"
             results[_write(p, env.get_template("state.hh.j2").render(**node_ctx),
                             overwrite=force)].append(str(p))
         # Handler stubs (write-once). Per node, so adding node B never
-        # clobbers node A's hand-written bodies.
+        # clobbers node A's hand-written bodies. A prebuilt node's handlers are
+        # fully generated (path/args + the fork/drain plumbing live in the
+        # Daemon header) — overwrite on regen, nothing to hand-edit.
         p = impl_dir / f"{nv.name}_handlers.cc"
         results[_write(p, env.get_template(f"handlers{node_suffix}.cc.j2").render(**node_ctx),
-                        overwrite=force)].append(str(p))
+                        overwrite=(force or nv.prebuilt))].append(str(p))
 
     # FC-wide inbound RemoteCodec specializations (#387), deduplicated
     # across ALL nodes, in ONE header included once by each node header.
