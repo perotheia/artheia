@@ -66,7 +66,11 @@ int main() {
     ::theia::runtime::init_config("{{ model.fc_short }}");
 
     ::theia::runtime::TimerService timers;
-    (void)timers;  // wired into statem nodes' send_after
+    // Publish the process TimerService. start_statem(timers) drives the FSM's
+    // own send_after, but a plain `requires_timers` node sharing this FC (e.g. a
+    // poller that send_after()s its own tick) reaches the SAME service via the
+    // global process_timers() accessor — which must be set, or it fatals.
+    ::theia::runtime::set_process_timers(&timers);
 {% if model.nodes | selectattr("reporting") | list %}
     // Config-service receiver (#386): reporting nodes register_cast the
     // supervisor's LogLevelPush, applied by GenServer's base handler.

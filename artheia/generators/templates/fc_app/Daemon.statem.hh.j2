@@ -257,6 +257,21 @@ public:
     // ---- on_enter — defined in impl/ (user owns side effects)
     void on_enter({{ n.name }}State new_s, {{ n.name }}State old_s,
                    {{ n.name }}Data& d);
+{%- if n.config %}
+
+    // ---- config update — body in impl ({{ n.name }}_handlers.cc) -------
+    //
+    // This statem node binds `config {{ n.config }}`. services/per casts a
+    // platform.runtime.ConfigUpdated when the etcd-backed config changes; the
+    // GenServer base (GenStateM derives from it) decodes the envelope + logs,
+    // then calls this hook. Declared (shadowing the base no-op) so the FSM can
+    // apply its typed config LIVE — ParseFromString cfg.config into
+    // {{ n.config }} and honor the changed mask. The second arg is the FSM
+    // holder (same as handle_call) — reach h.data / post_event(*this, …) from it.
+    // A node that only reads config at boot leaves the impl body empty.
+    void on_config_update(const platform_runtime_ConfigUpdated& cfg,
+                          ::theia::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& h);
+{%- endif %}
 
     // ---- Subscriber registration (per sender-port data element) --------
 {% for p in n.ports if p.kind == "sender" %}

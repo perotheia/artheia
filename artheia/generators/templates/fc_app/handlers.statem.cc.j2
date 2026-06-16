@@ -41,6 +41,19 @@ void {{ n.name }}::on_enter({{ n.name }}State new_s,
     // TODO: fan out to subscribe_<port>_<msg> registrations here.
 }
 
+{%- if n.config %}
+// ---- config update — services/per casts ConfigUpdated when this statem
+//      node's etcd-backed `config {{ n.config }}` changes. The GenServer base
+//      (GenStateM derives from it) decoded the envelope + logged; apply the
+//      typed config here (ParseFromString cfg.config into {{ n.config }}, honor
+//      the changed mask; reach the FSM via h.data / post_event(*this, …)).
+//      Empty default — a node that only reads config at boot leaves this as-is.
+void {{ n.name }}::on_config_update(
+        const platform_runtime_ConfigUpdated& /*cfg*/,
+        ::theia::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& /*h*/) {
+}
+{% endif %}
+
 {# Server-port operations — deduplicated by (req_msg, rep_msg) so
    that multiple server ports sharing one interface don't produce
    duplicate handle_call signatures. #}
