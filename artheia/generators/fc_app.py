@@ -142,6 +142,16 @@ class _NodeView:
     # process_timers(). (kick_off retired — startup work is now the OTP
     # init() callback the runtime drives.)
     requires_timers: bool = False
+    # RDS opt-in (.art `requires_rds`). When True the node moves bulk data over
+    # the ara::rds zero-copy plane (iceoryx/RouDi): main links librds + calls
+    # Runtime::Init(node), and each rds_stream below becomes a typed
+    # StreamWriter/StreamReader the node's handlers use. Independent of the TIPC
+    # control plane (which still carries the "frame ready" notification).
+    requires_rds: bool = False
+    # The node's `rds { stream <name> { role chunk_size history } }` declarations,
+    # lowered to dicts {name, role, chunk_size, history, instance}. Empty unless
+    # requires_rds. gen-app emits one StreamWriter/Reader per entry.
+    rds_streams: list = field(default_factory=list)
     # AUTOSAR Log&Trace 3-letter Context ID — stamped onto every log
     # record. Falls back to the node name itself when the .art has
     # no `tag = "..."` field, so every node always has a non-empty
@@ -414,6 +424,24 @@ def _to_snake(name: str) -> str:
     return s.lower()
 
 
+def _rds_streams_from_ast(node, fc_short: str) -> list:
+    """Lower a node's `rds { stream <name> { role chunk_size history } }` block
+    to a list of dicts. Each stream's InstanceSpecifier is "/<FC>/<name>" (the
+    deployment resolver maps it to an iceoryx service/instance/event triple).
+    Empty when the node has no rds block."""
+    out = []
+    for s in getattr(node, "rds_streams", None) or []:
+        out.append({
+            "name": s.name,
+            "role": getattr(s, "role", "reader"),
+            "chunk_size": int(getattr(s, "chunk_size", 0) or 0),
+            "history": int(getattr(s, "history", 0) or 0),
+            # /<FC>/<stream> — resolver splits the last two path segments.
+            "instance": f"/{fc_short.capitalize()}/{s.name}",
+        })
+    return out
+
+
 def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
     # model/inherit's _apply_node_defaults guarantees reporting is
     # always populated as the string "true" or "false" by the time
@@ -440,6 +468,9 @@ def _node_view(node, proto_name: Optional[str] = None) -> _NodeView:
         # textX stores the optional requires_timers flag truthy when the
         # keyword was present, else False/"". Coerce to a real bool.
         requires_timers=bool(getattr(node, "requires_timers", False)),
+        # RDS: the `requires_rds` flag + the lowered rds_stream declarations.
+        requires_rds=bool(getattr(node, "requires_rds", False)),
+        rds_streams=_rds_streams_from_ast(node, identity),
         # NodeKind from the .art: `node runnable Foo` → GenRunnable; the
         # default `node atomic` → GenServer (or GenStateM with a statem block).
         runnable=(getattr(node, "kind", "atomic") == "runnable"),
@@ -941,6 +972,13 @@ def generate_fc(
     p = lib_dir / "Log.hh"
     results[_write(p, env.get_template("Log.hh.j2").render(**ctx),
                     overwrite=True)].append(str(p))
+    # RDS stream specs (FC-wide) — only when a node declared `requires_rds`.
+    # One StreamSpec accessor per rds_stream + a writer/reader handle typedef the
+    # impl constructs. ara::rds owns the transport; this is the deployment glue.
+    if any(n.requires_rds for n in mv.nodes):
+        p = lib_dir / "RdsStreams.hh"
+        results[_write(p, env.get_template("RdsStreams.hh.j2").render(**ctx),
+                        overwrite=True)].append(str(p))
     p = lib_dir / "BUILD.bazel"
     results[_write(p, env.get_template("BUILD.lib.bazel.j2").render(**ctx),
                     overwrite=True)].append(str(p))

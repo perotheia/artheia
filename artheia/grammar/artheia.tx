@@ -209,6 +209,13 @@ NodeDecl:
         // node thread after start — see GenServer::dispatch_init_. A
         // self-driving node just fills in its generated init() in impl.)
         (requires_timers?='requires_timers')?
+        // RDS opt-in (Raw Data Stream — the zero-copy bulk data plane). A node
+        // that produces/consumes large payloads (camera frames) declares
+        // `requires_rds`: gen-app links ara::rds, calls Runtime::Init(node) in
+        // main, and emits a typed StreamWriter/StreamReader per `rds_stream`
+        // below. iceoryx (via RouDi) carries the bytes zero-copy; TIPC carries
+        // the "frame ready" notification. See docs/autosar/services/rds.md.
+        (requires_rds?='requires_rds')?
         // AUTOSAR Reporting/Non-Reporting (at per-node-thread
         // granularity). Default = true: HeartbeatPublisher emits,
         // supervisor watchdogs the node, NodeTraceCtl port is
@@ -239,9 +246,31 @@ NodeDecl:
         ('config' config=[MessageDecl|FQN])?
         ('ports' '{' ports*=PortDecl '}')?
         ('params' '{' params*=NodeParam '}')?
+        ('rds' '{' rds_streams*=RdsStreamDecl '}')?
         ('statem' '{' statem=StateMBody '}')?
     '}'
 ;
+
+// ---- RDS stream declaration (per requires_rds node) ------------------------
+//
+//   rds {
+//       stream camera_front { role=writer chunk_size=8388608 history=2 }
+//       stream detections   { role=reader chunk_size=65536   history=4 }
+//   }
+//
+// `name` is the logical stream (resolved to an iceoryx service/instance/event
+// triple by the deployment resolver). role = writer|reader. chunk_size = the
+// pool chunk bytes; history = chunks retained for late joiners. gen-app emits a
+// StreamWriter (writer) or StreamReader (reader) handle named `<name>`.
+RdsStreamDecl:
+    'stream' name=ID '{'
+        'role' '=' role=RdsRole
+        ('chunk_size' '=' chunk_size=INT)?
+        ('history' '=' history=INT)?
+    '}'
+;
+
+RdsRole: 'writer' | 'reader';
 
 // ---- 3b. Statem block (gen_statem FSM, optional per node) ------------------
 //
