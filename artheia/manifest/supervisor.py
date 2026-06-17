@@ -451,20 +451,35 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             if comp.name not in app_host_by_component:
                 app_host_by_component[comp.name] = host
 
-    service_host_by_name: dict[str, str] = {}
+    # A service may have MORE THAN ONE instance, each pinned to a different
+    # machine (an FC that runs on every machine — e.g. tsync, the PTP time
+    # hierarchy: a grandmaster instance on central + a slave instance on
+    # compute). Collect the FULL set of pinned machines per service name, not a
+    # single first-win value, so a machine-aware host resolution can place such
+    # an FC on EVERY machine it's pinned to (see _process_host below).
+    service_hosts_by_name: dict[str, set[str]] = {}
     for sm in getattr(rig, "service_manifests", []) or []:
         for inst in getattr(sm, "instances", []) or []:
             host = getattr(inst, "remote_machine", "") or ""
-            if host and inst.name not in service_host_by_name:
-                service_host_by_name[inst.name] = host
+            if host:
+                service_hosts_by_name.setdefault(inst.name, set()).add(host)
 
     def _process_host(name: str) -> "str | None":
         ptm = ptm_by_process.get(name)
         if ptm and ptm.machine:
             return ptm.machine
-        svc_host = service_host_by_name.get(name)
-        if svc_host:
-            return svc_host
+        svc_hosts = service_hosts_by_name.get(name)
+        if svc_hosts:
+            # When building a specific machine's slice and THIS service has an
+            # instance pinned here, it's local to this slice — keep the leaf.
+            # (A single-instance service resolves to its one pinned machine, as
+            # before; a multi-instance service is local to each of its hosts.)
+            if machine is not None and machine in svc_hosts:
+                return machine
+            # No machine filter (whole-rig view) or not pinned here: collapse to
+            # a stable single value (sorted-first) — preserves the legacy
+            # single-pin behaviour for the common one-instance case.
+            return sorted(svc_hosts)[0]
         host = app_host_by_component.get(name)
         return host if host else None
 
