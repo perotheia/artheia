@@ -10,10 +10,13 @@
 
 #include "lib/{{ node.name }}.hh"
 
+#include "ParamsConfig.hh"   // get_config() — per-machine enabled/args override
+
 #include <array>
 #include <cerrno>
 #include <csignal>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -27,15 +30,11 @@ namespace {{ model.cxx_namespace }} {
 {% set n = node %}
 namespace {
 
-// argv for the child: kPath followed by the .art `args` tokens. NUL-terminated
-// for execvp. Built fresh in the child (post-fork) — no heap use across fork.
-constexpr const char* kArgv[] = {
-    {{ n.name }}::kPath,
-{%- for a in n.prebuilt_args %}
-    "{{ a }}",
-{%- endfor %}
-    nullptr,
-};
+// The compiled-default argv tail from the .art `args` param. Per-machine config
+// (config/{{ model.fc_short }}.json, key "{{ n.snake }}.args") overrides it at
+// runtime so the SAME binary runs e.g. ptp4l as master on central / slave on
+// compute without a rebuild. Whitespace-split tokens; no shell.
+constexpr const char* kDefaultArgs = "{{ n.prebuilt_args | join(' ') }}";
 
 // Drain whatever is ready on `fd` and emit each COMPLETE line through `emit`.
 // `carry` holds a partial trailing line between calls. Returns false on EOF
@@ -66,6 +65,32 @@ bool drain_fd(int fd, std::string& carry, Emit&& emit) {
 // fork() + execvp the third-party binary; keep the read ends of its stdout/
 // stderr pipes (non-blocking) so do_loop() can pump them into our logger.
 void {{ n.name }}::do_start() {
+    // `enabled` gate (config/{{ model.fc_short }}.json, key "{{ n.snake }}.enabled",
+    // default true): a Provider not wanted on this machine (e.g. gpsd on a board
+    // with no GPS) stays UN-forked. do_loop then just idles — no execvp, no
+    // restart churn. Per-machine gen-config flips it.
+    auto cfg = ::theia::runtime::get_config().node({{ n.name }}::kNodeName);
+    if (!cfg.boolean("enabled", true)) {
+        log().info("[{{ n.snake }}] disabled (params.enabled=false) — not forking {{ n.path }}");
+        child_pid_ = -1;
+        return;
+    }
+
+    // argv = kPath + the runtime `args` (config override, else the .art default),
+    // whitespace-split into tokens. Built in the PARENT (heap) before fork; the
+    // child only dup2's + execvp's the NUL-terminated vector.
+    std::vector<std::string> arg_store;
+    arg_store.emplace_back({{ n.name }}::kPath);
+    {
+        std::string args = cfg.str("args", kDefaultArgs);
+        std::istringstream iss(args);
+        std::string tok;
+        while (iss >> tok) arg_store.push_back(tok);
+    }
+    std::vector<char*> c_argv;
+    for (auto& s : arg_store) c_argv.push_back(const_cast<char*>(s.c_str()));
+    c_argv.push_back(nullptr);
+
     int out_pipe[2] = {-1, -1};
     int err_pipe[2] = {-1, -1};
     if (::pipe(out_pipe) != 0 || ::pipe(err_pipe) != 0) {
@@ -81,16 +106,15 @@ void {{ n.name }}::do_start() {
         return;
     }
     if (pid == 0) {
-        // Child: wire stdout/stderr to the pipe write ends, close the rest,
-        // then exec. argv is static + already NUL-terminated.
+        // Child: wire stdout/stderr to the pipe write ends, close the rest, exec.
         ::dup2(out_pipe[1], STDOUT_FILENO);
         ::dup2(err_pipe[1], STDERR_FILENO);
         ::close(out_pipe[0]); ::close(out_pipe[1]);
         ::close(err_pipe[0]); ::close(err_pipe[1]);
-        ::execvp(kArgv[0], const_cast<char* const*>(kArgv));
+        ::execvp(c_argv[0], c_argv.data());
         // exec failed — report on the (redirected) stderr and die. The parent
         // sees EOF + a non-zero wait status and the supervisor restarts us.
-        std::fprintf(stderr, "execvp(%s): %s\n", kArgv[0], std::strerror(errno));
+        std::fprintf(stderr, "execvp(%s): %s\n", c_argv[0], std::strerror(errno));
         _exit(127);
     }
 
