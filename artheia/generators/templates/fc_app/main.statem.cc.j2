@@ -14,7 +14,7 @@
 #include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 #include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
-#include "MachineInstance.hh"  // resolve_node_tipc($THEIA_NODE_TIPC) — per-node addr
+#include "MachineInstance.hh"  // resolve_node_tipc(--tipc arg) — per-node addr
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
 #include "tombstone/tombstone.h"  // install_handlers — crash → tombstone file
 {% if model.nodes | selectattr("reporting") | list %}
@@ -41,9 +41,14 @@ void on_signal(int /*sig*/) { g_running.store(false); }
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::signal(SIGINT,  on_signal);
     std::signal(SIGTERM, on_signal);
+
+    // --tipc=<node>=<type>:<inst>|... — per-NODE TIPC address from the command
+    // line (ARG-only; supervisor appends per child, instance machine-shifted).
+    // Parsed once; each node resolves its own via resolve_node_tipc() below.
+    ::theia::runtime::set_node_tipc_arg(argc, argv);
 
     // Crash forensics: install the libtombstone fatal-signal handler before any
     // node starts, so a crash writes a tombstone to $THEIA_TOMBSTONE_DIR (set
@@ -99,7 +104,7 @@ int main() {
 {%- else %}
     {{ n.snake }}.start();
 {%- endif %}
-    // Resolve this node's TIPC address from THEIA_NODE_TIPC (the supervisor built
+    // Resolve this node’s TIPC address from the --tipc arg (the supervisor built
     // it per node from executor.json, instance machine-shifted) so the binary is
     // address-agnostic. Falls back to the compiled kTipcType/kTipcInstance for a
     // standalone run.
