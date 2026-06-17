@@ -12,6 +12,7 @@
 #include "TimerService.hh"
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 #include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
+#include "MachineInstance.hh"  // resolve_node_tipc($THEIA_NODE_TIPC) — per-node addr
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
 #include "tombstone/tombstone.h"  // install_handlers — crash → tombstone file
 {%- if model.nodes | selectattr("requires_rds") | list %}
@@ -131,16 +132,25 @@ int main() {
     // exists now.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
         {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
+    // Resolve this node's TIPC address from the env the supervisor built from
+    // executor.json (THEIA_NODE_TIPC, instance already machine-shifted), so the
+    // BINARY is address-agnostic — same binary on every machine, the instance
+    // assigned at deploy. Falls back to the compiled kTipcType/kTipcInstance
+    // (machine-shifted) for a standalone / un-supervised run.
+    uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
+    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
+        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
+        {{ n.snake }}_type, {{ n.snake }}_inst);
     {
         char _tipc[64];
         std::snprintf(_tipc, sizeof(_tipc), "up — TIPC type=0x%x instance=%u",
-                      {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+                      {{ n.snake }}_type, {{ n.snake }}_inst);
         {{ n.snake }}.log().info(_tipc);
     }
 {% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
-            {{ n.snake }}, {{ n.name }}::kTipcType,
-            {{ n.name }}::kTipcInstance)) {
+            {{ n.snake }}, {{ n.snake }}_type,
+            {{ n.snake }}_inst)) {
         config_mux.register_cast<platform_runtime_LogLevelPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
         // Trace control (#403): supervisor pushes TraceControlPush to flip
@@ -176,7 +186,7 @@ int main() {
     // touching only atomics). This is what makes a runnable's log level + trace
     // live-controllable (`tdb loglevel`/`trace <node>`), same as a gen_server.
     if (auto* {{ n.snake }}_cfg = config_mux.bind_listener(
-            {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance)) {
+            {{ n.snake }}_type, {{ n.snake }}_inst)) {
         config_mux.register_cast_inline<platform_runtime_LogLevelPush>(
             {{ n.snake }}_cfg, {{ n.snake }}, &{{ n.name }}::on_log_level_push);
         config_mux.register_cast_inline<platform_runtime_TraceControlPush>(

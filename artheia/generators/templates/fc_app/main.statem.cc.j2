@@ -14,6 +14,7 @@
 #include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink
 #include "Logger.hh"     // parse_log_level / process_logger / set_process_logger
 #include "NodeAffinity.hh"  // apply_node_affinity($THEIA_NODE_CFG) per node
+#include "MachineInstance.hh"  // resolve_node_tipc($THEIA_NODE_TIPC) — per-node addr
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
 #include "tombstone/tombstone.h"  // install_handlers — crash → tombstone file
 {% if model.nodes | selectattr("reporting") | list %}
@@ -95,19 +96,30 @@ int main() {
     }
 {%- if n.statem is not none %}
     {{ n.snake }}.start_statem(timers);
+{%- else %}
+    {{ n.snake }}.start();
+{%- endif %}
+    // Resolve this node's TIPC address from THEIA_NODE_TIPC (the supervisor built
+    // it per node from executor.json, instance machine-shifted) so the binary is
+    // address-agnostic. Falls back to the compiled kTipcType/kTipcInstance for a
+    // standalone run.
+    uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
+    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
+        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
+        {{ n.snake }}_type, {{ n.snake }}_inst);
+{%- if n.statem is not none %}
     {
         char _tipc[96];
         std::snprintf(_tipc, sizeof(_tipc),
                       "up — TIPC type=0x%x instance=%u; statem initial={{ n.statem.initial }}",
-                      {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+                      {{ n.snake }}_type, {{ n.snake }}_inst);
         {{ n.snake }}.log().info(_tipc);
     }
 {%- else %}
-    {{ n.snake }}.start();
     {
         char _tipc[64];
         std::snprintf(_tipc, sizeof(_tipc), "up — TIPC type=0x%x instance=%u",
-                      {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance);
+                      {{ n.snake }}_type, {{ n.snake }}_inst);
         {{ n.snake }}.log().info(_tipc);
     }
 {%- endif %}
@@ -117,8 +129,8 @@ int main() {
         {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
 {% if n.reporting %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
-            {{ n.snake }}, {{ n.name }}::kTipcType,
-            {{ n.name }}::kTipcInstance)) {
+            {{ n.snake }}, {{ n.snake }}_type,
+            {{ n.snake }}_inst)) {
         config_mux.register_cast<platform_runtime_LogLevelPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
         // Trace control (#403): supervisor pushes TraceControlPush to flip

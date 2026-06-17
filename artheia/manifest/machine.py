@@ -317,6 +317,16 @@ class Machine(Identifiable):
     secure_communication_deployment: list[str] = field(default_factory=list)
 
     # Project-local fields below this line.
+    #
+    # Machine instance index within the cluster (central=0, compute=1, …). This
+    # IS the TIPC instance every node on this machine binds: a service has a
+    # STABLE TIPC type (supervisor 0x80020001, shwa 0x80010012) and a per-machine
+    # INSTANCE, so the same stable type on two machines is two distinct cluster
+    # addresses. The supervisor reads it at boot (THEIA_MACHINE_INSTANCE, set from
+    # here) and the .art second-instance prototypes bake it in; central com then
+    # addresses (type, instance=N) cluster-wide + TipcTopology discovers which are
+    # up. 0 keeps single-machine + legacy rigs working unchanged.
+    machine_index: int = 0
     hardware: HardwareResource = field(default_factory=HardwareResource)
     network_interfaces: list[NetworkInterface] = field(default_factory=list)
     # Per-machine logger SINK policy (THEIA_LOGGER: stdio|null|file:<dir>|syslog).
