@@ -57,8 +57,23 @@ def build_config_defaults(model) -> dict:
             fields = _field_shape(cfg)
             values = {f["name"]: f["default"]
                       for f in fields if "default" in f}
+            # Defining package + flat proto symbol of the config message (mirrors
+            # gen-schema's art_package/proto_type). Lets a seeder resolve the
+            # proto class DYNAMICALLY via the probe codec
+            # (codec.encode(art_package, proto_type, **values)) for ANY FC,
+            # instead of a hardcoded demo-only class map. The config message may
+            # be defined in a different package than the node.
+            from artheia.generators.proto import _proto_package_name
+            try:
+                from textx import get_model
+                art_pkg = get_model(cfg).name or (model.name or "")
+            except Exception:
+                art_pkg = model.name or ""
+            flat = _proto_package_name(art_pkg).replace(".", "_") + "_" + cfg_name
             configs[proto.name] = {
                 "config_type": cfg_name,
+                "art_package": art_pkg,
+                "proto_type": flat,
                 "digest": _digest(cfg_name, fields),
                 "values": values,
             }
