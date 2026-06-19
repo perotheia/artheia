@@ -12,6 +12,7 @@ the hand-written rig.py output. We assert that here.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -27,7 +28,25 @@ from artheia.generators.rig import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEMO_ART = REPO_ROOT / "apps" / "system" / "demo" / "package.art"
+
+# The demo composition .art these tests exercise (declares Demo3WayP1..P4 in the
+# `system.apps` package). NOT hardcoded: override with the THEIA_DEMO_ART env var
+# (an absolute path or one relative to the repo root) so the tests follow the demo
+# if it moves again. The default tracks the current location after the demo→apps
+# rename (apps/system/apps/component.art — the composition lives in component.art,
+# package.art only declares the nodes/messages).
+DEMO_PKG = os.environ.get("THEIA_DEMO_PKG", "system.apps")
+
+
+def _demo_art() -> Path:
+    env = os.environ.get("THEIA_DEMO_ART", "")
+    if env:
+        p = Path(env)
+        return p if p.is_absolute() else (REPO_ROOT / p)
+    return REPO_ROOT / "apps" / "system" / "apps" / "component.art"
+
+
+DEMO_ART = _demo_art()
 
 
 def test_extract_composition_groups_prototypes_by_process():
@@ -38,7 +57,7 @@ def test_extract_composition_groups_prototypes_by_process():
     names lost the `_p1` suffix when cluster connects were simplified
     to bare `<proto>.<port>` (#261)."""
     info = _extract_composition_info(DEMO_ART, "Demo3WayP1")
-    assert info.package == "system.demo"
+    assert info.package == DEMO_PKG
     assert info.name == "Demo3WayP1"
     # One process — P1 — since each composition IS a process now.
     assert [s.art_process for s in info.processes] == ["P1"]
@@ -97,7 +116,7 @@ def test_generate_rig_py_emits_runnable_python():
 
         assert rig.vehicle.name == "demo"
         assert rig.vehicle.make == "theia"
-        assert rig.vehicle.model == "system.demo.Demo3WayP1"
+        assert rig.vehicle.model == f"{DEMO_PKG}.Demo3WayP1"
 
         machines = {m.name for m in rig.machines}
         assert machines == {"demo_host"}

@@ -438,11 +438,19 @@ def test_demo_software_routes_components_to_three_machines():
 
     # platform_app → central: the central FCs (minus compute-only shwa) + the
     # supervisor binary. (gateway was dropped — moved to gataway_ws.)
+    #
+    # The FC roster GROWS as services land (crypto/osi/idsm/phm/fw/rds/nm/tsync/…),
+    # so assert the INTENT — the core central FCs + supervisor are present, and the
+    # compute-only shwa + the demo apps are NOT on platform_app — rather than an
+    # exact set (which broke on every new FC). The compute-only partition
+    # (_COMPUTE_FCS / _COMPUTE_APPS in zonal_rig) is what this test guards.
     platform = by_app["platform_app"]
     assert platform.host_machine == "central"
-    assert {c.name for c in platform.components} == {
-        "com", "log", "per", "sm", "ucm", "supervisor",
-    }
+    _platform_fcs = {c.name for c in platform.components}
+    assert {"com", "log", "per", "sm", "ucm", "supervisor"}.issubset(_platform_fcs)
+    # shwa is compute-only; the demo apps (p1/p2/p3/p4) are not platform FCs.
+    assert "shwa" not in _platform_fcs
+    assert not (_platform_fcs & {"p1", "p2", "p3", "p4"})
 
     # central_app → central: the demo apps that stay central.
     central = by_app["central_app"]

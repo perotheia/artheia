@@ -60,7 +60,7 @@ def _base_dir_for(defining_file: Path, workspace: "Path | None" = None) -> str:
     (after symlink resolution). The bazel-target prefix is //<base_dir>/…:
 
       services/system/cluster.art            → "services"
-      apps/system/demo/component.art          → "apps"
+      apps/system/apps/component.art          → "apps"
       platform/supervisor/system/package.art  → "platform"
 
     When the resolved top is the aggregator's own `system/` dir (a real dir whose

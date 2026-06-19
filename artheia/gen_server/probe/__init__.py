@@ -6,7 +6,7 @@ gen_server operation (cast / call active; on_cast / on_call / expect_cast
 passive) on the real wire. Several probes surround one FC to exercise it.
 
     from artheia.gen_server.probe import ArtheiaContext
-    ctx = ArtheiaContext("apps/system/demo/component.art", proto_root="platform/proto")
+    ctx = ArtheiaContext("apps/system/apps/component.art", proto_root="platform/proto")
     driver = ctx.probe("DriverNode").start()
     driver.cast("CounterNode", "Inc", n=5)
     assert driver.call("CounterNode", "Get")["value"] == 5
