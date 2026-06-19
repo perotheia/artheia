@@ -327,6 +327,17 @@ class Machine(Identifiable):
     # addresses (type, instance=N) cluster-wide + TipcTopology discovers which are
     # up. 0 keeps single-machine + legacy rigs working unchanged.
     machine_index: int = 0
+    # The rig's TIPC NETWORK ID (clusterid) — multi-rig test isolation. TIPC
+    # nodes only peer when their clusterid matches, so giving each rig on a shared
+    # switch a DISTINCT value puts each rig in its own isolated TIPC network: rig A
+    # (4712) and rig B (4713) can't see each other's services at the TIPC layer, so
+    # their (type,instance) addresses never collide during parallel testing.
+    # run-supervisor.sh sets it (`tipc node set clusterid N`) before any TIPC
+    # traffic. 4711 = the TIPC default (shared) → existing single-rig setups are
+    # unchanged. Cross-rig OBSERVATION still works over com gRPC (IP, clusterid-
+    # agnostic): `rtdb --target <rig-ip>:7700`. Host-global (one TIPC net per
+    # kernel) — isolation is per-RIG (host), not per-cluster on one box.
+    tipc_cluster_id: int = 4711
     hardware: HardwareResource = field(default_factory=HardwareResource)
     network_interfaces: list[NetworkInterface] = field(default_factory=list)
     # Per-machine logger SINK policy (THEIA_LOGGER: stdio|null|file:<dir>|syslog).
