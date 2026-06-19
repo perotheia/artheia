@@ -21,8 +21,8 @@ typedef enum {
     GW_BUS_CAN_HCAN = 3,
     GW_BUS_CAN_KCAN = 6,
     GW_BUS_CAN_FUTURECAN = 9,
-    GW_BUS_MLBEVO_GEN2_A = 128,
-    GW_BUS_MLBEVO_GEN2_B = 129,
+    GW_BUS_VEHICLE_GEN2_A = 128,
+    GW_BUS_VEHICLE_GEN2_B = 129,
 } GwBusId;
 """
 
@@ -36,8 +36,8 @@ def test_parse_header_recognizes_can_and_flexray(tmp_path: Path):
     assert buses["diagcan"] == "can"
     assert buses["futurecan"] == "can"
     # FlexRay buses keep the channel suffix.
-    assert buses["mlbevo_gen2_a"] == "flexray"
-    assert buses["mlbevo_gen2_b"] == "flexray"
+    assert buses["vehicle_gen2_a"] == "flexray"
+    assert buses["vehicle_gen2_b"] == "flexray"
     # GW_BUS_INVALID is dropped.
     assert "invalid" not in buses
 

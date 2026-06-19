@@ -7,14 +7,14 @@ DBC file + signal selection CSV.  Mirrors fibex_to_nanopb.py for CAN buses.
 
 Usage:
     python3 tools/can_to_nanopb.py \\
-        --dbc  configs/dbc/MLBevo_Gen2_MLBevo_KCAN_KMatrix_V8.27.01F.dbc \\
+        --dbc  configs/dbc/Vehicle_Gen2_Vehicle_KCAN_KMatrix_V8.27.01F.dbc \\
         --csv  test/can_subset_kcan.csv \\
         --namespace can_kcan \\
         --out  generated/can_kcan/
 
     # Generate for ALL messages (skip CSV):
     python3 tools/can_to_nanopb.py \\
-        --dbc  configs/dbc/MLBevo_Gen2_MLBevo_KCAN_KMatrix_V8.27.01F.dbc \\
+        --dbc  configs/dbc/Vehicle_Gen2_Vehicle_KCAN_KMatrix_V8.27.01F.dbc \\
         --namespace can_kcan --all-signals --out src/can/kcan/
 
 CSV format (header required):

@@ -355,7 +355,7 @@ def test_gateway_route_kind_mismatch_rejected():
             package p
             node atomic N { tipc type=0x1 instance=0 }
             gateway_route N {
-                can id=0x42 bus=mlbevo_gen2_a
+                can id=0x42 bus=vehicle_gen2_a
                 direction=in
             }
             """
@@ -380,7 +380,7 @@ def test_flexray_route():
         package p
         node atomic N { tipc type=0x1 instance=0 }
         gateway_route N {
-            flexray slot=15 bus=mlbevo_gen2_a channel=A cycle=0 pdu_offset=4
+            flexray slot=15 bus=vehicle_gen2_a channel=A cycle=0 pdu_offset=4
             direction=in
         }
         """

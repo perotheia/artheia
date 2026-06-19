@@ -15,8 +15,8 @@
 # Usage:
 #   bash examples/walkthrough.sh                 # uses .venv if present
 #   ARTHEIA_BIN=artheia bash examples/walkthrough.sh
-#   ARTHEIA_DBC=/path/MLBevo.dbc ARTHEIA_DBC_BUS=kcan bash examples/walkthrough.sh
-#   ARTHEIA_FIBEX=/path/cluster.xml ARTHEIA_FIBEX_BUS=mlbevo_gen2_a bash examples/walkthrough.sh
+#   ARTHEIA_DBC=/path/Vehicle.dbc ARTHEIA_DBC_BUS=kcan bash examples/walkthrough.sh
+#   ARTHEIA_FIBEX=/path/cluster.xml ARTHEIA_FIBEX_BUS=vehicle_gen2_a bash examples/walkthrough.sh
 
 set -euo pipefail
 

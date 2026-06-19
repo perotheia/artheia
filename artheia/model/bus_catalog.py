@@ -8,11 +8,11 @@ list stays in sync; otherwise we fall back to a hardcoded snapshot.
 The format we parse:
 
     GW_BUS_CAN_KCAN = 6,
-    GW_BUS_MLBEVO_GEN2_A = 128,
+    GW_BUS_VEHICLE_GEN2_A = 128,
 
 Naming convention → bus identifier in DSL:
   GW_BUS_CAN_KCAN          -> "kcan"          (drop GW_BUS_, drop CAN_)
-  GW_BUS_MLBEVO_GEN2_A     -> "mlbevo_gen2_a" (drop GW_BUS_)
+  GW_BUS_VEHICLE_GEN2_A     -> "vehicle_gen2_a" (drop GW_BUS_)
   GW_BUS_INVALID           -> skipped
 """
 from __future__ import annotations
@@ -34,8 +34,8 @@ _SNAPSHOT: dict[str, str] = {
     "kcan":          "can",
     "komfortcan":    "can",
     "subcan":        "can",
-    "mlbevo_gen2_a": "flexray",
-    "mlbevo_gen2_b": "flexray",
+    "vehicle_gen2_a": "flexray",
+    "vehicle_gen2_b": "flexray",
 }
 
 _ENUM_LINE = re.compile(r"GW_BUS_([A-Z0-9_]+)\s*=\s*(\d+)")

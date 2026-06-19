@@ -11,9 +11,9 @@ Parses ALL signal sources used on the platform and exposes a single
 PlatformDb that covers every bus:
 
     db = PlatformDb()
-    db.load_fibex("configs/MLBevo_Gen2_...xml")
-    db.load_dbc("configs/dbc/MLBevo_..._KCAN_...dbc", bus="kcan")
-    db.load_dbc("configs/dbc/MLBevo_..._HCAN_...dbc", bus="hcan")
+    db.load_fibex("configs/Vehicle_Gen2_...xml")
+    db.load_dbc("configs/dbc/Vehicle_..._KCAN_...dbc", bus="kcan")
+    db.load_dbc("configs/dbc/Vehicle_..._HCAN_...dbc", bus="hcan")
 
     # FlexRay lookup
     frame = db.flexray.lookup(channel_idx=0, slot_id=4, cycle=0)
@@ -542,9 +542,9 @@ class PlatformDb:
 
     Example:
         db = PlatformDb()
-        db.load_fibex("configs/MLBevo_...xml")
-        db.load_dbc("configs/dbc/MLBevo_..._KCAN_...dbc", bus="kcan")
-        db.load_dbc("configs/dbc/MLBevo_..._HCAN_...dbc", bus="hcan")
+        db.load_fibex("configs/Vehicle_...xml")
+        db.load_dbc("configs/dbc/Vehicle_..._KCAN_...dbc", bus="kcan")
+        db.load_dbc("configs/dbc/Vehicle_..._HCAN_...dbc", bus="hcan")
 
         frame = db.flexray.lookup(0, 4, 0)          # FlexRay slot 4
         msg   = db.can("kcan").lookup_by_id(0x12E)  # KCAN CAN-ID 302

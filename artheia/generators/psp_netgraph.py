@@ -42,7 +42,7 @@ Generator was previously named `netgraph_partition.py` /
 Output schema:
 
     {
-      "bus": "mlbevo_gen2",
+      "bus": "vehicle_gen2",
       "bus_kind": "flexray",
       "routes": {
         "EML_01": {

@@ -1308,7 +1308,7 @@ def import_dbc_cmd(
     "value tables) and catalog.json (slot, cycle, channel, per-signal layout).",
 )
 @click.option("--fibex", "fibex_path", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--bus", "bus_name", required=True, help="Bus name, e.g. mlbevo_gen2_a.")
+@click.option("--bus", "bus_name", required=True, help="Bus name, e.g. vehicle_gen2_a.")
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
               help="Output directory: vendor/autosar/<bus>/")
 @click.option("--csv", "signal_csv", type=click.Path(exists=True, dir_okay=False), default=None,
@@ -1339,7 +1339,7 @@ def import_fibex_cmd(
     "symbols. Output is byte-identical to the legacy gen_codec_dispatch.py.",
 )
 @click.option("--psp-root", required=True, type=click.Path(exists=True, file_okay=False),
-              help="Platform support package root (e.g. ../MLBevo_Gen2_cmp_psp).")
+              help="Platform support package root (e.g. ../Vehicle_Gen2_cmp_psp).")
 @click.option("--csv", "csv_path", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Signal selection CSV (pdu_name/message_name column). "
               "Omit to generate full dispatch (all messages).")
@@ -1412,9 +1412,9 @@ def gen_psp_netgraph(catalog_path: str, out_path: str) -> None:
               help="Output system.art (typically autosar/<psp>/system/system.art).")
 @click.option("--package", "package_name", required=True,
               help="Package name for the emitted .art "
-                   "(e.g. system.autosar.mlbevo_gen2). The output path's directory "
+                   "(e.g. system.autosar.vehicle_gen2). The output path's directory "
                    "should match the package, so the file lands at "
-                   "autosar/<psp>/system/mlbevo_gen2/system.art.")
+                   "autosar/<psp>/system/vehicle_gen2/system.art.")
 def gen_autosar_system(
     catalog_paths: tuple[str, ...], out_path: str, package_name: str,
 ) -> None:
@@ -1634,8 +1634,8 @@ def signal_filter(
               help="FIBEX XML (FlexRay). Omit for CAN-only.")
 @click.option("--dbc", "dbc_specs_raw", multiple=True, metavar="PATH:BUSNAME",
               help="DBC file with bus name, e.g. KCAN.dbc:kcan. Repeat for multiple.")
-@click.option("--namespace-fr", default="mlbevo_gen2",
-              help="FlexRay proto package namespace (default: mlbevo_gen2).")
+@click.option("--namespace-fr", default="vehicle_gen2",
+              help="FlexRay proto package namespace (default: vehicle_gen2).")
 @click.option("--out-src", required=True, type=click.Path(file_okay=False))
 @click.option("--out-proto", required=True, type=click.Path(file_okay=False))
 @click.option("--all-signals", is_flag=True, help="Generate for ALL PDUs/messages (skip CSV).")
@@ -1679,7 +1679,7 @@ def gen_platform_protos(
 @click.option("--fibex", required=True, type=click.Path(exists=True, dir_okay=False))
 @click.option("--csv", "csv_path", type=click.Path(exists=True, dir_okay=False), default=None,
               help="Signal selection CSV. Omit with --all-signals.")
-@click.option("--namespace", required=True, help="Namespace / library name (e.g. mlbevo_gen2).")
+@click.option("--namespace", required=True, help="Namespace / library name (e.g. vehicle_gen2).")
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
 @click.option("--proto-out", "proto_out", type=click.Path(file_okay=False), default=None,
               help="Output dir for .proto files (default: same as --out).")

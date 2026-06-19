@@ -519,7 +519,7 @@ BoolLit:
 // ---- 6. Buses and gateway routes ------------------------------------------
 //
 // Bus declarations are optional for the well-known set the gateway already
-// knows about (kcan, komfortcan, mlbevo_gen2_a, ...). Declarations are
+// knows about (kcan, komfortcan, vehicle_gen2_a, ...). Declarations are
 // required for any bus the user invents on top.
 //
 // gateway_route blocks live at the top level and reference a NodeDecl by

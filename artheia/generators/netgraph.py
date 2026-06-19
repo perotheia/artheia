@@ -32,7 +32,7 @@ This generator's output:
       address are filled in from the catalog by message name.
   2. `gateway_route N { can id=0x42 bus=kcan ... direction=in }` — explicit
       CAN; nothing to look up.
-  3. `gateway_route N { flexray slot=15 bus=mlbevo_gen2_a ... direction=in }`
+  3. `gateway_route N { flexray slot=15 bus=vehicle_gen2_a ... direction=in }`
       — explicit FlexRay; same.
 """
 from __future__ import annotations

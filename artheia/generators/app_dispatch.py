@@ -213,7 +213,7 @@ def build_registry(manifests: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[
           a single row would drop packets on the omitted tuples.
       (2) A FlexRay PDU and a CAN message can share a name (e.g.
           ACC_07 lives on both KomfortCAN and the FlexRay cluster in
-          MLBevo_Gen2). The CSV's column header (pdu_name vs.
+          Vehicle_Gen2). The CSV's column header (pdu_name vs.
           message_name) tells us which bus the operator meant.
     """
     registry: Dict[str, Dict[str, Dict[str, Any]]] = {'flexray': {}, 'can': {}}
@@ -277,7 +277,7 @@ def load_csv(csv_path: str) -> List[Tuple[str, str, str]]:
     kind_hint is 'flexray' if the CSV column was pdu_name, 'can' if
     message_name, '' if unknown (legacy format). The hint resolves
     cross-bus name collisions (e.g. ACC_07 exists on both FlexRay and
-    CAN in MLBevo_Gen2)."""
+    CAN in Vehicle_Gen2)."""
     rows: List[Tuple[str, str, str]] = []
     with open(csv_path, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)

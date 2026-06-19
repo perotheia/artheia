@@ -53,7 +53,7 @@ class _Workspace:
 # grammar literals that only appear *inside* a `bus`/`gateway_route` block
 # (`can`, `flexray`, `id`, `slot`, `channel`, `cycle`, `direction`, ...)
 # are deliberately EXCLUDED — they are not standalone keywords. Listing
-# `flexray`/`can` globally made an `import …mlbevo_gen2.flexray.*` segment
+# `flexray`/`can` globally made an `import …vehicle_gen2.flexray.*` segment
 # read as a keyword and polluted completion everywhere; they belong only
 # to the bus/route grammar, which is rare and self-evident in context.
 _KEYWORDS = [

@@ -13,7 +13,7 @@ Usage:
         --dbc config/dbc/KCAN.dbc:kcan \\
         --dbc config/dbc/HCAN.dbc:hcan \\
         --dbc config/dbc/KomfortCAN.dbc:komfortcan \\
-        --namespace-fr mlbevo_gen2 \\
+        --namespace-fr vehicle_gen2 \\
         --out-src  src/ \\
         --out-proto proto/ \\
         [--all-signals | --csv signals.csv] \\

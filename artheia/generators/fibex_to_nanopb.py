@@ -8,13 +8,13 @@ Usage:
     python3 tools/fibex_to_nanopb.py \\
         --fibex path/to/cluster.xml \\
         --csv   path/to/signals.csv \\
-        --namespace mlbevo_v8_17 \\
-        --out   generated/mlbevo_v8_17/
+        --namespace vehicle_v8_17 \\
+        --out   generated/vehicle_v8_17/
 
     # Generate for ALL PDUs (skip CSV):
     python3 tools/fibex_to_nanopb.py \\
         --fibex path/to/cluster.xml \\
-        --namespace mlbevo_gen2 --all-signals --out src/flexray/
+        --namespace vehicle_gen2 --all-signals --out src/flexray/
 
 Outputs (in --out directory):
     <pdu>.proto           — proto3 message per used PDU

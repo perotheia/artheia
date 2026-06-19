@@ -9,7 +9,7 @@ search-and-select REPL.  On exit, prints the accumulated selection as CSV.
 Usage:
   python3 tools/psp_signal_filter.py --config $PSP_ROOT/config
   python3 tools/psp_signal_filter.py \\
-      --fibex configs/MLBevo.xml \\
+      --fibex configs/Vehicle.xml \\
       --dbc configs/dbc/KCAN.dbc:kcan \\
       --dbc configs/dbc/HCAN.dbc:hcan
 
@@ -39,8 +39,8 @@ from ..importers._asam_cmp_parser import PlatformDb, FibexDb, DbcDb
 
 # ---------------------------------------------------------------------------
 # Bus name extraction from DBC filename
-# Pattern: extract keyword between MLBevo_ and _KMatrix
-# e.g. MLBevo_Gen2_MLBevo_KCAN_KMatrix_V8.27.01F.dbc → kcan
+# Pattern: extract keyword between Vehicle_ and _KMatrix
+# e.g. Vehicle_Gen2_Vehicle_KCAN_KMatrix_V8.27.01F.dbc → kcan
 # ---------------------------------------------------------------------------
 
 _BUS_PATTERN = re.compile(r'_([A-Za-z0-9]+CAN)_KMatrix', re.IGNORECASE)

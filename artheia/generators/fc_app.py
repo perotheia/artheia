@@ -79,7 +79,7 @@ class _DataEl:
     name: str
     msg: str               # local message name (the C++ alias / handler arg)
     # Fully-qualified proto type in the message's DEFINING package, flat
-    # libc-safe form (e.g. "system_autosar_mlbevo_gen2_flexray_EML_01").
+    # libc-safe form (e.g. "system_autosar_vehicle_gen2_flexray_EML_01").
     # The RemoteCodec service_id hashes THIS, so sender and receiver must
     # agree — keying off the resolved message's home package guarantees it.
     proto_type: str = ""
@@ -324,7 +324,7 @@ def _defining_package(msg_ref) -> str:
 
     For a same-file message this equals the FC's own package; for a
     message imported from another package (e.g. a PSP bus PDU pulled in
-    via `import system.autosar.mlbevo_gen2.flexray.*`) it's the bus
+    via `import system.autosar.vehicle_gen2.flexray.*`) it's the bus
     package. The scope provider resolves the cross-ref to the real AST
     node, so its containing model carries the true origin.
     """

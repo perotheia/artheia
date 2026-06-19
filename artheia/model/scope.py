@@ -14,7 +14,7 @@ Resolution rules (matching the user-facing contract):
     imported packages). The provider returns the single match.
 
   - A reference may be written **fully-qualified**
-    (`requires system.autosar.mlbevo_gen2.flexray.EML_01_Iface`) to pick a
+    (`requires system.autosar.vehicle_gen2.flexray.EML_01_Iface`) to pick a
     specific package. This is REQUIRED when a bare name is ambiguous —
     e.g. `Licht_hinten_01_Iface` exists in both the `.kcan` and `.flexray`
     sub-packages. A bare reference to an ambiguous name raises a

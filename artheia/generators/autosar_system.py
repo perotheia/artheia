@@ -28,9 +28,9 @@ TIPC endpoint) — a high-bit prefix makes that obvious.
 
 Consumers (apps) reference a bus iface through an import:
 
-    import system.autosar.mlbevo_gen2.flexray.*
+    import system.autosar.vehicle_gen2.flexray.*
     receiver eml requires EML_01_Iface                  // bare if unique
-    receiver lh  requires system.autosar.mlbevo_gen2.flexray.Licht_hinten_01_Iface
+    receiver lh  requires system.autosar.vehicle_gen2.flexray.Licht_hinten_01_Iface
                                                         // FQN to disambiguate
 """
 from __future__ import annotations
