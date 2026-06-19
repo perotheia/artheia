@@ -593,41 +593,19 @@ def import_config(module_name: str, symbol: str) -> object:
 
 
 # ---------------------------------------------------------------------------
-# Compatibility shims for the legacy list-based API.
+# Identity-keyed list merge — shared element helpers.
 #
-# The previous module exposed Add/Remove/Override/Op + apply_ops as the
-# merge primitives, with manifest/layer.py carrying parallel
-# `add_<X>` / `remove_<X>` / `override_<X>` lists per element kind. That
-# surface stays functional during the migration so existing callers
-# (services/manifest/fc.py, demo/manifest/rig.py, artheia/manifest/
-# layer.py) keep working while individual call sites move to the
-# structured Insert/Delete/mappend DSL.
-#
-# Removal plan: once no `Override`, `apply_ops`, or `_identity_field`-
-# only callers remain, delete this section. `Insert` is the new name for
-# `Add` (and `Append`); `Delete` for `Remove` — they are exact aliases.
+# ``mappend`` recurses into ``list[Identifiable]`` fields (see
+# :meth:`Layer._combine_field`) by union-by-identity; the list-shaped
+# layer driver in :mod:`.layer` (``apply_ops``) reuses the same element
+# helpers. They live here because the set-based combine is their primary
+# caller.
 # ---------------------------------------------------------------------------
 
-# Back-compat aliases. New code uses Insert/Delete.
+# Set-edit aliases — widely used spelling of Insert/Delete in manifest
+# authoring (`Append`/`Remove`). New code may use either spelling.
 Append = Insert
-Add = Insert
 Remove = Delete
-
-
-@dataclasses.dataclass(frozen=True)
-class Override:
-    """Patch field(s) of an existing element keyed by ``identity``.
-
-    Legacy primitive — prefer a field-level override in the structured
-    DSL (a sibling ``Insert(SwComponent(name=..., field=newvalue))``
-    inside the parent set, which merges by identity).
-    """
-
-    identity: Any
-    patch: dict[str, Any]
-
-
-Op = Union[Insert, Delete, Override]
 
 
 def _identity_of(elem: Any) -> Any:
@@ -656,9 +634,9 @@ def _field_default(f: dataclasses.Field) -> Any:
 def _merge_element(base: T, new: T) -> T:
     """Field-wise merge of two same-identity dataclass elements.
 
-    Legacy semantics: fields explicitly set on ``new`` (not equal to
-    their default) win; the rest stay from ``base``. Lists union by
-    identity, recursing into elements that share an identity.
+    Fields explicitly set on ``new`` (not equal to their default) win;
+    the rest stay from ``base``. Lists union by identity, recursing into
+    elements that share an identity.
     """
     if not is_dataclass(base) or not is_dataclass(new):
         return new
@@ -693,42 +671,4 @@ def _merge_lists(base: list, new: list) -> list:
         else:
             index[ident] = len(out)
             out.append(elem)
-    return out
-
-
-def apply_ops(target_list: list, ops: Iterable[Op]) -> list:
-    """Apply a sequence of Insert/Delete/Override ops to a list.
-
-    Legacy entry point used by ``manifest/layer.py``. The Delete path
-    here is identity-keyed via ``_identity_of`` (matches by the `name`
-    field for Identifiable elements, else by `id()`), whereas the new
-    ``Delete.apply`` works on sets keyed by ``_set_identify``. Both
-    routes coexist during the migration.
-    """
-    out: list = list(target_list)
-    index = {_identity_of(e): i for i, e in enumerate(out)}
-
-    for op in ops:
-        if isinstance(op, Insert):
-            ident = _identity_of(op.value)
-            if ident in index:
-                out[index[ident]] = _merge_element(out[index[ident]], op.value)
-            else:
-                index[ident] = len(out)
-                out.append(op.value)
-        elif isinstance(op, Delete):
-            # Legacy Delete takes either an identity or an Identifiable.
-            ident = op.value._identity if isinstance(op.value, Identifiable) else op.value
-            i = index.pop(ident, None)
-            if i is not None:
-                out.pop(i)
-                index = {_identity_of(e): j for j, e in enumerate(out)}
-        elif isinstance(op, Override):
-            i = index.get(op.identity)
-            if i is None:
-                continue
-            out[i] = _merge_fields(out[i], op.patch)
-        else:  # pragma: no cover
-            raise TypeError(f"unknown op {type(op).__name__}")
-
     return out

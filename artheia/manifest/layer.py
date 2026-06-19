@@ -9,12 +9,18 @@ chains them in one call.
 Field-level overrides honour identity (the ``name`` of each
 :class:`SwComponent` / :class:`ServiceInstance`), so an upper layer can
 patch one field of one element without restating the rest.
+
+This module works on the *list*-shaped :class:`Rig` (its element
+collections are plain lists), so it carries its own list-merge driver,
+:func:`apply_ops`, on top of the identity-keyed element helpers in
+:mod:`.applicative`. The set-shaped structured DSL (``mappend`` /
+``Insert`` / ``Delete``) is the other consumer of those helpers.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Iterable
+from typing import Any, Iterable, Union
 
 from artheia.manifest.application import ApplicationManifest, SwComponent
 from artheia.manifest.execution import ExecutionManifest
@@ -26,22 +32,81 @@ from artheia.manifest.machine import (
 from artheia.manifest.rig import Rig, VehicleIdentity
 from artheia.manifest.service import ServiceInstance, ServiceManifest
 from artheia.manifest.supervisor import SupervisorNode
-from artheia.manifest.applicative import Add, Op, Override, Remove, apply_ops
+from artheia.manifest.applicative import (
+    Identifiable,
+    Insert,
+    Delete,
+    _identity_of,
+    _merge_element,
+    _merge_fields,
+)
+
+
+@dataclass(frozen=True)
+class Override:
+    """Patch field(s) of an existing list element keyed by ``identity``.
+
+    Layer-only op: the set-shaped DSL expresses the same intent as a
+    same-identity ``Insert`` that merges by field. Here, where elements
+    live in plain lists, a dedicated patch op is simpler.
+    """
+
+    identity: Any
+    patch: dict[str, Any]
+
+
+Op = Union[Insert, Delete, Override]
+
+
+def apply_ops(target_list: list, ops: Iterable[Op]) -> list:
+    """Apply a sequence of Insert/Delete/Override ops to a list.
+
+    Insert unions by identity (merging same-identity elements via
+    :func:`_merge_element`); Delete drops by identity; Override patches
+    named fields of a same-identity element.
+    """
+    out: list = list(target_list)
+    index = {_identity_of(e): i for i, e in enumerate(out)}
+
+    for op in ops:
+        if isinstance(op, Insert):
+            ident = _identity_of(op.value)
+            if ident in index:
+                out[index[ident]] = _merge_element(out[index[ident]], op.value)
+            else:
+                index[ident] = len(out)
+                out.append(op.value)
+        elif isinstance(op, Delete):
+            # Delete takes either an identity or an Identifiable.
+            ident = op.value._identity if isinstance(op.value, Identifiable) else op.value
+            i = index.pop(ident, None)
+            if i is not None:
+                out.pop(i)
+                index = {_identity_of(e): j for j, e in enumerate(out)}
+        elif isinstance(op, Override):
+            i = index.get(op.identity)
+            if i is None:
+                continue
+            out[i] = _merge_fields(out[i], op.patch)
+        else:  # pragma: no cover
+            raise TypeError(f"unknown op {type(op).__name__}")
+
+    return out
 
 
 @dataclass
 class Layer:
     """A delta over an existing :class:`Rig`.
 
-    Each list is interpreted as a sequence of :class:`Add` /
-    :class:`Remove` / :class:`Override` ops. The convenience aliases
+    Each list is interpreted as a sequence of :class:`Insert` /
+    :class:`Delete` / :class:`Override` ops. The convenience aliases
     (``add_components``, ``remove_components`` …) skip the boilerplate
     of wrapping every element in an op:
 
     - ``add_components: [SwComponent(...)]`` is shorthand for
-      ``component_ops: [Add(SwComponent(...))]``.
+      ``component_ops: [Insert(SwComponent(...))]``.
     - ``remove_components: ["fw"]`` is shorthand for
-      ``component_ops: [Remove("fw")]``.
+      ``component_ops: [Delete("fw")]``.
     - ``override_components: [Override("log", {"binding": INET})]``
       passes through unchanged.
 
@@ -113,62 +178,62 @@ class Layer:
     def component_ops(self) -> list[Op]:
         ops: list[Op] = []
         for c in self.add_components:
-            ops.append(Add(c))
+            ops.append(Insert(c))
         for name in self.remove_components:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_components)
         return ops
 
     def service_ops(self) -> list[Op]:
         ops: list[Op] = []
         for s in self.add_services:
-            ops.append(Add(s))
+            ops.append(Insert(s))
         for name in self.remove_services:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_services)
         return ops
 
     def machine_ops(self) -> list[Op]:
         ops: list[Op] = []
         for m in self.add_machines:
-            ops.append(Add(m))
+            ops.append(Insert(m))
         for name in self.remove_machines:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         return ops
 
     def execution_ops(self) -> list[Op]:
         ops: list[Op] = []
         for e in self.add_executions:
-            ops.append(Add(e))
+            ops.append(Insert(e))
         for name in self.remove_executions:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_executions)
         return ops
 
     def process_mapping_ops(self) -> list[Op]:
         ops: list[Op] = []
         for m in self.add_process_mappings:
-            ops.append(Add(m))
+            ops.append(Insert(m))
         for name in self.remove_process_mappings:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_process_mappings)
         return ops
 
     def node_mapping_ops(self) -> list[Op]:
         ops: list[Op] = []
         for m in self.add_node_mappings:
-            ops.append(Add(m))
+            ops.append(Insert(m))
         for name in self.remove_node_mappings:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_node_mappings)
         return ops
 
     def supervisor_ops(self) -> list[Op]:
         ops: list[Op] = []
         for s in self.add_supervisors:
-            ops.append(Add(s))
+            ops.append(Insert(s))
         for name in self.remove_supervisors:
-            ops.append(Remove(name))
+            ops.append(Delete(name))
         ops.extend(self.override_supervisors)
         return ops
 

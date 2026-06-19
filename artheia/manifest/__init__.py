@@ -73,15 +73,14 @@ from artheia.manifest.supervisor import (  # noqa: F401
     SupervisorNode,
 )
 from artheia.manifest.applicative import (  # noqa: F401
-    Add,
+    Append,
     Identifiable,
-    Override,
+    Insert,
     Remove,
-    apply_ops,
 )
 
 __all__ = [
-    "Add",
+    "Append",
     "ApplicationManifest",
     "CLUSTERS",
     "CLUSTER_BY_SHORT",
@@ -94,12 +93,12 @@ __all__ = [
     "HardwareResource",
     "Identifiable",
     "InetEndpoint",
+    "Insert",
     "Layer",
     "MachineKind",
     "MachineManifest",
     "OpkgArtifact",
     "OsPackage",
-    "Override",
     "Remove",
     "RestartStrategy",
     "RestartType",
@@ -114,6 +113,5 @@ __all__ = [
     "TransportBinding",
     "VehicleIdentity",
     "apply_layer",
-    "apply_ops",
     "merge_layers",
 ]

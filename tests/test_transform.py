@@ -25,23 +25,22 @@ from typing import cast
 import pytest
 
 from artheia.manifest.applicative import (
-    Add,
     Append,
     Pure,
     Defer,
     Identifiable,
+    Insert,
     Layer,
-    Op,
-    Override,
+    Delete,
     Remove,
     SetTransformTypes,
     Empty,
-    apply_ops,
     alt_field,
     mappend_set,
     fold_transforms,
     ap_transforms,
 )
+from artheia.manifest.layer import Op, Override, apply_ops
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +84,7 @@ class Box(Layer):
 
 def test_add_appends_when_no_existing_identity():
     base = [Widget(name="a", width=1)]
-    out = apply_ops(base, [Add(Widget(name="b", width=2))])
+    out = apply_ops(base, [Insert(Widget(name="b", width=2))])
     assert [w.name for w in out] == ["a", "b"]
     assert out[1].width == 2
 
@@ -94,7 +93,7 @@ def test_add_merges_when_identity_collides():
     """Add of an existing-identity element field-merges into it
     (legacy `_merge_element` semantics)."""
     base = [Widget(name="a", width=1)]
-    out = apply_ops(base, [Add(Widget(name="a", width=99))])
+    out = apply_ops(base, [Insert(Widget(name="a", width=99))])
     assert len(out) == 1
     assert out[0].width == 99
 
@@ -132,16 +131,17 @@ def test_ops_compose_in_declared_order():
     """add/remove/override in one list — order matters."""
     base = [Widget(name="a", width=1), Widget(name="b", width=2)]
     out = apply_ops(base, [
-        Add(Widget(name="c", width=3)),
+        Insert(Widget(name="c", width=3)),
         Remove(Widget(name="a")),
         Override(identity="b", patch={"width": 99}),
     ])
     assert sorted((w.name, w.width) for w in out) == [("b", 99), ("c", 3)]
 
 
-def test_add_is_append_alias():
-    """Add is the legacy name for Append. They must be the same object."""
-    assert Add is Append
+def test_append_is_insert_alias():
+    """Append is the set-edit alias for Insert. Same object."""
+    assert Append is Insert
+    assert Remove is Delete
 
 
 # ---------------------------------------------------------------------------
