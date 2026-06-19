@@ -8,7 +8,7 @@ executor.py) a ``SUPERVISORS`` list — and emits a generic combiner rig:
 
   * the SERVICES module's ``ServicesSoftware`` is the BASE (it carries the full
     platform supervisor tree with an empty ``app_sup`` mount);
-  * every other module's ``*Software`` is ``.squash()``'d onto it;
+  * every other module's ``*Software`` is ``.mappend()``'d onto it;
   * the apps module's ``app_sup`` children fill the mount via an ``Override``;
   * ``<Rig> = <Combined>Software.to_rig()`` is the CLI entry the executor/manifest
     pipeline consumes.
@@ -92,7 +92,7 @@ _RIG_TEMPLATE = '''\
 Merges the per-cluster manifest modules below into one deployable rig:
 {module_list}
 The SERVICES software is the base (full supervisor tree, empty app_sup); the
-other clusters squash in; the apps fill app_sup. Regenerate with gen-rig-combine;
+other clusters combine in; the apps fill app_sup. Regenerate with gen-rig-combine;
 machine/endpoint specifics are deploy decisions you add to {rig}SpecLayer.
 """
 from __future__ import annotations
@@ -102,7 +102,7 @@ from typing import cast
 import dataclasses
 
 from artheia.manifest.rig import Rig, SoftwareSpecification, VehicleIdentity
-from artheia.manifest.transform import Append, SetTransformTypes
+from artheia.manifest.applicative import Append, SetTransformTypes
 from typing import cast
 
 {imports}
@@ -122,7 +122,7 @@ _APP_CHILDREN = {app_children!r}
     for n in _SERVICES_TREE
 ]
 
-# The deploy delta: squash the apps software in (by same-identity) + set the
+# The deploy delta: combine the apps software in (by same-identity) + set the
 # combined tree. Add your machine / endpoint / vehicle specifics here.
 {rig}SpecLayer = SoftwareSpecification(
     vehicle=VehicleIdentity(name="{vehicle}"),
@@ -133,7 +133,7 @@ _APP_CHILDREN = {app_children!r}
 
 {rig}Software: SoftwareSpecification = (
     _BASE
-{squashes}    .squash({rig}SpecLayer)
+{combines}    .mappend({rig}SpecLayer)
 )
 
 {rig}Rig: Rig = {rig}Software.to_rig()
@@ -175,13 +175,13 @@ def write_rig_combine(modules: "list[str]", out_path: str,
     imports = "\n".join(
         f"from {d} import {s}  # noqa: F401"
         for d, s in [(base_mod, base_sym), *other])
-    squashes = "".join(f"    .squash({s})\n" for _d, s in other)
+    combines = "".join(f"    .mappend({s})\n" for _d, s in other)
     module_list = "".join(f"#   {d}\n" for d in dotted)
 
     rendered = _RIG_TEMPLATE.format(
         module_list=module_list, imports=imports,
         base_software=base_sym, app_children=app_children,
-        services_module=base_mod, rig=rig, vehicle=veh, squashes=squashes)
+        services_module=base_mod, rig=rig, vehicle=veh, combines=combines)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)
     return out

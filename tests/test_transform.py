@@ -6,12 +6,12 @@ Two halves:
   layer-merge engine that `manifest/layer.py` still uses. Must keep
   working until all call sites migrate to the structured DSL.
 
-- **Structured DSL** (Layer.squash + Append/Remove on sets +
-  Undefined/Default value markers) — ported back from
+- **Structured DSL** (Layer.mappend + Insert/Delete on sets +
+  Empty/Pure value markers) — ported back from
   theia_runtime/. Exercises the bits we'll lean on as
   services/manifest and demo/manifest move over.
 
-Note: this file imports from `artheia.manifest.transform` directly,
+Note: this file imports from `artheia.manifest.applicative` directly,
 NOT from `artheia.manifest`. The package `__init__` triggers the
 FC loader which currently crashes on the post-symlink-consolidation
 layout (see TODO/system-art-aggregation.md). The transform module is
@@ -24,10 +24,10 @@ from typing import cast
 
 import pytest
 
-from artheia.manifest.transform import (
+from artheia.manifest.applicative import (
     Add,
     Append,
-    Default,
+    Pure,
     Defer,
     Identifiable,
     Layer,
@@ -35,12 +35,12 @@ from artheia.manifest.transform import (
     Override,
     Remove,
     SetTransformTypes,
-    Undefined,
+    Empty,
     apply_ops,
-    merge_field,
-    set_squash,
-    transform_base,
-    transform_set,
+    alt_field,
+    mappend_set,
+    fold_transforms,
+    ap_transforms,
 )
 
 
@@ -64,7 +64,7 @@ class Widget(Identifiable):
 class Gadget(Identifiable):
     """An Identifiable that's also a Layer in the structured-DSL sense.
 
-    Layer.squash recurses through `__dataclass_fields__`; we add a
+    Layer.mappend recurses through `__dataclass_fields__`; we add a
     nested set to exercise that path.
     """
     name: str = ""
@@ -155,14 +155,14 @@ def test_append_to_empty_set_adds():
 
 
 def test_append_merges_existing_identity():
-    """Same-name Gadgets squash via Layer.squash — later value wins
-    on changed fields, base wins on Undefined fields."""
+    """Same-name Gadgets combine via Layer.mappend — later value wins
+    on changed fields, base wins on Empty fields."""
     s: set = set()
     s = Append(Gadget(name="a", weight=1)).apply(s)
     s = Append(Gadget(name="a", weight=99)).apply(s)
     assert len(s) == 1
     g = next(iter(s))
-    # Layer.squash: explicit non-default fields on the new value win.
+    # Layer.mappend: explicit non-default fields on the new value win.
     assert g.weight == 99
 
 
@@ -184,97 +184,97 @@ def test_set_identify_defaults_to_hash_of_identity():
 
 
 # ---------------------------------------------------------------------------
-# Layer.squash — recursive composition
+# Layer.mappend — recursive composition
 # ---------------------------------------------------------------------------
 
 
-def test_squash_replaces_scalar_when_other_sets_it():
+def test_mappend_replaces_scalar_when_other_sets_it():
     base = Box(name="base", gadgets=set())
     other = Box(name="other", gadgets=set())
-    out = base.squash(other)
+    out = base.mappend(other)
     assert out.name == "other"
 
 
-def test_squash_keeps_scalar_when_other_undefined():
-    """An Undefined() on `other` means "inherit base's value"."""
+def test_mappend_keeps_scalar_when_other_undefined():
+    """An Empty() on `other` means "inherit base's value"."""
     base = Box(name="base", gadgets=set())
-    other = Box(name=Undefined(), gadgets=set())  # type: ignore[arg-type]
-    out = base.squash(other)
+    other = Box(name=Empty(), gadgets=set())  # type: ignore[arg-type]
+    out = base.mappend(other)
     assert out.name == "base"
 
 
-def test_squash_applies_set_transforms_from_layer():
+def test_mappend_applies_set_transforms_from_layer():
     """The classic case: base has a concrete set; layer has
-    {Append(new), Remove(old)} — squash applies them."""
+    {Append(new), Remove(old)} — mappend applies them."""
     base = Box(name="b", gadgets={Gadget(name="x", weight=1), Gadget(name="y", weight=2)})
     layer = Box(
-        name=Undefined(),  # type: ignore[arg-type]
+        name=Empty(),  # type: ignore[arg-type]
         gadgets=cast(set, {
             Remove(Gadget(name="x")),
             Append(Gadget(name="z", weight=3)),
         }),
     )
-    out = base.squash(layer)
+    out = base.mappend(layer)
     assert {g.name for g in out.gadgets} == {"y", "z"}
 
 
-def test_squash_concrete_set_on_layer_replaces_base():
+def test_mappend_concrete_set_on_layer_replaces_base():
     """If `layer.gadgets` is a plain (non-transform) set, it REPLACES
-    base's set wholesale. That's `transform_set`'s "other is simple"
+    base's set wholesale. That's `ap_transforms`'s "other is simple"
     branch."""
     base = Box(name="b", gadgets={Gadget(name="x", weight=1)})
     layer = Box(name="b", gadgets={Gadget(name="z", weight=3)})
-    out = base.squash(layer)
+    out = base.mappend(layer)
     assert {g.name for g in out.gadgets} == {"z"}
 
 
-def test_squash_chains_left_to_right():
-    """A.squash(B).squash(C): B applies onto A, then C applies onto
-    that. The legacy mosaic raj_syscomp.py pattern."""
+def test_mappend_chains_left_to_right():
+    """A.mappend(B).mappend(C): B applies onto A, then C applies onto
+    that."""
     base = Box(name="a", gadgets={Gadget(name="x")})
-    layer1 = Box(name=Undefined(), gadgets=cast(set, {Append(Gadget(name="y"))}))  # type: ignore[arg-type]
-    layer2 = Box(name=Undefined(), gadgets=cast(set, {Append(Gadget(name="z"))}))  # type: ignore[arg-type]
-    out = base.squash(layer1).squash(layer2)
+    layer1 = Box(name=Empty(), gadgets=cast(set, {Append(Gadget(name="y"))}))  # type: ignore[arg-type]
+    layer2 = Box(name=Empty(), gadgets=cast(set, {Append(Gadget(name="z"))}))  # type: ignore[arg-type]
+    out = base.mappend(layer1).mappend(layer2)
     assert {g.name for g in out.gadgets} == {"x", "y", "z"}
 
 
 # ---------------------------------------------------------------------------
-# Value markers — Undefined / Default
+# Value markers — Empty / Pure
 # ---------------------------------------------------------------------------
 
 
 def test_undefined_equal_regardless_of_type_param():
-    """Undefined instances are interchangeable — they're sentinel
+    """Empty instances are interchangeable — they're sentinel
     values, not data."""
-    assert Undefined() == Undefined()
-    assert hash(Undefined()) == hash(Undefined())
+    assert Empty() == Empty()
+    assert hash(Empty()) == hash(Empty())
 
 
 def test_default_carries_a_concrete_value():
-    d = Default(42)
+    d = Pure(42)
     assert d.default == 42
 
 
 def test_default_equality_compares_inner_value():
-    assert Default(42) == Default(42)
-    assert Default(42) != Default(43)
+    assert Pure(42) == Pure(42)
+    assert Pure(42) != Pure(43)
 
 
 def test_merge_field_layer_wins_when_set():
-    assert merge_field("base", "layer") == "layer"
+    assert alt_field("base", "layer") == "layer"
 
 
 def test_merge_field_base_wins_when_layer_undefined():
-    assert merge_field("base", Undefined()) == "base"
+    assert alt_field("base", Empty()) == "base"
 
 
 def test_merge_field_both_undefined_returns_undefined():
-    out = merge_field(Undefined(), Undefined())
-    assert isinstance(out, Undefined)
+    out = alt_field(Empty(), Empty())
+    assert isinstance(out, Empty)
 
 
 # ---------------------------------------------------------------------------
-# transform_set / set_squash — the set-level engine that Layer.squash
+# ap_transforms / mappend_set — the set-level engine that Layer.mappend
 # delegates to.
 # ---------------------------------------------------------------------------
 
@@ -282,7 +282,7 @@ def test_merge_field_both_undefined_returns_undefined():
 def test_transform_base_passes_concrete_set_through():
     """A set with no transforms is returned as-is."""
     s = {Gadget(name="a")}
-    out = transform_base(s)
+    out = fold_transforms(s)
     assert out == s
 
 
@@ -290,30 +290,30 @@ def test_transform_base_materializes_transforms():
     """A set of {Append(x), Remove(y)} is "rendered" against an
     initially-empty set."""
     s = cast(set, {Append(Gadget(name="a")), Append(Gadget(name="b"))})
-    out = transform_base(s)
+    out = fold_transforms(s)
     assert {g.name for g in out} == {"a", "b"}
 
 
 def test_transform_base_empty_when_undefined():
-    """Treats Undefined() as empty — useful when a base layer hasn't
+    """Treats Empty() as empty — useful when a base layer hasn't
     been set yet."""
-    assert transform_base(Undefined()) == set()
+    assert fold_transforms(Empty()) == set()
 
 
 def test_transform_set_applies_layer_over_base():
     base = {Gadget(name="a"), Gadget(name="b")}
     layer = cast(set, {Append(Gadget(name="c")), Remove(Gadget(name="a"))})
-    out = transform_set(base, layer)
+    out = ap_transforms(base, layer)
     assert {g.name for g in out} == {"b", "c"}
 
 
-def test_set_squash_unions_when_both_simple():
-    """When both base and other are plain sets (no transforms), squash
+def test_set_mappend_unions_when_both_simple():
+    """When both base and other are plain sets (no transforms), mappend
     unions them — useful for additive composition without explicit
     Append/Remove."""
     base = {Gadget(name="a")}
     other = {Gadget(name="b")}
-    out = set_squash(base, other)
+    out = mappend_set(base, other)
     assert {g.name for g in out} == {"a", "b"}
 
 
@@ -329,11 +329,11 @@ def test_defer_invokes_callable_on_context():
 
 
 def test_defer_short_circuits_squash():
-    """If `other` is a Defer, squash returns it unchanged — the
+    """If `other` is a Defer, mappend returns it unchanged — the
     deferral propagates to whatever upper layer eventually resolves."""
     base = Box(name="b")
     deferred = Defer(lambda ctx: Box(name=ctx))
-    out = base.squash(deferred)
+    out = base.mappend(deferred)
     assert out is deferred
 
 
@@ -344,24 +344,24 @@ def test_defer_short_circuits_squash():
 
 def test_software_specification_is_importable():
     """Sanity: ``SoftwareSpecification`` is a ``Layer`` subclass with
-    a working ``.squash()`` method."""
+    a working ``.mappend()`` method."""
     from artheia.manifest.rig import SoftwareSpecification, VehicleIdentity
     spec = SoftwareSpecification(vehicle=VehicleIdentity(name="test"))
     assert isinstance(spec, Layer)
-    assert hasattr(spec, "squash")
+    assert hasattr(spec, "mappend")
     other = SoftwareSpecification()
-    out = spec.squash(other)
+    out = spec.mappend(other)
     assert out.vehicle.name == "test"
 
 
-def test_software_specification_squashes_machines_via_transforms():
+def test_software_specification_combines_machines_via_transforms():
     """End-to-end: structured-DSL composition with real manifest types.
 
-    Mirrors the legacy mosaic raj_syscomp.py pattern:
+    Mirrors the layered-spec composition pattern:
 
       base = SoftwareSpecification(machines={Append(MachineManifest(...))})
       layer = SoftwareSpecification(machines={Append(...), Remove(...)})
-      result = base.squash(layer)
+      result = base.mappend(layer)
 
     Validates that ``identifiable_dataclass`` (phase 2 of the DSL
     recovery) makes ``MachineManifest`` instances hashable so they can
@@ -400,7 +400,7 @@ def test_software_specification_squashes_machines_via_transforms():
         }),
     )
 
-    out = base.squash(layer)
+    out = base.mappend(layer)
 
     # Vehicle identity from layer (overrides base).
     assert out.vehicle.name == "demo"

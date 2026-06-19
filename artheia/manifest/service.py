@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from ipaddress import IPv4Address
 
-from artheia.manifest.transform import Identifiable, identifiable_dataclass
+from artheia.manifest.applicative import Identifiable, identifiable_dataclass
 
 
 # ---------------------------------------------------------------------------

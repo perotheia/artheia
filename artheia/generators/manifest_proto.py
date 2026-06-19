@@ -370,7 +370,7 @@ from .executor import SUPERVISORS  # noqa: E402,F401
 # named after the cluster (`<Cluster>Layer` / `<Cluster>Software`). The
 # layer's `name=` is the lowercased cluster name. Upper layers (rig.py)
 # compose against these — e.g. `DemoSoftware = ApplicationsSoftware.
-# squash(DemoSpecLayer)`.
+# mappend(DemoSpecLayer)`.
 # ---------------------------------------------------------------------------
 
 from typing import cast
@@ -378,7 +378,7 @@ from typing import cast
 from artheia.manifest.application import ApplicationManifest
 from artheia.manifest.layer import Layer  # noqa: E402,F811
 from artheia.manifest.rig import SoftwareSpecification, VehicleIdentity
-from artheia.manifest.transform import Append, SetTransformTypes  # noqa: E402
+from artheia.manifest.applicative import Append, SetTransformTypes  # noqa: E402
 
 {layers}
 

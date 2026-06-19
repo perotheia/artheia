@@ -22,7 +22,7 @@ The generator emits a Python module exporting:
   edits scheduling / priority / affinity in the Layer.
 - ``<Vehicle>SpecLayer: SoftwareSpecification`` — the structured-DSL
   delta layer.
-- ``<Vehicle>Software = ServicesSoftware.squash(<Vehicle>SpecLayer)`` — the
+- ``<Vehicle>Software = ServicesSoftware.mappend(<Vehicle>SpecLayer)`` — the
   composed spec the CLI consumes.
 
 Bootstrap, not round-trip — once the user edits the generated file,
@@ -220,7 +220,7 @@ from artheia.manifest.execution import (
 )
 from artheia.manifest.machine import CpuResource, IpEndpoint
 from artheia.manifest.rig import SoftwareSpecification
-from artheia.manifest.transform import Append, SetTransformTypes
+from artheia.manifest.applicative import Append, SetTransformTypes
 from services.manifest.service import ServicesSoftware
 
 
@@ -319,7 +319,7 @@ def _process_for(name: str) -> Process:
 _LAYER_TEMPLATE = '''
 # ---------------------------------------------------------------------------
 # {Vehicle}SpecLayer — structured-DSL delta over ServicesSoftware.
-# Same-identity Append (name="platform_app") merges via Layer.squash,
+# Same-identity Append (name="platform_app") merges via Layer.mappend,
 # so {Vehicle}'s binaries land alongside FC components on {Vehicle}Host.
 # ---------------------------------------------------------------------------
 
@@ -350,11 +350,11 @@ _{Vehicle}PlatformApp = ApplicationManifest(
 
 
 # ---------------------------------------------------------------------------
-# Final spec — squash onto ServicesSoftware. The CLI auto-picks this
+# Final spec — combine onto ServicesSoftware. The CLI auto-picks this
 # (it prefers ``*Software`` exports).
 # ---------------------------------------------------------------------------
 
-{Vehicle}Software: SoftwareSpecification = ServicesSoftware.squash({Vehicle}SpecLayer)
+{Vehicle}Software: SoftwareSpecification = ServicesSoftware.mappend({Vehicle}SpecLayer)
 '''
 
 

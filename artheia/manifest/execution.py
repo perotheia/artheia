@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
-from artheia.manifest.transform import Identifiable, identifiable_dataclass
+from artheia.manifest.applicative import Identifiable, identifiable_dataclass
 
 
 def parse_mem_size(v: "int | str | None") -> int:

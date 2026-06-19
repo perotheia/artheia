@@ -26,7 +26,7 @@ from artheia.manifest.machine import (
 from artheia.manifest.rig import Rig, VehicleIdentity
 from artheia.manifest.service import ServiceInstance, ServiceManifest
 from artheia.manifest.supervisor import SupervisorNode
-from artheia.manifest.transform import Add, Op, Override, Remove, apply_ops
+from artheia.manifest.applicative import Add, Op, Override, Remove, apply_ops
 
 
 @dataclass

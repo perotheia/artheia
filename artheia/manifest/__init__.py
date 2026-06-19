@@ -15,8 +15,9 @@ Plus three supporting modules:
   + M applications + service manifests. The vendor-side top-level.
 - :mod:`.layer` — :class:`Layer` + :func:`merge_layers` compose deltas
   (platform → vehicle-family → concrete rig) into a final :class:`Rig`.
-- :mod:`.transform` — identity-keyed :class:`Add` / :class:`Remove` /
-  :class:`Override` primitives the layer system runs on.
+- :mod:`.applicative` — identity-keyed :class:`Insert` / :class:`Delete`
+  / :class:`Override` primitives the layer system runs on (the layer
+  combine modelled as an applicative functor over dataclass records).
 - :mod:`.clusters` — :data:`CLUSTERS` catalogue of the 18 Adaptive
   Platform Functional Clusters by short name.
 - :mod:`.cluster` — :class:`Cluster` / :class:`ClusterMember` for the
@@ -71,7 +72,7 @@ from artheia.manifest.supervisor import (  # noqa: F401
     Supervisor,
     SupervisorNode,
 )
-from artheia.manifest.transform import (  # noqa: F401
+from artheia.manifest.applicative import (  # noqa: F401
     Add,
     Identifiable,
     Override,

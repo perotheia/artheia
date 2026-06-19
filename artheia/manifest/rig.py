@@ -14,7 +14,7 @@ Two parallel types in this module:
 - :class:`SoftwareSpecification` (new) — :class:`Layer` subclass with
   ``set[...]`` fields that accept either bare elements OR
   :class:`Append` / :class:`Remove` transforms inline.
-  ``base.squash(other)`` composes them. The mosaic-style DSL the
+  ``base.mappend(other)`` composes them. The mosaic-style DSL the
   manifest module is migrating to. See
   ``docs/tasks/PROGRESS/artheia-dsl-recovery.md``.
 
@@ -42,12 +42,12 @@ from artheia.manifest.machine import (
 )
 from artheia.manifest.service import ServiceManifest
 from artheia.manifest.supervisor import SupervisorNode
-from artheia.manifest.transform import (
+from artheia.manifest.applicative import (
     Append,
     Layer,
     Remove,
     SetTransformTypes,
-    Undefined,
+    Empty,
 )
 
 
@@ -118,20 +118,20 @@ class Rig:
 
 
 # ---------------------------------------------------------------------------
-# Structured-DSL aggregator — new shape (mosaic-style)
+# Structured-DSL aggregator — the layered-record shape
 # ---------------------------------------------------------------------------
 
 # Type aliases for the set-typed fields. Each field accepts either:
-#   - a bare set of concrete elements (replaces base's set on squash), OR
+#   - a bare set of concrete elements (replaces base's set on mappend), OR
 #   - a set of Append/Remove transforms (composed onto base's set), OR
-#   - Undefined() (inherit base's value).
-_MachineSet     = Union[set[MachineManifest], set[SetTransformTypes], Undefined]
-_AppSet         = Union[set[ApplicationManifest], set[SetTransformTypes], Undefined]
-_ServiceManSet  = Union[set[ServiceManifest], set[SetTransformTypes], Undefined]
-_ExecSet        = Union[set[ExecutionManifest], set[SetTransformTypes], Undefined]
-_PTMSet         = Union[set[ProcessToMachineMapping], set[SetTransformTypes], Undefined]
-_NodeMapSet     = Union[set[NodeToCPUMapping], set[SetTransformTypes], Undefined]
-_SupervisorSet  = Union[set[SupervisorNode], set[SetTransformTypes], Undefined]
+#   - Empty() (inherit base's value).
+_MachineSet     = Union[set[MachineManifest], set[SetTransformTypes], Empty]
+_AppSet         = Union[set[ApplicationManifest], set[SetTransformTypes], Empty]
+_ServiceManSet  = Union[set[ServiceManifest], set[SetTransformTypes], Empty]
+_ExecSet        = Union[set[ExecutionManifest], set[SetTransformTypes], Empty]
+_PTMSet         = Union[set[ProcessToMachineMapping], set[SetTransformTypes], Empty]
+_NodeMapSet     = Union[set[NodeToCPUMapping], set[SetTransformTypes], Empty]
+_SupervisorSet  = Union[set[SupervisorNode], set[SetTransformTypes], Empty]
 
 
 @dataclass
@@ -141,7 +141,7 @@ class SoftwareSpecification(Layer):
     The structured-DSL counterpart to :class:`Rig`. Where :class:`Rig`
     has ``list[X]`` fields composed via the parallel ``add_X`` /
     ``remove_X`` lists on :class:`Layer`, ``SoftwareSpecification`` has
-    ``set[X] | set[SetTransformTypes] | Undefined``, with the
+    ``set[X] | set[SetTransformTypes] | Empty``, with the
     transforms living *inside* the set they target.
 
     Usage:
@@ -151,7 +151,7 @@ class SoftwareSpecification(Layer):
         from artheia.manifest import (
             SoftwareSpecification, MachineManifest, VehicleIdentity,
         )
-        from artheia.manifest.transform import Append, Remove, SetTransformTypes
+        from artheia.manifest.applicative import Append, Remove, SetTransformTypes
         from typing import cast
 
         # Base spec for a platform.
@@ -171,38 +171,38 @@ class SoftwareSpecification(Layer):
         )
 
         # Compose.
-        DemoSoftware = PlatformSoftware.squash(DemoLayer)
+        DemoSoftware = PlatformSoftware.mappend(DemoLayer)
 
     Field semantics mirror :class:`Rig` 1:1 — same containment, just
     set-typed instead of list-typed and with transform support.
     """
 
-    # Fields default to Undefined() (not empty set) so that a layer
+    # Fields default to Empty() (not empty set) so that a layer
     # which doesn't touch a field inherits the base's value during
-    # squash. Empty set as default would REPLACE the base's content
-    # (transform_set treats a plain non-transform set as "wholesale
+    # mappend. Empty set as default would REPLACE the base's content
+    # (ap_transforms treats a plain non-transform set as "wholesale
     # replace") — which is rarely what an upper layer means by
     # "I don't touch this field".
-    vehicle: Union[VehicleIdentity, Undefined] = field(default_factory=Undefined)
-    machines: _MachineSet = field(default_factory=Undefined)
-    applications: _AppSet = field(default_factory=Undefined)
-    service_manifests: _ServiceManSet = field(default_factory=Undefined)
-    execution_manifests: _ExecSet = field(default_factory=Undefined)
+    vehicle: Union[VehicleIdentity, Empty] = field(default_factory=Empty)
+    machines: _MachineSet = field(default_factory=Empty)
+    applications: _AppSet = field(default_factory=Empty)
+    service_manifests: _ServiceManSet = field(default_factory=Empty)
+    execution_manifests: _ExecSet = field(default_factory=Empty)
     # Process-to-machine mappings (AUTOSAR §9.4).
-    process_to_machine_mappings: _PTMSet = field(default_factory=Undefined)
+    process_to_machine_mappings: _PTMSet = field(default_factory=Empty)
     # Node-to-CPU mappings (project-local; per-thread within a process).
-    node_to_cpu_mappings: _NodeMapSet = field(default_factory=Undefined)
+    node_to_cpu_mappings: _NodeMapSet = field(default_factory=Empty)
     # OTP-style supervisor tree.
-    supervisors: _SupervisorSet = field(default_factory=Undefined)
+    supervisors: _SupervisorSet = field(default_factory=Empty)
 
     # Per-machine supervisor identity (machine name → Supervisor; its TIPC
-    # instance). Scalar dict like `logger` — not a set transform. Undefined → {}.
-    supervisor: Union[dict, Undefined] = field(default_factory=Undefined)
+    # instance). Scalar dict like `logger` — not a set transform. Empty → {}.
+    supervisor: Union[dict, Empty] = field(default_factory=Empty)
 
-    # Rig-wide default logger sink (scalar, like `vehicle`). Undefined → a
-    # squashing layer inherits the base's value; an empty string in the
+    # Rig-wide default logger sink (scalar, like `vehicle`). Empty → a
+    # combining layer inherits the base's value; an empty string in the
     # materialized Rig means "no rig default → per-process /tmp/theia fallback".
-    logger: Union[str, Undefined] = field(default_factory=Undefined)
+    logger: Union[str, Empty] = field(default_factory=Empty)
 
     # -----------------------------------------------------------------
     # Bridge to legacy Rig — until call sites (executor emit, gui emit,
@@ -214,7 +214,7 @@ class SoftwareSpecification(Layer):
     def to_rig(self) -> "Rig":
         """Materialize this spec into a legacy :class:`Rig`.
 
-        Resolves every set-typed field by running :func:`transform_base`
+        Resolves every set-typed field by running :func:`fold_transforms`
         (Append/Remove transforms applied against an empty base) and
         emitting a deterministically-sorted list.
 
@@ -222,21 +222,21 @@ class SoftwareSpecification(Layer):
         default Identifiable). The CLI depends on stable ordering for
         the executor.yaml supervisor tree.
         """
-        from artheia.manifest.transform import transform_base
+        from artheia.manifest.applicative import fold_transforms
 
         def _resolve(field_value):
-            """Set field → sorted list. Undefined → empty list."""
-            if isinstance(field_value, Undefined):
+            """Set field → sorted list. Empty → empty list."""
+            if isinstance(field_value, Empty):
                 return []
-            resolved = transform_base(field_value)
+            resolved = fold_transforms(field_value)
             # Deterministic order: by name (the default _identity_field).
             return sorted(resolved, key=lambda x: getattr(x, "name", ""))
 
         vehicle = self.vehicle
-        if isinstance(vehicle, Undefined):
+        if isinstance(vehicle, Empty):
             vehicle = VehicleIdentity(name="")
 
-        logger = "" if isinstance(self.logger, Undefined) else self.logger
+        logger = "" if isinstance(self.logger, Empty) else self.logger
 
         return Rig(
             vehicle=vehicle,
@@ -247,6 +247,6 @@ class SoftwareSpecification(Layer):
             process_to_machine_mappings=_resolve(self.process_to_machine_mappings),
             node_to_cpu_mappings=_resolve(self.node_to_cpu_mappings),
             supervisors=_resolve(self.supervisors),
-            supervisor={} if isinstance(self.supervisor, Undefined) else self.supervisor,
+            supervisor={} if isinstance(self.supervisor, Empty) else self.supervisor,
             logger=logger,
         )
