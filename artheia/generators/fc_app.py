@@ -105,7 +105,7 @@ class _Port:
 
 @dataclass
 class _SignalDest:
-    node: str             # target node TYPE name (e.g. "CounterNode")
+    node: str             # target node TYPE name (e.g. "MyNode")
     tipc_type: str        # "0x..." string from .art tipc decl
     tipc_instance: str    # likewise
     # The peer's runtime kNodeName (snake form, e.g. "counter_node") —
@@ -584,7 +584,7 @@ def _nodes_prototyped_by_composition(model, composition_name: str) -> set[str]:
     names: set[str] = set()
     for proto in prototypes:
         # proto.type is the resolved NodeDecl reference; .name is the
-        # node-type name (e.g. "CounterNode") — the same key the netgraph
+        # node-type name (e.g. "MyNode") — the same key the netgraph
         # uses for its per-node signal slice, so the two line up.
         t = getattr(proto, "type", None)
         n = getattr(t, "name", None)
@@ -601,7 +601,7 @@ def _nodes_prototyped_by_composition(model, composition_name: str) -> set[str]:
 def _prototype_name_by_type(model, composition_name: str) -> dict[str, str]:
     """Map node-TYPE name → PROTOTYPE (instance) name for one composition.
 
-    `prototype CounterNode counter` → {"CounterNode": "counter"}. This is the
+    `prototype MyNode my_node` → {"MyNode": "my_node"}. This is the
     canonical node identity: the .art/manifest address nodes by the prototype
     name, so the runtime kNodeName (Tracer key, trace nodeName, supervisor
     push target, netgraph peer tag) uses it too. Returns {} if the composition
@@ -672,7 +672,7 @@ def _resolved_node_by_type(model, composition_name: str) -> dict:
 def _is_test_sender_node(el) -> bool:
     """True for a probe-tester node: a `node atomic` whose ONLY ports are
     `sender` (so it can cast events but serves/receives nothing) — the shape
-    of SmTester / DemoFsmTester, declared so artheia.probe can bind a tester
+    of SmTester / MyTester, declared so artheia.probe can bind a tester
     identity. Such a node is never deployed (it's in no composition) and must
     NOT be generated into an FC's lib/main.
 
@@ -735,11 +735,11 @@ def _build_model_view(art_path: Path,
         if _el.__class__.__name__ == "CompositionDecl":
             _composed |= _nodes_prototyped_by_composition(model, _el.name)
 
-    # type→prototype name map (e.g. {"CounterNode": "counter"}) — the canonical
+    # type→prototype name map (e.g. {"MyNode": "my_node"}) — the canonical
     # runtime identity. ALWAYS unioned across EVERY composition in the .art
     # (prototype names are globally unique), NOT just the selected one: a node's
-    # cross-process PEERS live in OTHER compositions (p1's counter is a peer of
-    # p3's incrementer), and their kNodeName peer tags must resolve too. A type
+    # cross-process PEERS live in OTHER compositions (p1's my_node is a peer of
+    # p3's other_node), and their kNodeName peer tags must resolve too. A type
     # prototyped by >1 composition keeps the first seen.
     proto_by_type: dict[str, str] = {}
     for el in model.elements:
@@ -766,7 +766,7 @@ def _build_model_view(art_path: Path,
         if el.__class__.__name__ == "NodeDecl":
             if wanted is not None and el.name not in wanted:
                 continue
-            # Skip a TEST-ONLY sender node (e.g. SmTester / DemoFsmTester): a
+            # Skip a TEST-ONLY sender node (e.g. SmTester / MyTester): a
             # node declared in the package purely so artheia.probe can bind a
             # tester identity and cast events — it has ONLY sender port(s), is
             # in NO composition, and isn't deployed. Generating it pulls a
@@ -908,8 +908,8 @@ def generate_fc(
     # Ergonomics: with --composition, --out is the PARENT and the app dir
     # is the composition name appended verbatim, so the user names the
     # where (--out) and the what (--composition) once and the tool
-    # composes the path. e.g. --out up/tmp --composition Demo3WayP3 ->
-    # up/tmp/Demo3WayP3. Without --composition, --out is the app dir
+    # composes the path. e.g. --out up/tmp --composition MyAppP3 ->
+    # up/tmp/MyAppP3. Without --composition, --out is the app dir
     # directly (legacy).
     if composition is not None:
         out_dir = out_dir / composition

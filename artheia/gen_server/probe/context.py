@@ -1,7 +1,7 @@
 """ArtheiaContext — parse one .art, expose every node as a named RemoteRef.
 
 After parsing, the context injects a namespace where each node is reachable by
-name as a RemoteRef handle (ctx.ref("CounterNode") / ctx.nodes.CounterNode),
+name as a RemoteRef handle (ctx.ref("MyNode") / ctx.nodes.MyNode),
 carrying its TIPC address + the resolved proto types / service_ids for each
 message on its ports. Several NodeProbes share one context → one parse, one
 codec cache.
@@ -33,9 +33,9 @@ _PORT_ROLE = {
 @dataclass
 class MsgRef:
     """One message reachable on a port: local name + flat proto type + svc id."""
-    name: str            # local message name, e.g. "Inc"
-    proto_type: str      # flat nanopb name, e.g. "system_demo_Inc"
-    art_package: str     # defining package, e.g. "system.demo"
+    name: str            # local message name, e.g. "MyMsg"
+    proto_type: str      # flat nanopb name, e.g. "system_app_MyMsg"
+    art_package: str     # defining package, e.g. "system.app"
 
     @property
     def service_id(self) -> int:
@@ -66,7 +66,7 @@ class RemoteRef:
     """A node, addressable by name — the injected per-node handle.
 
     Mirrors the C++ RemoteRef: a name + TIPC address. The probe uses it as the
-    cast/call TARGET; tests name peers (ctx.ref("CounterNode")) not hex.
+    cast/call TARGET; tests name peers (ctx.ref("MyNode")) not hex.
     """
     name: str
     tipc_type: int
@@ -116,7 +116,7 @@ class ArtheiaContext:
         self.codec = Codec(proto_root)
         self._refs: dict[str, RemoteRef] = {}
         self._build_refs()
-        # Injected namespace: ctx.nodes.CounterNode -> RemoteRef.
+        # Injected namespace: ctx.nodes.MyNode -> RemoteRef.
         self.nodes = SimpleNamespace(**self._refs)
 
     # ---- building the node RemoteRef namespace ----------------------------

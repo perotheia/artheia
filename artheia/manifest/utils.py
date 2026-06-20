@@ -92,7 +92,7 @@ def app_bazel_target(base_dir: str, ident: str, composition: str,
       - app members:   ``//<base_dir>/<composition>/main:<cluster>`` (per-composition
         app dir whose cc_binary is named after the .art PACKAGE cluster — gen-app
         names the binary ``model.fc_short`` = the package's last segment. e.g.
-        apps/Demo3WayP1 → //apps/Demo3WayP1/main:apps for package ``system.apps``).
+        app/MyAppP1 → //app/MyAppP1/main:app for package ``system.app``).
 
     ``cluster`` is the package's last segment (= the generated binary name).
     Defaults to ``base_dir`` for back-compat (the common case dir==cluster).
@@ -118,14 +118,14 @@ def app_component_for(
     points at the real composition rather than a synthesized class name.
 
     ``cluster`` is the member's .art PACKAGE cluster (the segment after
-    ``system.`` in its ``package`` decl, e.g. ``demo`` for ``system.demo``).
+    ``system.`` in its ``package`` decl, e.g. ``app`` for ``system.app``).
     The ``art_node`` MUST name the real package — that's how the supervisor
     re-resolves each prototype to its node's TIPC address
     (``_collect_nodes_for_app`` parses ``system/<cluster>/component.art``).
     It defaults to ``base_dir`` for back-compat, but ``base_dir`` is the
-    SOURCE DIRECTORY (the bazel-target prefix, e.g. ``apps``) which is NOT
-    always the package cluster (the demo lives in ``apps/`` but its package
-    is ``system.demo``). Pass it explicitly whenever they differ.
+    SOURCE DIRECTORY (the bazel-target prefix, e.g. ``app``) which is NOT
+    always the package cluster (an app may live in ``app/`` but its package
+    is ``system.app``). Pass it explicitly whenever they differ.
     """
     art_cluster = cluster or base_dir
     return SwComponent(

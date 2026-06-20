@@ -286,8 +286,8 @@ extern "C" void per_register_migrations(const per_migration_api* api) {{
 
 def pb_header(pb: str, entry: dict) -> str:
     """Include path for the config's nanopb header. The flat proto_type maps to
-    the proto subdir of its defining package (e.g. system.demo ->
-    system/demo/demo.pb.h)."""
+    the proto subdir of its defining package (e.g. system.app ->
+    system/app/app.pb.h)."""
     from artheia.generators.proto import package_subdir
     pkg = entry.get("art_package", "")
     sub = package_subdir(pkg).as_posix() if pkg else ""

@@ -2,7 +2,7 @@
 
 protobuf 6 only (no gRPC). grpc_tools.protoc is used purely as the protoc
 compiler; we emit _pb2 (never _pb2_grpc) and import it. Message classes are
-keyed by the flattened nanopb type name (e.g. 'system_demo_Inc') so encode/
+keyed by the flattened nanopb type name (e.g. 'system_app_MyMsg') so encode/
 decode line up with the wire service_id.
 """
 from __future__ import annotations
@@ -38,9 +38,9 @@ class Codec:
         if Codec._SHARED_OUT is None:
             Codec._SHARED_OUT = Path(tempfile.mkdtemp(prefix="artheia_probe_pb2_"))
         self._out = Codec._SHARED_OUT
-        # flattened proto package (e.g. 'system_demo') -> the _pb2 module
+        # flattened proto package (e.g. 'system_app') -> the _pb2 module
         self._modules: dict[str, object] = {}
-        # message class cache: flat type name 'system_demo_Inc' -> class
+        # message class cache: flat type name 'system_app_MyMsg' -> class
         self._classes: dict[str, type] = {}
 
     # ---- compilation ------------------------------------------------------
@@ -149,16 +149,16 @@ class Codec:
                 open(init, "w").close()
 
     def _message_class(self, art_package: str, proto_type: str) -> type:
-        """proto_type is the flat nanopb name, e.g. 'system_demo_Inc'.
+        """proto_type is the flat nanopb name, e.g. 'system_app_MyMsg'.
 
-        The generated _pb2 (package `system_demo`) exposes the message under
-        its short name `Inc`; strip the flattened-package prefix to find it.
+        The generated _pb2 (package `system_app`) exposes the message under
+        its short name `MyMsg`; strip the flattened-package prefix to find it.
         """
         if proto_type in self._classes:
             return self._classes[proto_type]
         module = self._ensure_package(art_package)
         flat_pkg = _proto_package_name(art_package).replace(".", "_")
-        short = proto_type[len(flat_pkg) + 1:]  # drop 'system_demo_'
+        short = proto_type[len(flat_pkg) + 1:]  # drop 'system_app_'
         cls = getattr(module, short)
         self._classes[proto_type] = cls
         return cls

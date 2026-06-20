@@ -17,11 +17,11 @@ Output (JSON):
   {
     "package": "<system pkg>",
     "configs": {
-      "CounterConfig": {
+      "MyConfig": {
         "digest": "cfg_3f9a1c…",            # stable shape hash
-        "proto_type": "theia_demo_CounterConfig",  # flat nanopb/proto name
-        "art_package": "theia.demo",         # message's defining package
-        "nodes": ["counter"],                # prototypes bound to this config
+        "proto_type": "theia_app_MyConfig",  # flat nanopb/proto name
+        "art_package": "theia.app",          # message's defining package
+        "nodes": ["my_node"],                # prototypes bound to this config
         "fields": [
           {"name": "step", "type": "uint32", "repeated": false},
           ...

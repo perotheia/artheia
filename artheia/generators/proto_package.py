@@ -4,7 +4,7 @@ Unlike `proto.py` (which emits one .proto per message), this generator
 emits a single .proto file per source package, laid out under the
 output root in directories that mirror the package path:
 
-    package demo.system     → <out>/demo/system/system.proto
+    package app.system      → <out>/app/system/system.proto
     package gateway.system  → <out>/gateway/system/system.proto
 
 This matches the runtime convention used by libgw / odd_path_client —
@@ -244,7 +244,7 @@ def _render_proto(model, package: str, source_file: str) -> str:
     lines.append("syntax = \"proto3\";")
     # Proto package: dot-joined from the .art package. Underscores in
     # the leaf are preserved so nanopb-generated C struct names match
-    # what we expect (e.g. demo.system → "demo_system_<Msg>").
+    # what we expect (e.g. app.system → "app_system_<Msg>").
     lines.append(f"package {package.replace('.', '_')};")
     lines.append("")
     # Cross-package imports — a field whose type is defined in an IMPORTED .art
@@ -334,7 +334,7 @@ def generate_package_proto(art_path: str | Path,
     # Sibling .options: pin every string/bytes field to a fixed char[] so nanopb
     # emits a plain member (not a pb_callback_t). nanopb_generator auto-loads the
     # same-basename .options. The field prefix is the FLAT proto package
-    # (system_apps.) — matching the proto's `package` decl, which nanopb keys on.
+    # (system_app.) — matching the proto's `package` decl, which nanopb keys on.
     # Write it whenever the package has any string/bytes field.
     options_text = _render_options(model, proto_package.replace(".", "_"))
     if any(line and not line.startswith("#")

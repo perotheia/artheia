@@ -60,7 +60,7 @@ def _base_dir_for(defining_file: Path, workspace: "Path | None" = None) -> str:
     (after symlink resolution). The bazel-target prefix is //<base_dir>/…:
 
       services/system/cluster.art            → "services"
-      apps/system/apps/component.art          → "apps"
+      app/system/app/component.art            → "app"
       platform/supervisor/system/package.art  → "platform"
 
     When the resolved top is the aggregator's own `system/` dir (a real dir whose
@@ -122,11 +122,11 @@ def _members_of_cluster_in(art_file: str, cluster_name: str):
 
 def _pkg_cluster(art_file: "str | Path") -> str:
     """The PACKAGE cluster of *art_file* — the segment after ``system.`` in its
-    ``package`` decl (``system.demo`` → ``demo``, ``system.services.com`` →
+    ``package`` decl (``system.app`` → ``app``, ``system.services.com`` →
     ``services``). This is the cluster the ``art_node`` must name so the
     supervisor resolves each node's TIPC addr from
     ``system/<cluster>/component.art`` — DISTINCT from base_dir (the source
-    DIRECTORY, e.g. ``apps`` for the demo whose package is ``system.demo``)."""
+    DIRECTORY, e.g. ``app`` for an app whose package is ``system.app``)."""
     pkg = _extract_package(str(art_file))
     parts = pkg.split(".") if pkg else []
     # system.<cluster>[.<ident>...] → <cluster>; bare <cluster> → itself.
@@ -241,8 +241,8 @@ def _cluster_members(art_file: str) -> "list[tuple[str, str, str, list]]":
     [(ident, composition, [nodes]), ...]), ...]`` for every ``cluster`` declared
     in *art_file*, in source order. ``base_dir`` is the SOURCE DIR (bazel-target
     prefix); ``pkg_cluster`` is the .art PACKAGE cluster (the art_node cluster) —
-    they DIFFER when a cluster lives in a dir != its package (the demo: dir
-    ``apps``, package ``system.demo``).
+    they DIFFER when a cluster lives in a dir != its package (e.g. dir
+    ``app``, package ``system.app``).
 
     A member's ``ident`` is ``ClusterMember.name``; ``composition`` is
     ``member.type.name``; ``nodes`` are its hosted prototype names — all read
@@ -377,8 +377,8 @@ from .executor import SUPERVISORS  # noqa: E402,F401
 # Per-cluster Layer + SoftwareSpecification. One pair per .art cluster,
 # named after the cluster (`<Cluster>Layer` / `<Cluster>Software`). The
 # layer's `name=` is the lowercased cluster name. Upper layers (rig.py)
-# compose against these — e.g. `DemoSoftware = ApplicationsSoftware.
-# mappend(DemoSpecLayer)`.
+# compose against these — e.g. `AppSoftware = ApplicationsSoftware.
+# mappend(AppSpecLayer)`.
 # ---------------------------------------------------------------------------
 
 from typing import cast
@@ -418,7 +418,7 @@ def _render_sections(
     """Render the per-cluster sections + the aggregate lists + the
     per-cluster Layer/Software definitions.
 
-    *base_dir* is the manifest module's directory (e.g. ``demo``); it +
+    *base_dir* is the manifest module's directory (e.g. ``app``); it +
     each member ident drive the directory-convention paths (app dir,
     bazel target, start_cmd) — see :mod:`artheia.manifest.utils`.
 

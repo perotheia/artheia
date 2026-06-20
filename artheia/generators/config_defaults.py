@@ -9,13 +9,13 @@ emits the DECLARED defaults (the `.art` `field = value`, same syntax as a node
 Output shape (keyed by PROTOTYPE name == the per store key / kNodeName):
 
     {
-      "package": "system.demo",
+      "package": "system.app",
       "configs": {
-        "counter": {
-          "config_type": "CounterConfig",
+        "my_node": {
+          "config_type": "MyConfig",
           "digest": "cfg_…",                 # the v* digest to tag the seed with
           "values": { "step": 1, "max_value": 100, "wrap": false,
-                      "label": "counter", "hysteresis": 3 }
+                      "label": "my_node", "hysteresis": 3 }
         }
       }
     }
@@ -61,7 +61,7 @@ def build_config_defaults(model) -> dict:
             # gen-schema's art_package/proto_type). Lets a seeder resolve the
             # proto class DYNAMICALLY via the probe codec
             # (codec.encode(art_package, proto_type, **values)) for ANY FC,
-            # instead of a hardcoded demo-only class map. The config message may
+            # instead of a hardcoded app-specific class map. The config message may
             # be defined in a different package than the node.
             from artheia.generators.proto import _proto_package_name
             try:

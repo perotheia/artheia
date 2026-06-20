@@ -9,7 +9,7 @@ Two parallel types in this module:
 - :class:`Rig` (legacy) — flat dataclass with ``list[...]`` fields,
   composed via the ``apply_ops``-driven :class:`Layer` from
   ``manifest/layer.py``. Used by every current call site
-  (``services/manifest/fc.py``, ``demo/manifest/rig.py``,
+  (``services/manifest/fc.py``, ``app/manifest/rig.py``,
   ``artheia executor emit``).
 - :class:`SoftwareSpecification` (new) — :class:`Layer` subclass with
   ``set[...]`` fields that accept either bare elements OR
@@ -162,16 +162,16 @@ class SoftwareSpecification(Layer):
         )
 
         # A rig-specific layer.
-        DemoLayer = SoftwareSpecification(
-            vehicle=VehicleIdentity(name="demo", make="theia", model="..."),
+        AppLayer = SoftwareSpecification(
+            vehicle=VehicleIdentity(name="app", make="theia", model="..."),
             machines=cast(set[SetTransformTypes], {
-                Append(MachineManifest(name="demo_host", ...)),
+                Append(MachineManifest(name="app_host", ...)),
                 Remove(MachineManifest(name="default_host")),
             }),
         )
 
         # Compose.
-        DemoSoftware = PlatformSoftware.mappend(DemoLayer)
+        AppSoftware = PlatformSoftware.mappend(AppLayer)
 
     Field semantics mirror :class:`Rig` 1:1 — same containment, just
     set-typed instead of list-typed and with transform support.

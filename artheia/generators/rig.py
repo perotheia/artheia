@@ -2,13 +2,12 @@
 
 Given a top-level composition like:
 
-    package system.demo
-    composition Demo3Way {
-        prototype CounterNode counter_p1 on process P1
-        prototype DriverNode  driver_p1  on process P1
-        prototype TickerNode  ticker_p1  on process P1
-        prototype ObserverNode observer_p2 on process P2
-        prototype IncrementerNode incrementer_p3 on process P3
+    package system.app
+    composition MyApp {
+        prototype MyNode    my_node_p1    on process P1
+        prototype OtherNode other_node_p1 on process P1
+        prototype MyNode    my_node_p2    on process P2
+        prototype OtherNode other_node_p3 on process P3
         ...
     }
 
@@ -59,8 +58,8 @@ class _ProcessSlot:
 
 @dataclass
 class _CompositionInfo:
-    package: str                    # e.g. "system.demo"
-    name: str                       # e.g. "Demo3Way"
+    package: str                    # e.g. "system.app"
+    name: str                       # e.g. "MyApp"
     processes: list[_ProcessSlot]   # in deterministic order
 
 
@@ -124,34 +123,34 @@ def _extract_composition_info(
 
 
 def _process_name(vehicle: str, art_proc: str) -> str:
-    """`P1` + vehicle=demo → `demo_p1`. Lowercase the process token
+    """`P1` + vehicle=app → `app_p1`. Lowercase the process token
     and prefix with the vehicle name."""
     return f"{vehicle}_{art_proc.lower()}"
 
 
 def _bazel_target(bazel_package: str, vehicle: str, art_proc: str) -> str:
-    """`//apps` + vehicle=demo + art_proc=P1 → `//apps:p1_main`. The
-    `_main` suffix is the rig-manifest convention; `//apps:p1_main`
+    """`//app` + vehicle=app + art_proc=P1 → `//app:p1_main`. The
+    `_main` suffix is the rig-manifest convention; `//app:p1_main`
     aliases the per-composition fc app binary
-    (//apps/Demo3WayP1/main:demo — see apps/BUILD.bazel). The bazel
+    (//app/MyAppP1/main:app — see app/BUILD.bazel). The bazel
     target name is just the art_proc token lowercased (no vehicle prefix
-    — the package already says `//apps`)."""
+    — the package already says `//app`)."""
     pkg = bazel_package.rstrip(":/")
     return f"{pkg}:{art_proc.lower()}_main"
 
 
 def _composition_class(comp_name: str) -> str:
-    """`Demo3Way` → `Demo3WayComposition` (the composition's C++ class
+    """`MyApp` → `MyAppComposition` (the composition's C++ class
     name)."""
     return f"{comp_name}Composition"
 
 
 def _per_process_class(comp_name: str, art_proc: str) -> str:
-    """For `Demo3Way` + `P1` → `DemoP1Composition`. Today the demo
-    uses ``DemoP1Composition``, ``DemoP2Composition``, etc. as the
+    """For `MyApp3` + `P1` → `MyAppP1Composition`. An app may use
+    ``MyAppP1Composition``, ``MyAppP2Composition``, etc. as the
     per-process root types — derive matching names by capitalizing
     the art_proc token."""
-    # Drop trailing digits from comp_name's stem (Demo3Way → Demo).
+    # Drop trailing digits from comp_name's stem (MyApp3 → MyApp).
     # Pragmatic: just take alpha prefix.
     stem = ""
     for ch in comp_name:
@@ -165,7 +164,7 @@ def _per_process_class(comp_name: str, art_proc: str) -> str:
 
 
 def _vehicle_capitalize(vehicle: str) -> str:
-    """`demo` → `Demo`. `multi_word` → `MultiWord`."""
+    """`app` → `App`. `multi_word` → `MultiWord`."""
     return "".join(p.capitalize() for p in vehicle.split("_"))
 
 

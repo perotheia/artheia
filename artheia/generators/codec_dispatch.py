@@ -1,7 +1,7 @@
 """Generate dispatch_local.c for libpsp_local.so.
 
 Ported verbatim from gateway/pero_cmp_lnx/tools/gen_codec_dispatch.py — the
-output byte-stream must be identical so consumers (pero_cmp_gw_svc, demo
+output byte-stream must be identical so consumers (pero_cmp_gw_svc, the
 apps) keep producing the same artifact.
 
 The output references only the codec functions needed by one application,

@@ -112,7 +112,7 @@ class NodeInfo:
       trace config push
 
     Fields:
-      name           artheia node-type-name ("SmDaemon", "CounterNode")
+      name           artheia node-type-name ("SmDaemon", "MyNode")
       reporting      AUTOSAR Reporting/Non-Reporting (true = expects
                      heartbeat + can receive trace push)
       tipc_type      "0x...." hex string, copied from the NodeDecl
@@ -228,7 +228,7 @@ class SupervisorNode(Identifiable):
     Every leaf child name (FC or application) resolves to a
     :class:`Process` in ``rig.execution_manifests``; its ``start_cmd``
     drives the supervised launch. Application leaves (``app_sup``
-    children) are attached by the rig layer — see the demo rig's
+    children) are attached by the rig layer — see an app rig's
     ``Override`` of ``app_sup`` — not synthesized from SwComponents.
 
     Per-machine projection:
@@ -415,7 +415,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 break
 
     # Worker short → its SwComponent.art_node ("system.<cluster>.<ident>/
-    # <Composition>"). Application workers (demo p1/p2/p3) host their nodes
+    # <Composition>"). Application workers (e.g. app p1/p2/p3) host their nodes
     # via a composition whose prototypes resolve to node types carrying the
     # real TIPC address — but Process.nodes only carries the bare prototype
     # names, so the address is lost unless we re-resolve it from the .art.
@@ -584,7 +584,7 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
                 continue
             # Only DEPLOYED nodes belong in the supervisor tree: a node type
             # must appear as a prototype in the composition. Skip test-only /
-            # client nodes (e.g. SmTester, DemoFsmTester — senders the probe
+            # client nodes (e.g. SmTester, MyTester — senders the probe
             # binds, declared in package.art but in NO composition). Without
             # this they leak into executor.json as phantom workers the
             # supervisor would watchdog + push trace to. Guarded on a
@@ -613,10 +613,10 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
     def _collect_nodes_for_app(short: str) -> list[NodeInfo]:
         """Resolve an application worker's nodes from its composition .art.
 
-        Application workers (demo p1/p2/p3) don't live under
+        Application workers (e.g. app p1/p2/p3) don't live under
         ``services/<short>/`` — they host their nodes via a composition
-        (``Demo3WayP1``) whose prototypes (``counter``/``driver``/...) each
-        resolve to a node TYPE (``CounterNode``) that carries the real TIPC
+        (``MyAppP1``) whose prototypes (``my_node``/``other_node``/...) each
+        resolve to a node TYPE (``MyNode``) that carries the real TIPC
         address. ``Process.nodes`` only kept the bare PROTOTYPE names, so the
         supervisor had no address to push the trace-enable to
         (``bad tipc addr for 'p1'``). Re-resolve here.
@@ -683,11 +683,11 @@ def build_supervisor_tree(rig, *, machine: "str | None" = None) -> SupervisorSpe
             tipc_type = getattr(tipc, "type", "") if tipc else ""
             tipc_instance = getattr(tipc, "instance", "0") if tipc else "0"
             reporting_raw = (getattr(ntype, "reporting", "") or "true").lower()
-            # NodeInfo.name is the PROTOTYPE name ("counter"), matching the
+            # NodeInfo.name is the PROTOTYPE name ("my_node"), matching the
             # runtime kNodeName gen-app now emits (prototype-derived) — so the
             # supervisor's trace-config push target, the trace record nodeName,
             # the Tracer registry key, and `tdb trace <name>` all agree. (Was
-            # the node TYPE "CounterNode"; that desynced from the records.)
+            # the node TYPE "MyNode"; that desynced from the records.)
             ni = NodeInfo(
                 name=getattr(el, "name", getattr(ntype, "name", "")),
                 reporting=(reporting_raw == "true"),

@@ -1147,7 +1147,7 @@ def gen_migration(from_schema: str, to_schema: str, out_dir: str,
 @click.option(
     "--composition", "-c",
     required=True,
-    help="Top-level composition name in the .art file (e.g. Demo3Way).",
+    help="Top-level composition name in the .art file (e.g. MyApp).",
 )
 @click.option(
     "--out",
@@ -1160,7 +1160,7 @@ def gen_migration(from_schema: str, to_schema: str, out_dir: str,
     "--vehicle-name",
     default=None,
     help="VehicleIdentity.name (default: derive from --out parent dir, "
-    "e.g. demo/manifest/ → 'demo').",
+    "e.g. app/manifest/ → 'app').",
 )
 @click.option(
     "--machine-name",
@@ -1198,11 +1198,11 @@ def gen_rig(
 
     out = Path(out_path)
     # Default vehicle name from out_path's parent dir name (e.g.
-    # demo/manifest/rig.py → "demo").
+    # app/manifest/rig.py → "app").
     if vehicle_name is None:
         parents = list(out.parents)
         # parents[0] is the directory containing rig.py (e.g. manifest/);
-        # parents[1] is the rig root (e.g. demo/).
+        # parents[1] is the rig root (e.g. app/).
         if len(parents) >= 2 and parents[1].name:
             vehicle_name = parents[1].name
         else:
@@ -1478,8 +1478,8 @@ def gen_autosar_system(
               help="(fc mode) Emit ONE app for a SINGLE composition — only "
               "that composition's prototyped node-types get lib/impl/main/"
               "proto. With --composition, --out is the PARENT dir and the "
-              "composition name is appended as the app dir (Demo3WayP3 → "
-              "<out>/Demo3WayP3), so you name the where (--out) and the "
+              "composition name is appended as the app dir (MyAppP3 → "
+              "<out>/MyAppP3), so you name the where (--out) and the "
               "what (--composition) once. Run once per composition for a "
               "per-process layout. Cross-process peers in other "
               "compositions are reached by TipcAddr, not constructed in "
@@ -1976,7 +1976,7 @@ def audit_manifest_cmd(art_file: str, rig_target: str,
         process_groups.setdefault((comp_name, proc), []).append(proto_name)
     for (comp_name, proc), protos in sorted(process_groups.items()):
         # Look for a Process whose name ends with the process-id token,
-        # case-insensitive (rig names look like `demo_p1`, art proc is `P1`).
+        # case-insensitive (rig names look like `app_p1`, art proc is `P1`).
         proc_token = proc.lower()
         if not any(
             p.name.lower().endswith(f"_{proc_token}") or p.name.lower() == proc_token
@@ -2304,16 +2304,16 @@ def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
     """Emit a JSON describing the rig:
 
       {
-        "vehicle": {"name": "demo", "make": "theia", "model": "..."},
+        "vehicle": {"name": "app", "make": "theia", "model": "..."},
         "machines": [
           {
-            "name": "demo_host",
+            "name": "app_host",
             "applications": [
               {
                 "name": "platform_app",
                 "components": [
-                  {"name": "demo_p1", "bazel_target": "//demo:p1_main",
-                   "owner": "platform", "art_node": "system.demo/DemoP1Composition"},
+                  {"name": "app_p1", "bazel_target": "//app:p1_main",
+                   "owner": "platform", "art_node": "system.app/MyAppP1Composition"},
                   ...
                 ]
               }
@@ -2323,7 +2323,7 @@ def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
         "executor_yaml_components": [
           # Same components, flat — for the Bazel rule that builds the
           # opkg payload (so it doesn't have to walk the machine list).
-          {"name": "demo_p1", "bazel_target": "//demo:p1_main", "machine": "demo_host"},
+          {"name": "app_p1", "bazel_target": "//app:p1_main", "machine": "app_host"},
           ...
         ]
       }

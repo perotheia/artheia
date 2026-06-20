@@ -219,7 +219,7 @@ def gen_manifest(art_file: str, out_file: str) -> str:
     """Generate the Functional-Cluster manifest module from a component .art.
 
     Args:
-        art_file: The component .art (e.g. ``apps/system/apps/component.art``).
+        art_file: The component .art (e.g. ``system/app/component.art``).
         out_file: The manifest module to write (e.g. ``apps/manifest/app.py``).
     """
     return _run(["gen-manifest", art_file, out_file])

@@ -126,12 +126,12 @@ def _env() -> Environment:
 # `int system(const char*)`. That concern only applies to a *nested*
 # namespace (`::system::supervisor::`). The proto package decls Theia
 # emits are FLATTENED to a single underscore-joined identifier
-# (`package system_demo;` — see proto_package.py), so protoc produces
-# one namespace `system_demo` and one C-struct prefix `system_demo_*`.
-# A flattened `system_demo` / `system_demo_Inc` is never the bare token
+# (`package system_app;` — see proto_package.py), so protoc produces
+# one namespace `system_app` and one C-struct prefix `system_app_*`.
+# A flattened `system_app` / `system_app_MyMsg` is never the bare token
 # `system`, so it cannot bind to libc `system()`. The rewrite was
-# therefore unnecessary and made package names read as `services_demo`
-# instead of the source-true `system_demo`. The table is now empty;
+# therefore unnecessary and made package names read as `services_app`
+# instead of the source-true `system_app`. The table is now empty;
 # add an entry only if a genuinely-colliding flat name ever appears.
 _PROTO_PACKAGE_LEAD_RENAMES: dict[str, str] = {}
 

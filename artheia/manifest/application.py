@@ -114,7 +114,7 @@ class SwComponent(Identifiable):
       ``vendor.odd_path_client.system.components/OddPathMonitor``.
     - :attr:`owner` — informational.
     - :attr:`bazel_buildable` — whether ``bazel_target`` resolves to an
-      actual Bazel target today. Defaults to ``False`` — for the demo
+      actual Bazel target today. Defaults to ``False`` — for an app
       and the 18 FCs the binary is a bash daemon under
       ``theia_runtime/`` (not built by Bazel). The synthetic
       ``@rig_<name>//`` repo emitted by ``//rules:rig.bzl`` only

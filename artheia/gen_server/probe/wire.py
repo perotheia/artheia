@@ -25,7 +25,7 @@ MAX_PAYLOAD = 256
 
 
 def service_id(proto_type_name: str) -> int:
-    """djb2_low16 of the nanopb type name (e.g. 'system_demo_Inc').
+    """djb2_low16 of the nanopb type name (e.g. 'system_app_MyMsg').
 
     Matches RemoteCodec.hh hash_msg_type_ exactly: sender and receiver MUST
     agree on this for the FC's dispatch table to find the handler.

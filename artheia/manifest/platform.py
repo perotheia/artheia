@@ -8,7 +8,7 @@ into a base :class:`Rig` and pairs it with the
 :class:`ServiceManifest` derived from each FC's ``package.art``
 (TIPC bindings, service-interface ports).
 
-Upper layers (e.g. ``demo/manifest/rig.py``) build on this base via
+Upper layers (e.g. ``app/manifest/rig.py``) build on this base via
 :func:`merge_layers`; they add machines, attach the platform
 application to a host, and may :class:`Override` per-FC startup
 configuration.

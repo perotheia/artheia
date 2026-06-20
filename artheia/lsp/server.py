@@ -134,7 +134,7 @@ def _import_prefix(line_prefix: str) -> "str | None":
       'import '                       → ''
       'import system.'                → 'system.'
       'import system.autosar.mlb'     → 'system.autosar.mlb'
-      'import system.demo.* // ...'   → None (matched a comment / extra)
+      'import system.app.* // ...'    → None (matched a comment / extra)
       'cluster Platform {'            → None
     """
     m = _IMPORT_RE.match(line_prefix)
@@ -147,7 +147,7 @@ def _workspace_root_for_doc(doc_path: Path) -> "Path | None":
     """Walk up from *doc_path*'s directory looking for a `system/services/`
     aggregator — that's our conventional workspace root marker. The
     *workspace root* is the `system/` directory itself (so imports like
-    `system.demo` resolve under ``<root>/system/demo/`` via the symlinked
+    `system.app` resolve under ``<root>/system/app/`` via the symlinked
     aggregation tree). ``system/services/`` is used as the marker rather
     than ``system/`` because real FC `.art` now lives in impl trees at
     ``services/<fc>/system/<fc>/`` — those have a ``system/`` dir too, but

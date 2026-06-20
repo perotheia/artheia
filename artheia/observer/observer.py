@@ -228,7 +228,7 @@ class TraceObserver:
         """Decode the INNER traced message from its proto-wire bytes.
 
         The record's `payload` is the raw proto3 wire of the traced message
-        (e.g. system_demo_GetReply); `msg_type` is its flat nanopb type name.
+        (e.g. system_app_MyReply); `msg_type` is its flat nanopb type name.
         Resolve that type to its _pb2 class via the probe Codec and decode to a
         plain {field: value} dict. Returns None on empty payload or any failure
         (best-effort — a record we can't decode the body of still renders its
@@ -236,14 +236,14 @@ class TraceObserver:
 
         msg_type is `<flat_package>_<Message>`; we don't know a-priori where the
         package ends, so try successively-shorter prefixes as the art package
-        (system.demo.Get? system.demo → Get? …) until _message_class resolves.
+        (system.app.My? system.app → My? …) until _message_class resolves.
         Results cache inside Codec, so the trial cost is paid once per type.
         """
         if not payload or not msg_type:
             return None
         parts = msg_type.split("_")
         # Try the longest package prefix first (most specific): for
-        # 'system_demo_GetReply' try 'system.demo.Get'→fail, 'system.demo'→ok.
+        # 'system_app_MyReply' try 'system.app.My'→fail, 'system.app'→ok.
         for cut in range(len(parts) - 1, 0, -1):
             art_package = ".".join(parts[:cut])
             try:
