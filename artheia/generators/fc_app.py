@@ -928,9 +928,22 @@ def generate_fc(
         "wrote": [], "overwrote": [], "skipped-exists": [],
     }
 
+    # The bazel label of the nanopb proto aggregator the lib links. It FOLLOWS
+    # --proto-out so the generated BUILD points at the proto tree this run
+    # actually wrote: --proto-out proto → //proto:platform_protos (a consuming
+    # workspace, whose protos live under proto/ — distinct from the framework's
+    # platform/proto/). Default (no --proto-out, the legacy <out>/generated
+    # co-location) keeps the framework's //platform/proto:platform_protos.
+    if proto_out is not None:
+        _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
+        proto_label = f"//{_proto_top}:platform_protos"
+    else:
+        proto_label = "//platform/proto:platform_protos"
+
     ctx = {
         "model": mv,
         "source_file": str(art_path),
+        "proto_label": proto_label,
     }
 
     # Template-pair selection. `.statem.` templates derive from

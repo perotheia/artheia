@@ -263,7 +263,15 @@ def _cluster_members(art_file: str) -> "list[tuple[str, str, str, list]]":
         if type(el).__name__ != "ClusterDecl":
             continue
         members = _extract_members(model, el)
-        base_dir = ""   # inline members → caller's default (output-path base_dir)
+        # Inline members defined in THIS file → derive base_dir from the file's
+        # own source-tree location (the bazel-target prefix), NOT the caller's
+        # output-dir heuristic. _base_dir_for handles the consuming-workspace
+        # case where the .art sits at system/apps/component.art (top resolves to
+        # `system`, so it falls back to the package last-segment → `apps`); the
+        # heuristic that keys off the manifest OUTPUT dir (manifest/) would yield
+        # '' and emit broken `///<App>` bazel targets. Overridden below for the
+        # aggregator-stub + import-forward-decl cases.
+        base_dir = _base_dir_for(Path(art_file)) if members else ""
         # pkg_cluster: the .art PACKAGE cluster (art_node), distinct from base_dir.
         # Inline members live in THIS file → its package; resolved later otherwise.
         pkg_cluster = _pkg_cluster(art_file)
