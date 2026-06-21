@@ -186,33 +186,118 @@ def _proto_enum_value(enum_name: str, value_name: str) -> str:
     return f"{enum_name}_{value_name}"
 
 
-_DEFAULT_STR_MAX = 64  # nanopb char[] size for an unpinned string/bytes field
+_DEFAULT_STR_MAX = 64    # nanopb char[] size for an unpinned string/bytes field
+_DEFAULT_ARRAY_MAX = 16  # nanopb array cap for an unpinned `repeated` field
+
+import re as _re
+
+# Inline nanopb options we recognise in an .art field's `[...]` annotation and
+# pass straight through to the .options file (besides the size/count defaults
+# above). The .art is the single source of truth: declare the wire shape on the
+# field and gen-app emits the matching .options line — NO hand-editing of the
+# generated .options to clobber on the next regen. Maps an .art option name to
+# (nanopb_name, value_kind): "int" pins a number, "verbatim" passes the token
+# unchanged (e.g. type:FT_POINTER), "bool" pins true/false.
+_NANOPB_PASSTHROUGH = {
+    "max_count":    ("max_count", "int"),      # REPEATED field array cap (else callback)
+    "fixed_count":  ("fixed_count", "bool"),   # array is always exactly max_count
+    "fixed_length": ("fixed_length", "bool"),  # bytes field is fixed-size
+    "int_size":     ("int_size", "verbatim"),  # IS_8/16/32/64
+    "type":         ("type", "verbatim"),      # FT_STATIC / FT_POINTER / FT_CALLBACK
+}
 
 
-def _str_max_for(field) -> "int | None":
-    """The nanopb max_size for a string/bytes field, or None for non-string.
+def _parse_inline_opts(opt: str) -> "dict[str, str]":
+    """Parse an .art field `[k:v, k2=v2, flag]` annotation into {key: value}.
+    Accepts ':' or '=' and comma/space separation. A BARE token (no value, e.g.
+    ``[callback]``) becomes ``{token: ""}`` so flags are expressible too."""
+    out: dict[str, str] = {}
+    opt = opt or ""
+    for m in _re.finditer(r"(\w+)\s*[:=]\s*([A-Za-z0-9_]+)", opt):
+        out[m.group(1)] = m.group(2)
+    # Bare flags: tokens not part of a k:v pair (e.g. `callback`).
+    for m in _re.finditer(r"\b([A-Za-z_]\w*)\b(?!\s*[:=])", opt):
+        tok = m.group(1)
+        if tok not in out:
+            out.setdefault(tok, "")
+    return out
 
-    A nanopb string/bytes field with NO max_size becomes a pb_callback_t (a
-    function pointer the runtime can't strncpy / a migration plugin can't copy).
-    So EVERY string/bytes field gets a fixed char[]: the size from an inline
-    `.art` `[max_size:N]` (or `[max_length:N]`) option if present, else a
-    sensible default. Non-string fields return None (no .options line)."""
+
+def _nanopb_opts_for(field) -> "list[tuple[str, str]]":
+    """The nanopb .options entries for ONE message field, as (option, value)
+    pairs, derived ENTIRELY from the field's type + its inline `.art` options.
+    Empty list = a plain scalar that needs no .options line.
+
+    Rules (the .art is the source of truth):
+      - string/bytes  → ``max_size:N`` (inline ``[max_size:N]`` / ``[max_length:N]``
+        else the package default). Without it nanopb makes the field a
+        pb_callback_t — unusable by strncpy / the migration copy / the trace
+        decoder.
+      - repeated      → ``max_count:N`` (inline ``[max_count:N]`` else the default
+        cap). A repeated field with no max_count is a pb_callback_t; the default
+        keeps a regen from silently dropping to a callback.
+      - any field     → any recognised inline option (fixed_count, fixed_length,
+        int_size, type:FT_*) passed straight through.
+    """
     t = getattr(field, "type", None)
     kind = getattr(t, "kind", None)
+    repeated = bool(getattr(field, "repeated", False))
+    inline = _parse_inline_opts(getattr(field, "options", "") or "")
+    pairs: list[tuple[str, str]] = []
+
+    # `[callback]` — the field is DELIBERATELY left a pb_callback_t (a variable-
+    # size payload the runtime streams, e.g. log's TraceRecord bytes/strings).
+    # Emit NO .options line: an unpinned string/bytes/repeated field is a callback
+    # by nanopb default, so the opt-out is simply the absence of a size/count —
+    # and stating it on the .art keeps the regen from re-pinning it.
+    if "callback" in inline:
+        return []
+
+    # string/bytes → fixed char[] (max_size).
+    if kind in ("string", "bytes"):
+        n = inline.get("max_size") or inline.get("max_length")
+        pairs.append(("max_size", str(int(n)) if n else str(_DEFAULT_STR_MAX)))
+
+    # repeated → fixed array (max_count). Default unless the .art pins it below.
+    if repeated and "max_count" not in inline:
+        pairs.append(("max_count", str(_DEFAULT_ARRAY_MAX)))
+
+    # explicit inline nanopb options (incl. max_count when the .art set it).
+    for art_key, (nano_name, value_kind) in _NANOPB_PASSTHROUGH.items():
+        if art_key not in inline:
+            continue
+        v = inline[art_key]
+        if value_kind == "int":
+            v = str(int(v))
+        elif value_kind == "bool":
+            v = "true" if v.lower() in ("true", "1", "yes") else "false"
+        pairs.append((nano_name, v))
+
+    return pairs
+
+
+# Back-compat shim: a few callers still import _str_max_for. Keep it thin.
+def _str_max_for(field) -> "int | None":
+    """DEPRECATED — the max_size for a string/bytes field, else None. Superseded
+    by :func:`_nanopb_opts_for` (which also handles repeated/passthrough)."""
+    kind = getattr(getattr(field, "type", None), "kind", None)
     if kind not in ("string", "bytes"):
         return None
-    opt = (getattr(field, "options", "") or "")
-    import re
-    m = re.search(r"max_(?:size|length)\s*[:=]\s*(\d+)", opt)
-    return int(m.group(1)) if m else _DEFAULT_STR_MAX
+    for opt, val in _nanopb_opts_for(field):
+        if opt == "max_size":
+            return int(val)
+    return _DEFAULT_STR_MAX
 
 
 def _render_options(model, flat_package: str) -> str:
-    """Emit a nanopb .options file pinning every string/bytes field to a fixed
-    char[] (so it's a plain member, not a pb_callback_t). nanopb_generator
-    auto-loads the same-basename .options next to the .proto. Lines are
-    `<flat_pkg>.<Message>.<field>  max_size:N`. Empty (header only) if the
-    package has no string/bytes fields."""
+    """Emit a nanopb .options file from the .art message fields. nanopb_generator
+    auto-loads the same-basename .options next to the .proto. One line per field
+    constraint: ``<flat_pkg>.<Message>.<field>  <opt>:<val>`` for every
+    (option, value) :func:`_nanopb_opts_for` derives — string/bytes (max_size),
+    REPEATED (max_count), and any inline nanopb option. The .art is thus the
+    single source of truth: a no-force regen never clobbers a hand-tuned line,
+    because there are no hand-tuned lines. Header-only when nothing needs an
+    entry."""
     rows: List[str] = []
     for el in model.elements:
         if el.__class__.__name__ != "MessageDecl":
@@ -220,16 +305,22 @@ def _render_options(model, flat_package: str) -> str:
         for item in getattr(el, "fields", []) or []:
             if item.__class__.__name__ == "MessageReserved":
                 continue
-            n = _str_max_for(item)
-            if n is not None:
-                rows.append(f"{flat_package}.{el.name}.{item.name}   max_size:{n}")
+            # One line per field carrying ALL its options (nanopb accepts a
+            # field's options on one line, space-separated), so a field with
+            # both max_size + max_count emits `… max_size:N max_count:M`.
+            pairs = _nanopb_opts_for(item)
+            if pairs:
+                opts = " ".join(f"{o}:{v}" for o, v in pairs)
+                rows.append(f"{flat_package}.{el.name}.{item.name}   {opts}")
     head = [
-        "# AUTO-GENERATED by `artheia gen-app` — nanopb field-size constraints.",
-        "# nanopb_generator auto-loads this (same basename next to the .proto).",
-        "# A string/bytes field without max_size becomes a pb_callback_t; pinning",
-        "# it to a fixed char[] makes it a plain member (strncpy-able, trace-",
-        f"# decodable). Default {_DEFAULT_STR_MAX}; override per field with an .art",
-        "# `[max_size:N]` option.",
+        "# AUTO-GENERATED by `artheia gen-app` — nanopb field constraints, fully",
+        "# derived from the .art (the single source of truth). nanopb_generator",
+        "# auto-loads this (same basename next to the .proto). A string/bytes or",
+        "# repeated field without a fixed size/count becomes a pb_callback_t;",
+        "# pinning it makes it a plain member (strncpy-able, trace-decodable).",
+        f"# Defaults: max_size {_DEFAULT_STR_MAX}, max_count {_DEFAULT_ARRAY_MAX};",
+        "# override per field with an .art `[max_size:N]` / `[max_count:N]` option",
+        "# (also: fixed_count, fixed_length, int_size, type:FT_*).",
         "",
     ]
     return "\n".join(head + rows) + ("\n" if rows else "")

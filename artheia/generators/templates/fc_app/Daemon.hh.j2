@@ -150,7 +150,7 @@ public:
     // ---- handle_cast / handle_call — declared here, body in impl
     //
     // Deduplicated by message type: if two ports share the same
-    // interface (e.g. ctl_supdbg + ctl_com both providing
+    // interface (e.g. ctl_tdb + ctl_com both providing
     // TraceControl) the handler signature is identical and only
     // gets emitted once. handle_call/handle_cast dispatch by
     // request type, not by port.

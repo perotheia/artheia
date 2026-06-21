@@ -39,6 +39,14 @@ dev = [
 lsp = [
     "pygls>=1.3",
 ]
+# The gen_server PROBE (artheia.gen_server.probe) + the trace observer compile
+# .proto → _pb2 at runtime via grpc_tools.protoc (compiler only — no gRPC) and
+# decode with protobuf. Anyone building a probe-backed client (tdb, rtdb,
+# rf-theia's supervisor adapter) needs this extra.
+probe = [
+    "grpcio-tools>=1.50",
+    "protobuf>=4.21",
+]
 
 [project.scripts]
 artheia = "artheia.cli:main"

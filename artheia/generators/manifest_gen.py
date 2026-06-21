@@ -402,9 +402,34 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)
 
-    # Sidecar: executor.py — write-once unless --force.
+    # Sidecar: executor.py — hand-editable supervisor tree.
+    #
+    # Write-once for HAND-EDITS (restart strategies, grouping) once the tree has
+    # real children. BUT the .art-derived child set must never go stale: a fresh
+    # workspace's FIRST gen-manifest runs on the EMPTY scaffold (no processes →
+    # an executor with no `_sup` groups), and the old strict write-once then kept
+    # that empty tree forever — so after adding the first app, executor.json
+    # serialized to `null` and the supervisor FATAL'd ("manifest root must have
+    # 'children'"). The user had to know to pass --force.
+    #
+    # Hands-off fix: refresh the sidecar when it's absent, --force'd, OR it's
+    # still in the EMPTY-scaffold state (no `_sup` group yet) while the .art now
+    # declares processes. A genuinely hand-edited tree (has `_sup` groups) is
+    # left untouched.
     sidecar = out.parent / "executor.py"
-    if force or not sidecar.exists():
+    refresh = force or not sidecar.exists()
+    if not refresh and fg_to_procs:
+        # Look at the SUPERVISORS list body only (not the docstring, which
+        # mentions "<function_group>_sup"). An empty-scaffold executor has just
+        # the `root` node with `children=[]` and NO `name="<fg>_sup"` child —
+        # detect that exact shape and refresh it. A hand-edited tree (any
+        # name="…_sup") is left alone.
+        existing = sidecar.read_text(errors="ignore")
+        body = existing.split("SUPERVISORS", 1)[-1]
+        if 'name="' not in body or '_sup"' not in body:
+            refresh = True
+            print("refreshing empty executor.py (.art now declares processes)")
+    if refresh:
         sidecar.write_text(_render_executor(art_file, fg_to_procs))
     else:
         print("keep existing executor.py")

@@ -204,7 +204,7 @@ class _NodeView:
         """Server-port operations, deduplicated by (req_msg, rep_msg).
 
         When two server ports share the same interface (e.g.
-        ``ctl_supdbg`` + ``ctl_com`` both ``provides TraceControl``)
+        ``ctl_tdb`` + ``ctl_com`` both ``provides TraceControl``)
         their ops have identical signatures. handle_call dispatches by
         message type, so emitting one handler per duplicate signature
         would not compile. Templates iterate this method instead of
@@ -858,6 +858,41 @@ def _write(path: Path, content: str, *, overwrite: bool) -> str:
     return was
 
 
+# ---- auto-per-composition helpers ------------------------------------------
+
+def _is_app_layout(out_dir: Path) -> bool:
+    """True if *out_dir* uses the APP per-composition layout (not a services FC).
+
+    Mirrors _art_clusters.app_bazel_target's split: a member whose source dir is
+    ``services`` is laid out FLAT (//services/<fc>/main, one dir per FC); every
+    other base_dir is an app, laid out per-composition (//<base>/<comp>/main). We
+    key on the FIRST path segment of --out so `--out apps`, `--out myapp`, etc.
+    auto-iterate compositions while `--out services/<fc>` stays flat."""
+    parts = [p for p in Path(out_dir).parts if p not in (".", "")]
+    return bool(parts) and parts[0] != "services"
+
+
+def _art_compositions(art_path: Path) -> "list[str]":
+    """The composition NAMES declared as members of the .art's cluster(s), in
+    source order. Empty when the .art has no cluster members (a bare node/.art,
+    or an empty `cluster Applications { }` scaffold) — the caller then falls back
+    to the flat whole-.art emit. Reuses _cluster_members so the enumeration
+    matches exactly what gen-manifest binds."""
+    from ._art_clusters import _cluster_members
+    try:
+        clusters = _cluster_members(str(art_path))
+    except ValueError:
+        return []   # no cluster declared → not an app cluster; flat emit.
+    seen: set[str] = set()
+    comps: list[str] = []
+    for _cluster, _base, _pkg, members in clusters:
+        for _ident, composition, _nodes in members:
+            if composition and composition not in seen:
+                seen.add(composition)
+                comps.append(composition)
+    return comps
+
+
 # ---- public entry ----------------------------------------------------------
 
 def generate_fc(
@@ -905,12 +940,38 @@ def generate_fc(
     art_path = Path(art_path)
     out_dir = Path(out_dir)
 
+    # HANDS-OFF default: an APP cluster (anything but services/) is laid out
+    # PER-COMPOSITION — gen-manifest derives each member's bazel_target as
+    # //<base_dir>/<composition>/main:<cluster> (see _art_clusters.app_bazel_
+    # target), so gen-app MUST emit each composition into <out>/<composition>/
+    # for the manifest's target to resolve. When the caller doesn't pin a single
+    # --composition, auto-iterate every composition the .art declares so the
+    # plain recipe `gen-app --kind fc <component.art> --out apps --proto-out proto`
+    # produces the layout `theia install` expects — no --composition needed, no
+    # per-composition shell loop, no generated-output patching. (services FCs are
+    # FLAT — one dir, many nodes — so they're excluded from the auto-iterate.)
+    if composition is None and _is_app_layout(out_dir):
+        comps = _art_compositions(art_path)
+        if comps:
+            agg: dict[str, list[str]] = {
+                "wrote": [], "overwrote": [], "skipped-exists": [],
+            }
+            for comp in comps:
+                sub = generate_fc(
+                    art_path, out_dir,
+                    proto_out=proto_out, cxx_namespace=cxx_namespace,
+                    composition=comp, force=force,
+                )
+                for k in agg:
+                    agg[k].extend(sub.get(k, []))
+            return agg
+
     # Ergonomics: with --composition, --out is the PARENT and the app dir
     # is the composition name appended verbatim, so the user names the
     # where (--out) and the what (--composition) once and the tool
     # composes the path. e.g. --out up/tmp --composition MyAppP3 ->
     # up/tmp/MyAppP3. Without --composition, --out is the app dir
-    # directly (legacy).
+    # directly (legacy / services).
     if composition is not None:
         out_dir = out_dir / composition
 
