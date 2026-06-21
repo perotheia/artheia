@@ -275,12 +275,18 @@ def _render_manifest(source: str, processes, services, app_name: str,
         out.append("    }),\n")
 
     # --- application axis: one AA bundling every process, host open -------
+    # ApplicationLayer.processes is a SET of process names. A bare `{}` is an
+    # empty DICT (not a set), so an empty composition (e.g. the bootstrap apps
+    # cluster) must emit `set()` — otherwise simplify() carries a dict into
+    # ApplicationTarget.processes (declared frozenset) and the frozen target's
+    # hash blows up with "unhashable type: 'dict'".
     procs_lit = ", ".join(repr(n) for n in proc_names)
+    procs_expr = "{" + procs_lit + "}" if proc_names else "set()"
     out.append("    applications=ApplicationSetLayer(applications={\n")
     out.append(
         f"        # one AA bundling every process; host bound by the variant.\n"
         f"        ApplicationLayer(name={app_name!r}, "
-        f"processes={{{procs_lit}}}),\n"
+        f"processes={procs_expr}),\n"
     )
     out.append("    }),\n")
 

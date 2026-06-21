@@ -432,3 +432,47 @@ def test_netgraph_signal_ref_unresolved_without_catalog(tmp_path):
     route = json.loads(out.read_text())["nodes"][0]["gateway_routes"][0]
     assert route["unresolved"] is True
     assert route["signal"] == "ACC_07"
+
+
+def test_manifest_empty_application_emits_set_not_dict(tmp_path):
+    """An empty composition (no processes) must render
+    ``ApplicationLayer(processes=set())`` — a bare ``{}`` is an empty DICT, which
+    carries through simplify() into ApplicationTarget.processes (a frozenset) and
+    crashes the frozen target's hash with 'unhashable type: dict'. Regression for
+    the hands-off bootstrap path."""
+    from artheia.generators.manifest_gen import _render_manifest
+
+    text = _render_manifest(
+        source="empty.art", processes=[], services=[],
+        app_name="apps", proc_names=[], process_nodes={},
+    )
+    assert "processes=set()" in text
+    assert "processes={}" not in text
+
+    # And it must actually simplify (the real failure mode): exec the rendered
+    # module, bind host_machine the way a rig does (Append over the apps AA), then
+    # simplify. Before the fix this raised "unhashable type: 'dict'" the moment
+    # the empty-process ApplicationTarget hit the applications frozenset.
+    from artheia.manifest.algebra import Explicit, Append
+    from artheia.manifest.deployment import (
+        DeploymentLayer, ApplicationSetLayer, ApplicationLayer, MachineSetLayer,
+        MachineLayer,
+    )
+
+    ns: dict = {}
+    mod = tmp_path / "m.py"
+    mod.write_text(text)
+    exec(compile(text, str(mod), "exec"), ns)
+    deployment = ns["DEPLOYMENT"]
+    bound = deployment.combine(DeploymentLayer(
+        machines=MachineSetLayer(machines={
+            Append(MachineLayer(name="central")),
+        }),
+        applications=ApplicationSetLayer(applications={
+            Append(ApplicationLayer(name="apps", host_machine=Explicit("central"))),
+        }),
+    ))
+    target = bound.simplify()  # must not raise unhashable-type: dict
+    # the (single) application's processes is an empty frozenset now
+    app = next(iter(target.applications.applications))
+    assert app.processes == frozenset()
