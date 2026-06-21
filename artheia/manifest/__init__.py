@@ -1,117 +1,126 @@
-"""Adaptive-AUTOSAR-compliant manifest model.
+"""Orthogonal-ARA manifest model (the manifest-algebra engine).
 
-Four manifest kinds following AUTOSAR's split:
+A runtime is described by a small set of *orthogonal* manifest axes — each
+answering one independent question (WHAT processes / HOW they talk / WHERE they
+live / which Adaptive-Application bundles them). They compose as monoids on
+:mod:`artheia.manifest.algebra` and materialize via :meth:`DeploymentLayer.simplify`.
 
-================ =========================================================
-:mod:`.application`  Application Manifest — per Adaptive Application.
-:mod:`.machine`      Machine Manifest — per machine (ECU / VM).
-:mod:`.service`      Service Manifest — per process SOA bindings.
-:mod:`.execution`    Execution Manifest — per process deployment.
-================ =========================================================
+Modules:
 
-Plus three supporting modules:
-
-- :mod:`.rig` — :class:`Rig` bundles a vehicle identity with N machines
-  + M applications + service manifests. The vendor-side top-level.
-- :mod:`.layer` — :class:`Layer` + :func:`merge_layers` compose deltas
-  (platform → vehicle-family → concrete rig) into a final :class:`Rig`.
-- :mod:`.applicative` — identity-keyed :class:`Insert` / :class:`Delete`
-  / :class:`Override` primitives the layer system runs on (the layer
-  combine modelled as an applicative functor over dataclass records).
-- :mod:`.clusters` — :data:`CLUSTERS` catalogue of the 18 Adaptive
-  Platform Functional Clusters by short name.
-- :mod:`.cluster` — :class:`Cluster` / :class:`ClusterMember` for the
-  artheia ``cluster Foo { ... }`` deployment-bundle primitive.
+- :mod:`.algebra` — the layer-merge engine: :class:`ConfigField`
+  (Undefined/Default/Explicit/Defer), :class:`Layer` / :class:`Identifiable`
+  / :class:`MonoidSet`, the ``Append``/``Remove`` set edits, and
+  :func:`simplify` / :func:`validate`.
+- :mod:`.deployment` — the four orthogonal axes (Execution / Service / Machine /
+  Application) and :class:`DeploymentLayer` / :class:`DeploymentTarget`.
+- :mod:`.supervisor` — the declarative OTP-style supervisor dataclasses
+  (:class:`SupervisorNode` etc.) the executor.py sidecars author.
+- :mod:`.statem` — the parsed-AST → :class:`StateMSpec` lowering used by the
+  ``gen-app`` GenStateM templates.
 
 See ``docs/autosar/manifest.md`` for the conceptual model.
 """
 
-from artheia.manifest.application import (  # noqa: F401
-    ApplicationManifest,
-    SwComponent,
+from artheia.manifest.algebra import (  # noqa: F401
+    Append,
+    ConfigField,
+    Default,
+    Defer,
+    EmptySet,
+    Explicit,
+    Identifiable,
+    Insert,
+    Issue,
+    Layer,
+    MonoidSet,
+    Remove,
+    Undefined,
+    empty_set,
+    identifiable_dataclass,
+    validate,
 )
-from artheia.manifest.cluster import (  # noqa: F401
-    Cluster,
-    ClusterConnect,
-    ClusterMember,
-    ClusterPort,
-    cluster_from_ast,
+from artheia.manifest.deployment import (  # noqa: F401
+    ApplicationLayer,
+    ApplicationSetLayer,
+    ApplicationSetTarget,
+    ApplicationTarget,
+    DeploymentLayer,
+    DeploymentTarget,
+    ExecutionLayer,
+    ExecutionTarget,
+    MachineLayer,
+    MachineSetLayer,
+    MachineSetTarget,
+    MachineTarget,
+    ProcessLayer,
+    ProcessTarget,
+    ServiceInstanceLayer,
+    ServiceInstanceTarget,
+    ServiceLayer,
+    ServiceTarget,
 )
-from artheia.manifest.clusters import (  # noqa: F401
-    BY_SHORT as CLUSTER_BY_SHORT,
-    CLUSTERS,
-    FunctionalCluster,
-)
-from artheia.manifest.execution import ExecutionManifest  # noqa: F401
-from artheia.manifest.layer import Layer, apply_layer, merge_layers  # noqa: F401
-from artheia.manifest.machine import (  # noqa: F401
-    CpuArchitecture,
-    HardwareResource,
-    MachineKind,
-    MachineManifest,
-    OpkgArtifact,
-    OsPackage,
-)
-# PlatformBase / PlatformApplication / PlatformServices are resolved
-# lazily inside artheia.manifest.platform (services.manifest.fc imports
-# back into this package, so eager re-export here would cycle). Import
-# them via their submodule when needed:
-#   from artheia.manifest.platform import PlatformBase, PlatformServices
-from artheia.manifest.rig import Rig, VehicleIdentity  # noqa: F401
-from artheia.manifest.service import (  # noqa: F401
-    InetEndpoint,
-    ServiceInstance,
-    ServiceInterface,
-    ServiceManifest,
-    TipcAddress,
-    TransportBinding,
+from artheia.manifest.statem import (  # noqa: F401
+    StateMSpec,
+    statem_from_ast,
 )
 from artheia.manifest.supervisor import (  # noqa: F401
+    ChildSpec,
+    ChildType,
+    NodeInfo,
     RestartStrategy,
     RestartType,
     Supervisor,
     SupervisorNode,
-)
-from artheia.manifest.applicative import (  # noqa: F401
-    Append,
-    Identifiable,
-    Insert,
-    Remove,
+    SupervisorSpec,
 )
 
 __all__ = [
+    # algebra
     "Append",
-    "ApplicationManifest",
-    "CLUSTERS",
-    "CLUSTER_BY_SHORT",
-    "Cluster",
-    "ClusterMember",
-    "cluster_from_ast",
-    "CpuArchitecture",
-    "ExecutionManifest",
-    "FunctionalCluster",
-    "HardwareResource",
+    "ConfigField",
+    "Default",
+    "Defer",
+    "EmptySet",
+    "Explicit",
     "Identifiable",
-    "InetEndpoint",
     "Insert",
+    "Issue",
     "Layer",
-    "MachineKind",
-    "MachineManifest",
-    "OpkgArtifact",
-    "OsPackage",
+    "MonoidSet",
     "Remove",
+    "Undefined",
+    "empty_set",
+    "identifiable_dataclass",
+    "validate",
+    # deployment axes
+    "ApplicationLayer",
+    "ApplicationSetLayer",
+    "ApplicationSetTarget",
+    "ApplicationTarget",
+    "DeploymentLayer",
+    "DeploymentTarget",
+    "ExecutionLayer",
+    "ExecutionTarget",
+    "MachineLayer",
+    "MachineSetLayer",
+    "MachineSetTarget",
+    "MachineTarget",
+    "ProcessLayer",
+    "ProcessTarget",
+    "ServiceInstanceLayer",
+    "ServiceInstanceTarget",
+    "ServiceLayer",
+    "ServiceTarget",
+    # statem
+    "StateMSpec",
+    "statem_from_ast",
+    # supervisor
+    "ChildSpec",
+    "ChildType",
+    "NodeInfo",
     "RestartStrategy",
     "RestartType",
-    "Rig",
-    "ServiceInstance",
-    "ServiceInterface",
-    "ServiceManifest",
     "Supervisor",
     "SupervisorNode",
-    "SwComponent",
-    "TipcAddress",
-    "TransportBinding",
-    "VehicleIdentity",
-    "apply_layer",
-    "merge_layers",
+    "SupervisorSpec",
 ]

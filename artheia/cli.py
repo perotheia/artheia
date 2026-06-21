@@ -881,14 +881,34 @@ def _children(el, *, only_containers: bool, resolved: dict | None = None):
     return out
 
 
-@main.command("gen-proto", help="Emit .proto files (one per message).")
+@main.group("proto", help="Protobuf wire schema (.proto) from .art messages.")
+def proto() -> None:
+    """The .proto wire-schema verbs. Kept distinct from the deployment verbs:
+
+      proto emit         — .proto files from .art messages (wire schema)
+      gen-manifest       — a DeploymentLayer from an .art subtree
+      serialize-manifest — per-machine JSON from a DeploymentLayer
+    """
+    pass
+
+
+@proto.command("emit", help="Emit .proto files (one per message) from an .art.")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
-def gen_proto(art_file: str, out_dir: str) -> None:
+def proto_emit(art_file: str, out_dir: str) -> None:
     model = _parse(art_file)
     paths = generate_proto(model, out_dir, source_file=art_file)
     for p in paths:
         click.echo(p)
+
+
+@main.command("gen-proto", hidden=True,
+              help="Deprecated alias for `proto emit` (kept for back-compat).")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False))
+@click.pass_context
+def gen_proto(ctx: click.Context, art_file: str, out_dir: str) -> None:
+    ctx.invoke(proto_emit, art_file=art_file, out_dir=out_dir)
 
 
 # (gen-proto-package retired as a standalone command — `gen-app --kind fc`
@@ -898,20 +918,21 @@ def gen_proto(art_file: str, out_dir: str) -> None:
 
 
 @main.command("gen-manifest",
-              help="Generate the Functional-Cluster manifest module "
-                   "(services/manifest/service.py) from a system .art. "
-                   "The FC list is taken from `cluster Services` — the "
-                   ".art is the source of truth. SwComponent / Executable "
-                   "/ Process triples are emitted for each cluster member; "
-                   "the hand-authored supervisor tree is sidecared in "
-                   "executor.py and re-exported unchanged. (Emits a Python "
-                   "manifest module — NOT a .proto; was misnamed "
-                   "gen-manifest-proto.)")
+              help=".art subtree → manifest.py (DeploymentLayer) + "
+                   "executor.py (write-once unless --force).\n\n"
+                   "Emits a base DeploymentLayer on the orthogonal-ARA engine: "
+                   "one EXECUTION-axis process per cluster member, best-effort "
+                   "SERVICE-axis instances from provided interfaces, machines "
+                   "left open (the deploy variant binds them). The supervisor "
+                   "tree is sidecared in executor.py — written once, then "
+                   "hand-editable (regenerate only with --force).")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.argument("out_file", type=click.Path(dir_okay=False))
-def gen_manifest(art_file: str, out_file: str) -> None:
-    from .generators.manifest_proto import generate_manifest_proto
-    path = generate_manifest_proto(art_file, out_file)
+@click.option("--force", "-f", "force", is_flag=True, default=False,
+              help="Clobber an existing executor.py sidecar (default: keep it).")
+def gen_manifest(art_file: str, out_file: str, force: bool) -> None:
+    from .generators.manifest_gen import generate_manifest
+    path = generate_manifest(art_file, out_file, force=force)
     click.echo(str(path))
 
 
@@ -1135,142 +1156,6 @@ def gen_migration(from_schema: str, to_schema: str, out_dir: str,
 
 
 @main.command(
-    "gen-rig",
-    help="Bootstrap a vendor rig.py from a top-level .art composition. "
-    "Walks `prototype <Node> name on process <P>` lines, groups by "
-    "process, and emits SwComponent + Executable + Process factories "
-    "plus a SoftwareSpecification delta layer composed against "
-    "FcSoftware. Deployment-specific decisions (machine endpoint, "
-    "CPU affinity, vehicle identity) are emitted as TODO markers.",
-)
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option(
-    "--composition", "-c",
-    required=True,
-    help="Top-level composition name in the .art file (e.g. MyApp).",
-)
-@click.option(
-    "--out",
-    "out_path",
-    required=True,
-    type=click.Path(dir_okay=False),
-    help="Where to write the rig.py.",
-)
-@click.option(
-    "--vehicle-name",
-    default=None,
-    help="VehicleIdentity.name (default: derive from --out parent dir, "
-    "e.g. app/manifest/ → 'app').",
-)
-@click.option(
-    "--machine-name",
-    default=None,
-    help="Default host machine name (default: '<vehicle>_host').",
-)
-@click.option(
-    "--bazel-package",
-    default=None,
-    help="Bazel package prefix for SwComponent targets (default: '//' "
-    "+ vehicle name).",
-)
-@click.option(
-    "--grpc-port",
-    type=int,
-    default=7700,
-    help="Default services/com gRPC port (default: 7700).",
-)
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Overwrite an existing non-empty out path.",
-)
-def gen_rig(
-    art_file: str,
-    composition: str,
-    out_path: str,
-    vehicle_name: str | None,
-    machine_name: str | None,
-    bazel_package: str | None,
-    grpc_port: int,
-    force: bool,
-) -> None:
-    from .generators.rig import write_rig_py
-
-    out = Path(out_path)
-    # Default vehicle name from out_path's parent dir name (e.g.
-    # app/manifest/rig.py → "app").
-    if vehicle_name is None:
-        parents = list(out.parents)
-        # parents[0] is the directory containing rig.py (e.g. manifest/);
-        # parents[1] is the rig root (e.g. app/).
-        if len(parents) >= 2 and parents[1].name:
-            vehicle_name = parents[1].name
-        else:
-            click.secho(
-                "error: cannot infer --vehicle-name from --out; pass it explicitly",
-                fg="red", err=True,
-            )
-            sys.exit(2)
-
-    if machine_name is None:
-        machine_name = f"{vehicle_name}_host"
-
-    if bazel_package is None:
-        bazel_package = f"//{vehicle_name}"
-
-    try:
-        write_rig_py(
-            art_path=Path(art_file),
-            composition_name=composition,
-            out_path=out,
-            vehicle_name=vehicle_name,
-            machine_name=machine_name,
-            bazel_package=bazel_package,
-            grpc_port=grpc_port,
-            force=force,
-        )
-    except FileExistsError as e:
-        click.secho(f"error: {e}", fg="red", err=True)
-        sys.exit(2)
-    except ValueError as e:
-        click.secho(f"error: {e}", fg="red", err=True)
-        sys.exit(2)
-
-    click.echo(str(out))
-
-
-@main.command(
-    "gen-rig-combine",
-    help="Combine generated manifest modules (services + apps, each emitted by "
-    "gen-manifest with a *Software + an executor.py sidecar) into one rig.py. "
-    "The services software is the base (full supervisor tree); the rest squash "
-    "in; the apps fill app_sup. MODULES are dotted module paths "
-    "(`apps.manifest.applications`) or .py file paths "
-    "(`apps/manifest/applications.py`). The modules must be importable.",
-)
-@click.argument("modules", nargs=-1, required=True)
-@click.option("--out", "out_path", required=True,
-              type=click.Path(dir_okay=False),
-              help="Where to write the combiner rig.py.")
-@click.option("--rig-name", default=None,
-              help="Symbol prefix for the emitted <Name>Software/<Name>Rig "
-                   "(default: from --vehicle or 'Combined').")
-@click.option("--vehicle", default=None,
-              help="VehicleIdentity.name (default: lowercased rig name).")
-@click.option("--force", is_flag=True,
-              help="Overwrite an existing non-empty out path.")
-def gen_rig_combine(modules, out_path, rig_name, vehicle, force):
-    from .generators.rig_combine import write_rig_combine
-    try:
-        out = write_rig_combine(list(modules), out_path,
-                                rig_name=rig_name, vehicle=vehicle, force=force)
-    except (FileExistsError, ValueError, ModuleNotFoundError) as e:
-        click.secho(f"error: {e}", fg="red", err=True)
-        sys.exit(2)
-    click.echo(str(out))
-
-
-@main.command(
     "import-dbc",
     help="Import a DBC file. Emits package.art (message per CAN frame "
     "with scalar signal fields + companion enum decls for value tables) "
@@ -1478,8 +1363,8 @@ def gen_autosar_system(
               help="(fc mode) Emit ONE app for a SINGLE composition — only "
               "that composition's prototyped node-types get lib/impl/main/"
               "proto. With --composition, --out is the PARENT dir and the "
-              "composition name is appended as the app dir (MyAppP3 → "
-              "<out>/MyAppP3), so you name the where (--out) and the "
+              "composition name is appended as the app dir (Demo3WayP3 → "
+              "<out>/Demo3WayP3), so you name the where (--out) and the "
               "what (--composition) once. Run once per composition for a "
               "per-process layout. Cross-process peers in other "
               "compositions are reached by TipcAddr, not constructed in "
@@ -1770,269 +1655,79 @@ def gen_psp_registry(
     generate(list(can_namespaces), include_dir, out_dir)
 
 
-def _resolve_rig(target: str, rig_attr: str | None):
-    """Import ``target`` and return its Rig export, materializing
-    :class:`SoftwareSpecification` via :meth:`SoftwareSpecification.to_rig`
-    when needed.
 
-    Accepts:
-      - A direct :class:`Rig` export (legacy path).
-      - A :class:`SoftwareSpecification` export (new structured-DSL path) —
-        auto-converted via ``.to_rig()``.
+def _load_deployment(target: str, attr: str | None):
+    """Import ``target`` and return ``(module, DeploymentLayer)``.
 
-    Search order when ``rig_attr`` is None: prefer attributes whose name
-    ends in ``*Software`` over ``*Rig`` over ``Rig`` (structured-DSL
-    preferred since it's the going-forward shape).
+    The single resolution path shared by every command that loads a rig on
+    the orthogonal-ARA engine (``serialize-manifest`` / ``rig-deps`` /
+    ``gui emit``). When ``attr`` is None the export is auto-detected:
+    DEPLOYMENT first, then RIG/SINGLE/DOCKER/HW/LOCAL, then any
+    :class:`DeploymentLayer`-typed export. The module is returned too so
+    callers can read sidecar attributes (e.g. ``SUPERVISORS``).
     """
     import importlib
 
-    from artheia.manifest.rig import Rig, SoftwareSpecification
+    from artheia.manifest.deployment import DeploymentLayer
 
     module = importlib.import_module(target)
 
-    if rig_attr is not None:
-        if not hasattr(module, rig_attr):
-            click.secho(
-                f"error: {target} has no attribute '{rig_attr}'",
-                fg="red", err=True,
-            )
+    if attr is not None:
+        if not hasattr(module, attr):
+            click.secho(f"error: {target} has no attribute '{attr}'",
+                        fg="red", err=True)
             sys.exit(2)
-        candidate = getattr(module, rig_attr)
+        dep = getattr(module, attr)
     else:
-        names = [
-            n for n in vars(module)
-            if isinstance(getattr(module, n), (Rig, SoftwareSpecification))
-        ]
-        # Prefer *Software (new shape) > *Rig > bare "Rig" — emit the
-        # structured-DSL export when present.
+        names = [n for n in vars(module)
+                 if isinstance(getattr(module, n), DeploymentLayer)]
+        preferred = ["DEPLOYMENT", "RIG", "SINGLE", "DOCKER", "HW", "LOCAL"]
+
         def _rank(name: str) -> tuple[int, str]:
-            if name.endswith("Software"):
-                return (0, name)
-            if name.endswith("Rig") and name != "Rig":
-                return (1, name)
-            return (2, name)
+            return (preferred.index(name) if name in preferred else len(preferred),
+                    name)
 
         names.sort(key=_rank)
         if not names:
             click.secho(
-                f"error: {target} exports no Rig or SoftwareSpecification "
-                f"(pass --rig <name>)",
-                fg="red", err=True,
-            )
+                f"error: {target} exports no DeploymentLayer (pass --attr <name>)",
+                fg="red", err=True)
             sys.exit(2)
-        candidate = getattr(module, names[0])
+        dep = getattr(module, names[0])
 
-    if isinstance(candidate, SoftwareSpecification):
-        return candidate.to_rig()
-    return candidate
+    if not isinstance(dep, DeploymentLayer):
+        click.secho(f"error: {target} attr is not a DeploymentLayer",
+                    fg="red", err=True)
+        sys.exit(2)
 
-
-@main.command(
-    "audit-manifest",
-    help="Left-join an .art system tree against a vendor rig.py and "
-    "report manifest gaps. Walks every cluster/composition declared "
-    "in ART_FILE (transitively via `import` statements) and checks "
-    "that the rig.py module declares matching SwComponent/Application/"
-    "Process entries.\n\n"
-    "RIG_TARGET is a dotted module path, like `apps.manifest.rig`.",
-)
-@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.argument("rig_target")
-@click.option(
-    "--rig",
-    "rig_attr",
-    default=None,
-    help="Name of the Rig / SoftwareSpecification attribute in the module.",
-)
-def audit_manifest_cmd(art_file: str, rig_target: str,
-                       rig_attr: str | None) -> None:
-    """Report what the rig.py is missing relative to .art declarations.
-
-    Three checks, in left-join shape (.art → rig.py):
-
-    1. **Cluster member → ApplicationManifest**: every
-       ``composition <CompFQN> <ident>`` line inside a cluster expects
-       an ``ApplicationManifest(name=<ident>)`` in the rig — or at
-       minimum a ``SwComponent`` whose ``art_node`` points at the
-       composition. Otherwise the cluster's .ipk has no manifest
-       counterpart and Puppet won't know where to deploy it.
-
-    2. **Composition → SwComponent**: every non-stub
-       ``composition X { ... }`` should have at least one
-       ``SwComponent`` whose ``art_node`` ends with ``/X`` — that
-       SwComponent's bazel_target is what gets built into the binary.
-
-    3. **Prototype-with-process → Process**: every
-       ``prototype NodeT name on process P#`` annotation should have
-       a ``Process(name=<name>)`` in the rig (or its supervisor
-       tree). Missing here means the supervisor won't spawn it.
-
-    Exit code: 0 if all present; 1 if gaps found.
-    """
-    model = _parse(art_file)
-    resolved = _resolve_forward_decls(art_file, model)
-
-    # Collect what the .art tree declares.
-    clusters: list = []                      # list of ClusterDecl
-    compositions_by_name: dict[str, object] = {}   # name → CompositionDecl
-    prototypes_with_process: list[tuple[str, str, str]] = []
-    # (composition_name, prototype_ident, process_id)
-
-    def _walk(el, seen: set):
-        if id(el) in seen:
-            return
-        seen.add(id(el))
-        kind = type(el).__name__
-        # Substitute stubs with resolved real defs.
-        real = resolved.get(id(el), el)
-        if id(real) != id(el) and id(real) not in seen:
-            _walk(real, seen)
-            return
-        if kind == "ClusterDecl":
-            clusters.append(el)
-            for sub in getattr(el, "elements", []):
-                if type(sub).__name__ == "ClusterMember":
-                    _walk(sub.type, seen)  # the composition it refers to
-        elif kind == "CompositionDecl":
-            if el.name and getattr(el, "elements", []):
-                compositions_by_name.setdefault(el.name, el)
-            for sub in getattr(el, "elements", []):
-                if type(sub).__name__ == "PrototypeDecl":
-                    proc = getattr(sub, "process", None)
-                    if proc:
-                        prototypes_with_process.append(
-                            (el.name, sub.name, proc),
-                        )
-
-    for el in model.elements:
-        _walk(el, set())
-
-    # Load the rig.
-    try:
-        rig = _resolve_rig(rig_target, rig_attr)
-    except SystemExit:
-        return
-
-    sw_components = [c for app in rig.applications for c in app.components]
-    apps_by_name = {a.name: a for a in rig.applications}
-    processes_by_name = {p.name: p for p in rig.execution_manifests}
-
-    def _has_sw_for_composition(comp_name: str) -> bool:
-        """True if any SwComponent's `art_node` matches this composition
-        — either directly (``.../<CompName>``) or via one of the node
-        types prototyped inside it (``.../<NodeType>``).
-
-        The looser match handles the convention where SwComponents
-        point at the daemon NODE (e.g. ``services.com/ComDaemon``)
-        even though they implement the COMPOSITION (``Com``).
-        """
-        comp = compositions_by_name.get(comp_name)
-        prototype_types: set[str] = set()
-        if comp is not None:
-            for sub in getattr(comp, "elements", []):
-                if type(sub).__name__ == "PrototypeDecl":
-                    t = getattr(sub.type, "name", None)
-                    if t:
-                        prototype_types.add(t)
-        for c in sw_components:
-            art_node = getattr(c, "art_node", "") or ""
-            leaf = art_node.rsplit("/", 1)[-1]
-            if leaf == comp_name or leaf in prototype_types:
-                return True
-        return False
-
-    # Run the three checks and collect gaps.
-    gaps: dict[str, list[str]] = {
-        "cluster_member_without_application_or_swcomponent": [],
-        "composition_without_swcomponent": [],
-        "prototype_process_without_process_entry": [],
-    }
-
-    for cluster in clusters:
-        for sub in getattr(cluster, "elements", []):
-            if type(sub).__name__ != "ClusterMember":
-                continue
-            ident = sub.name
-            comp = resolved.get(id(sub.type), sub.type)
-            comp_name = getattr(comp, "name", "?")
-            has_app = ident in apps_by_name
-            has_sw = _has_sw_for_composition(comp_name)
-            if not has_app and not has_sw:
-                gaps["cluster_member_without_application_or_swcomponent"].append(
-                    f"cluster {cluster.name}.{ident}  (composition {comp_name})",
-                )
-
-    for comp_name in sorted(compositions_by_name):
-        if not _has_sw_for_composition(comp_name):
-            gaps["composition_without_swcomponent"].append(
-                f"composition {comp_name}",
-            )
-
-    # Dedupe (composition, process-id) — one rig Process per process-id,
-    # not per prototype. Multiple prototypes share one Process when they
-    # are pinned `on process P1`.
-    process_groups: dict[tuple[str, str], list[str]] = {}
-    for comp_name, proto_name, proc in prototypes_with_process:
-        process_groups.setdefault((comp_name, proc), []).append(proto_name)
-    for (comp_name, proc), protos in sorted(process_groups.items()):
-        # Look for a Process whose name ends with the process-id token,
-        # case-insensitive (rig names look like `app_p1`, art proc is `P1`).
-        proc_token = proc.lower()
-        if not any(
-            p.name.lower().endswith(f"_{proc_token}") or p.name.lower() == proc_token
-            for p in rig.execution_manifests
-        ):
-            gaps["prototype_process_without_process_entry"].append(
-                f"process {proc} in {comp_name}  (prototypes: {', '.join(protos)})",
-            )
-
-    # Report.
-    total = sum(len(v) for v in gaps.values())
-    click.echo(f"art: {art_file}")
-    click.echo(f"rig: {rig_target} -> {rig.vehicle.name!r}")
-    click.echo("")
-    click.echo(
-        f"clusters: {len(clusters)}  "
-        f"compositions: {len(compositions_by_name)}  "
-        f"prototypes-with-process: {len(prototypes_with_process)}",
-    )
-    click.echo(
-        f"rig: applications={len(rig.applications)}  "
-        f"sw_components={len(sw_components)}  "
-        f"processes={len(rig.execution_manifests)}",
-    )
-    click.echo("")
-    if total == 0:
-        click.secho("✓ no gaps — rig is aligned with art", fg="green")
-        return
-    click.secho(f"✗ {total} gaps:", fg="yellow")
-    for category, items in gaps.items():
-        if not items:
-            continue
-        click.echo(f"\n  {category}:")
-        for it in items:
-            click.echo(f"    - {it}")
-    sys.exit(1)
+    return module, dep
 
 
 @main.command(
-    "generate-manifest",
-    help="Emit the per-machine deploy manifest set for a vehicle rig. "
-    "TARGET is a dotted import path to a module exporting a Rig or "
-    "SoftwareSpecification (e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
-    "Writes <out>/<machine>/{machine,application,service,execution}.json "
-    "plus an <out>/index.json. Each ECU's Puppet flow reads its own "
-    "directory.\n\n"
-    "Use --flat to emit a single-JSON view to stdout (or to "
-    "--out FILE) for inspection / debugging.",
+    "serialize-manifest",
+    help="DeploymentLayer → per-machine deploy JSON.\n\n"
+    "TARGET is a dotted import path to a module exporting a DeploymentLayer "
+    "on the orthogonal-ARA engine (e.g. manifest.demo.single). The layer is "
+    "looked up by name: DEPLOYMENT first, then SINGLE/DOCKER/HW/LOCAL/*-named "
+    "DeploymentLayer; use --attr to name it.\n\n"
+    "validate() runs FIRST: any severity=error issue is printed (path: "
+    "message) and the command exits non-zero (the validate-before-serialize "
+    "gate). On success the layer is simplified and written as:\n\n"
+    "  <out>/machines.json                         the machine list\n"
+    "  <out>/<machine>/machine.json                that machine's MachineTarget\n"
+    "  <out>/<machine>/execution.json              its processes\n"
+    "  <out>/<machine>/service.json                its service instances\n"
+    "  <out>/<machine>/application.json            its applications\n"
+    "  <out>/<machine>/executor.json               the sup tree sliced per machine",
 )
 @click.argument("target")
 @click.option(
-    "--rig",
-    "rig_attr",
+    "--attr",
+    "attr",
     default=None,
-    help="Name of the Rig / SoftwareSpecification attribute. "
-    "Defaults to *Software, then *Rig, then Rig.",
+    help="Name of the DeploymentLayer attribute in the module. "
+    "Defaults to DEPLOYMENT, then SINGLE/DOCKER/HW/LOCAL, then any "
+    "DeploymentLayer-typed export.",
 )
 @click.option(
     "--out",
@@ -2040,177 +1735,121 @@ def audit_manifest_cmd(art_file: str, rig_target: str,
     type=click.Path(),
     default="dist/manifest",
     show_default=True,
-    help="Output directory (per-machine mode) or file (--flat mode).",
+    help="Output directory for the per-machine deploy JSON.",
 )
-@click.option(
-    "--flat",
-    "flat",
-    is_flag=True,
-    default=False,
-    help="Emit a single-JSON view of the whole rig instead of "
-    "per-machine directories. Goes to stdout when --out is the "
-    "default directory.",
-)
-def generate_manifest_cmd(
+def serialize_manifest_cmd(
     target: str,
-    rig_attr: str | None,
+    attr: str | None,
     out_path: str,
-    flat: bool,
 ) -> None:
-    """Run a vendor rig module and emit the deploy manifest set."""
-    rig = _resolve_rig(target, rig_attr)
-
-    if flat:
-        import dataclasses
-        import json
-        from enum import Enum
-        from ipaddress import IPv4Address, IPv6Address
-
-        def _serialize(v):
-            if dataclasses.is_dataclass(v) and not isinstance(v, type):
-                return {f.name: _serialize(getattr(v, f.name))
-                        for f in dataclasses.fields(v)}
-            if isinstance(v, Enum):
-                return v.value
-            if isinstance(v, (IPv4Address, IPv6Address)):
-                return str(v)
-            if isinstance(v, (list, tuple)):
-                return [_serialize(x) for x in v]
-            if isinstance(v, dict):
-                return {k: _serialize(x) for k, x in v.items()}
-            return v
-
-        doc = _serialize(rig)
-        text = json.dumps(doc, indent=2, sort_keys=False) + "\n"
-        # If --out was left at the default dir, write to stdout in --flat.
-        if out_path == "dist/manifest":
-            click.echo(text, nl=False)
-        else:
-            Path(out_path).write_text(text)
-            click.echo(out_path)
-        return
-
-    # Per-machine mode (default).
-    from .generators.dist_manifest import emit_dist_manifest
-
-    written = emit_dist_manifest(rig, Path(out_path))
-    for p in written:
-        click.echo(str(p))
-
-
-@main.group("executor", help="Erlang-style executor commands.")
-def executor() -> None:
-    pass
-
-
-@executor.command(
-    "emit",
-    help="Emit the supervisor manifest (executor.json) for a vehicle rig. "
-    "TARGET is a dotted import path to a module exporting a Rig "
-    "(e.g. vendor.vehicles.tornado.arsyscomp).\n\n"
-    "Without --machine, emits the whole-rig tree (single-machine deploys, "
-    "or for inspection). With --machine, emits only the sub-tree relevant "
-    "to that machine — Process leaves and pinned SupervisorNodes whose "
-    "host doesn't match are dropped, and empty sub-supervisors are pruned.",
-)
-@click.argument("target")
-@click.option(
-    "--rig",
-    "rig_attr",
-    default=None,
-    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
-)
-@click.option(
-    "--out",
-    "out_file",
-    type=click.Path(dir_okay=False),
-    default=None,
-    help="Where to write the JSON. Defaults to stdout.",
-)
-@click.option(
-    "--machine",
-    "machine",
-    default=None,
-    help="Machine to emit the sliced supervisor tree for "
-    "(matches Machine.name in the rig). Without this flag, emits "
-    "the whole-rig tree.",
-)
-def executor_emit(
-    target: str,
-    rig_attr: str | None,
-    out_file: str | None,
-    machine: str | None,
-) -> None:
+    """Import a DeploymentLayer module, validate it, and write per-machine JSON."""
     import json
 
-    from artheia.manifest.supervisor import build_supervisor_tree
+    from artheia.manifest.algebra import validate
 
-    rig = _resolve_rig(target, rig_attr)
-    tree = build_supervisor_tree(rig, machine=machine)
+    module, dep = _load_deployment(target, attr)
 
-    def _to_dict(node) -> dict:
-        d = {"name": node.name}
-        if hasattr(node, "children"):
-            d["strategy"] = node.strategy.value
-            d["max_restarts"] = node.max_restarts
-            d["max_seconds"] = node.max_seconds
-            if getattr(node, "tombstone_dir", ""):
-                d["tombstone_dir"] = node.tombstone_dir
-            d["children"] = [_to_dict(c) for c in node.children]
-        else:
-            d["start_cmd"] = list(node.start_cmd)
-            d["restart"] = node.restart.value
-            d["shutdown"] = node.shutdown
-            d["type"] = node.type.value
-            # Per-process memory cap (RLIMIT_AS) — only when set.
-            mlb = int(getattr(node, "mem_limit_bytes", 0) or 0)
-            if mlb > 0:
-                d["mem_limit_bytes"] = mlb
-            if node.modules:
-                d["modules"] = list(node.modules)
-            if node.env:
-                d["env"] = dict(node.env)
-            if node.working_dir:
-                d["working_dir"] = node.working_dir
-            if node.shall_run_on:
-                d["shall_run_on"] = list(node.shall_run_on)
-            if node.shall_not_run_on:
-                d["shall_not_run_on"] = list(node.shall_not_run_on)
-            # Per-node metadata for the supervisor's node_sup
-            # synthesis (#364) + trace push routing (#361). Empty
-            # for non-FC children (vendor apps without .art decl).
-            nodes = getattr(node, "nodes", None) or []
-            if nodes:
-                node_dicts = []
-                for ni in nodes:
-                    nd = {
-                        "name": ni.name,
-                        "reporting": ni.reporting,
-                        "tipc_type": ni.tipc_type,
-                        "tipc_instance": ni.tipc_instance,
-                    }
-                    # Per-node CPU affinity + scheduler (#NodeToCPUMapping).
-                    # Only emitted when set — the supervisor turns these into
-                    # THEIA_NODE_CFG for the hosting process's main.cc to apply.
-                    cpus = list(getattr(ni, "cpus", None) or [])
-                    if cpus:
-                        nd["cpus"] = cpus
-                    sched = (getattr(ni, "sched", "") or "").strip()
-                    if sched:
-                        nd["sched"] = sched
-                        prio = int(getattr(ni, "sched_prio", 0) or 0)
-                        if prio:
-                            nd["sched_prio"] = prio
-                    node_dicts.append(nd)
-                d["nodes"] = node_dicts
-        return d
+    # --- the validate-before-serialize gate -------------------------------
+    issues = validate(dep)
+    errors = [i for i in issues if i.severity == "error"]
+    if errors:
+        click.secho(f"✗ {len(errors)} error(s) — refusing to serialize:",
+                    fg="red", err=True)
+        for i in errors:
+            click.echo(f"  {i.path}: {i.message}", err=True)
+        sys.exit(1)
 
-    out = json.dumps(_to_dict(tree), indent=2, sort_keys=False) + "\n"
-    if out_file is None:
-        click.echo(out, nl=False)
-    else:
-        Path(out_file).write_text(out)
-        click.echo(out_file)
+    target_dep = dep.simplify()
+
+    # --- per-machine slicing ----------------------------------------------
+    procs = list(target_dep.execution.processes)
+    machines = list(target_dep.machines.machines)
+    services = list(target_dep.service.instances)
+    apps = list(target_dep.applications.applications)
+
+    proc_machine = {p.name: p.machine for p in procs}
+
+    def _proc_dict(p) -> dict:
+        return {
+            "name": p.name, "executable": p.executable,
+            "start_cmd": p.start_cmd, "function_group": p.function_group,
+            "fg_states": sorted(p.fg_states),
+            "cpu_affinity": sorted(p.cpu_affinity),
+            "scheduling": p.scheduling, "priority": p.priority,
+            "mem_limit_bytes": p.mem_limit_bytes, "machine": p.machine,
+            "depends_on": sorted(p.depends_on),
+        }
+
+    def _svc_dict(s) -> dict:
+        return {
+            "name": s.name, "interface": s.interface, "version": s.version,
+            "instance_id": s.instance_id, "binding": s.binding,
+            "endpoint": s.endpoint, "provided_by": s.provided_by,
+        }
+
+    def _machine_dict(m) -> dict:
+        return {
+            "name": m.name, "arch": m.arch, "cores": sorted(m.cores),
+            "machine_states": sorted(m.machine_states),
+            "network_interfaces": sorted(m.network_interfaces),
+            "os_packages": sorted(m.os_packages), "time_base": m.time_base,
+        }
+
+    def _app_dict(a) -> dict:
+        return {
+            "name": a.name, "host_machine": a.host_machine,
+            "processes": sorted(a.processes),
+        }
+
+    def _sup_dict(node) -> dict:
+        return {
+            "name": node.name, "strategy": node.strategy.value,
+            "max_restarts": node.max_restarts, "max_seconds": node.max_seconds,
+            "children": list(node.children),
+        }
+
+    # Supervisor tree from the source module's sidecar (executor.py), if any.
+    supervisors = list(getattr(module, "SUPERVISORS", []) or [])
+
+    out_dir = Path(out_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    def _dump(path: Path, doc) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc, indent=2) + "\n")
+        written.append(path)
+
+    # Whole-deployment machine list.
+    _dump(out_dir / "machines.json",
+          {"machines": [m.name for m in machines]})
+
+    for m in machines:
+        mdir = out_dir / m.name
+        m_procs = [p for p in procs if p.machine == m.name]
+        m_proc_names = {p.name for p in m_procs}
+        m_svcs = [s for s in services
+                  if proc_machine.get(s.provided_by) == m.name]
+        m_apps = [a for a in apps if a.host_machine == m.name]
+
+        _dump(mdir / "machine.json", _machine_dict(m))
+        _dump(mdir / "execution.json",
+              {"processes": [_proc_dict(p) for p in m_procs]})
+        _dump(mdir / "service.json",
+              {"instances": [_svc_dict(s) for s in m_svcs]})
+        _dump(mdir / "application.json",
+              {"applications": [_app_dict(a) for a in m_apps]})
+
+        # executor.json: the sup tree sliced to nodes/leaves on this machine.
+        sliced = []
+        for node in supervisors:
+            kids = [c for c in node.children if c in m_proc_names
+                    or any(s.name == c for s in supervisors)]
+            sliced.append({**_sup_dict(node), "children": kids})
+        _dump(mdir / "executor.json", {"supervisors": sliced})
+
+    for p in written:
+        click.echo(str(p))
 
 
 # -----------------------------------------------------------------------------
@@ -2226,16 +1865,17 @@ def gui() -> None:
 @gui.command(
     "emit",
     help="Emit the GUI manifest (machines.json) for a vehicle rig. "
-    "TARGET is a dotted import path to a module exporting a Rig. "
-    "Output lists each Machine's services/com gRPC endpoint — the GUI "
-    "opens one gRPC channel per row.",
+    "TARGET is a dotted import path to a module exporting a DeploymentLayer "
+    "on the orthogonal-ARA engine. Output lists each target machine's com "
+    "gRPC endpoint — the GUI opens one gRPC channel per row.",
 )
 @click.argument("target")
 @click.option(
-    "--rig",
-    "rig_attr",
+    "--attr",
+    "attr",
     default=None,
-    help="Name of the Rig attribute in the module. Defaults to *Rig / Rig.",
+    help="Name of the DeploymentLayer attribute in the module. "
+    "Defaults to DEPLOYMENT/RIG, then any DeploymentLayer-typed export.",
 )
 @click.option(
     "--out",
@@ -2244,27 +1884,34 @@ def gui() -> None:
     default=None,
     help="Where to write the JSON. Defaults to stdout.",
 )
-def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
+def gui_emit(target: str, attr: str | None, out_file: str | None) -> None:
+    """Emit machines.json — one row per TARGET machine (a machine that hosts
+    at least one process). HOST/admin machines (no processes — the GUI runs ON
+    them) are skipped. Each row carries the machine's com gRPC endpoint: the
+    MachineTarget.com_endpoint (address, port) when set, else 127.0.0.1:7700."""
     import json
 
-    rig = _resolve_rig(target, rig_attr)
+    _module, dep = _load_deployment(target, attr)
+    td = dep.simplify()
+
+    # Machines that host ≥1 process are the observable targets; the rest are
+    # host/admin consoles the GUI itself runs on.
+    machines_with_procs = {p.machine for p in td.execution.processes}
 
     rows: list[dict] = []
-    for m in rig.machines:
-        # HOST machines (admin consoles) don't run a supervisor —
-        # the GUI is what's running on THEM. Skip them so the
-        # machines.json only lists targets to observe.
-        if getattr(m, "kind", "target") == "host":
+    for m in td.machines.machines:
+        if m.name not in machines_with_procs:
             continue
-        ep = getattr(m, "com_endpoint", None)
-        if ep is None:
-            continue
-        rows.append({
-            "name": m.name,
-            "address": str(ep.address) if ep.address is not None else "127.0.0.1",
-            "port": int(ep.port) if ep.port else 7700,
-        })
+        ep = m.com_endpoint  # optional (address, port) tuple, or None
+        address, port = "127.0.0.1", 7700
+        if ep is not None:
+            try:
+                address, port = str(ep[0]), int(ep[1])
+            except (TypeError, ValueError, IndexError):
+                pass
+        rows.append({"name": m.name, "address": address, "port": port})
 
+    rows.sort(key=lambda r: r["name"])
     doc = {"machines": rows}
     text = json.dumps(doc, indent=2, sort_keys=False) + "\n"
     if out_file is None:
@@ -2282,16 +1929,18 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
 @main.command(
     "rig-deps",
     help="Emit the rig's component structure as JSON. Consumed by the "
-    "Bazel rig() module extension to wire SwComponent.bazel_target refs "
-    "into per-machine deploy bundles.",
+    "Bazel rig() module extension to wire process bazel-target refs "
+    "into per-machine deploy bundles, and by rf-theia (the typed Rig in "
+    "rf_theia.runtime.rig). TARGET is a dotted module exporting a "
+    "DeploymentLayer on the orthogonal-ARA engine.",
 )
 @click.argument("target")
 @click.option(
-    "--rig",
-    "rig_attr",
+    "--attr",
+    "attr",
     default=None,
-    help="Name of the Rig/SoftwareSpecification attribute. "
-    "Defaults to *Software / *Rig / Rig.",
+    help="Name of the DeploymentLayer attribute in the module. "
+    "Defaults to DEPLOYMENT/RIG, then any DeploymentLayer-typed export.",
 )
 @click.option(
     "--out",
@@ -2300,46 +1949,38 @@ def gui_emit(target: str, rig_attr: str | None, out_file: str | None) -> None:
     default=None,
     help="Where to write the JSON. Defaults to stdout.",
 )
-def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
-    """Emit a JSON describing the rig:
+def rig_deps(target: str, attr: str | None, out_file: str | None) -> None:
+    """Emit a JSON describing the rig (the rf-theia / Bazel rig-deps contract):
 
       {
-        "vehicle": {"name": "app", "make": "theia", "model": "..."},
+        "vehicle": {"name": "...", "make": "theia", "model": "workspace"},
         "machines": [
-          {
-            "name": "app_host",
-            "applications": [
-              {
-                "name": "platform_app",
-                "components": [
-                  {"name": "app_p1", "bazel_target": "//app:p1_main",
-                   "owner": "platform", "art_node": "system.app/MyAppP1Composition"},
-                  ...
-                ]
-              }
-            ]
-          }
+          {"name": "central", "kind": "target", "arch": "amd64",
+           "applications": [
+             {"name": "apps", "components": [
+                {"name": "p1", "bazel_target": "//apps/...:apps",
+                 "owner": "platform", "art_node": "", "bazel_buildable": true},
+                ...]}]}
         ],
-        "executor_yaml_components": [
-          # Same components, flat — for the Bazel rule that builds the
-          # opkg payload (so it doesn't have to walk the machine list).
-          {"name": "app_p1", "bazel_target": "//app:p1_main", "machine": "app_host"},
-          ...
-        ]
+        "flat_components": [
+          {"name": "p1", "bazel_target": "//apps/...:apps", "machine": "central",
+           "owner": "platform", "art_node": ""},
+          ...]
       }
 
-    The Bazel module extension reads this at module-load time and
-    generates one synthetic repo per rig with per-machine targets.
+    Mapping from the DeploymentTarget: each machine's applications are the
+    ApplicationTargets whose host_machine == that machine; each application's
+    components are its bundled processes (name + executable bazel-target,
+    looked up in the execution axis). The flat list is every component across
+    machines with its machine binding.
     """
     import json
 
-    rig = _resolve_rig(target, rig_attr)
+    _module, dep = _load_deployment(target, attr)
+    td = dep.simplify()
 
-    # Convert AUTOSAR CpuArchitecture → the dpkg-style token Bazel +
-    # downstream packaging want ("amd64" / "arm64" / "armhf").
-    # Kept local to this function — only consumers of rig.json need it,
-    # and the CpuArchitecture enum has its own canonical names ("x86_64",
-    # "aarch64") which dpkg renames.
+    # Convert the AUTOSAR-style arch token (x86_64 / aarch64) → the dpkg-style
+    # token Bazel + downstream packaging want (amd64 / arm64 / armhf).
     _DPKG_ARCH = {
         "x86_64":  "amd64",
         "aarch64": "arm64",
@@ -2347,75 +1988,83 @@ def rig_deps(target: str, rig_attr: str | None, out_file: str | None) -> None:
         "riscv64": "riscv64",
     }
 
-    def _arch_token(m) -> str:
-        arch_str = ""
-        try:
-            arch_str = str(m.hardware.cpu.architecture.value)
-        except AttributeError:
-            try:
-                arch_str = str(m.hardware.cpu.architecture)
-            except AttributeError:
-                pass
-        return _DPKG_ARCH.get(arch_str, "amd64")
+    procs_by_name = {p.name: p for p in td.execution.processes}
+    machines = list(td.machines.machines)
+    apps = list(td.applications.applications)
 
-    # Build a per-machine grouping of components. Each ApplicationManifest's
-    # host_machine field binds it to a specific machine; default to the
-    # first machine if no binding is set (single-machine rigs).
-    machines_by_name = {m.name: m for m in rig.machines}
-    apps_by_machine: dict[str, list] = {m: [] for m in machines_by_name}
+    # Vehicle identity. name from a VEHICLE_NAME/NAME export, else the module's
+    # leaf segment (or the parent segment when the leaf is the generic "rig",
+    # e.g. manifest.single.rig → "single"); make/model default to workspace.
+    def _name_from_target() -> str:
+        parts = target.split(".")
+        leaf = parts[-1]
+        if leaf == "rig" and len(parts) >= 2:
+            return parts[-2]
+        return leaf
 
-    for app in rig.applications:
-        host = app.host_machine or (
-            next(iter(machines_by_name)) if machines_by_name else ""
-        )
+    veh_name = (getattr(_module, "VEHICLE_NAME", None)
+                or getattr(_module, "NAME", None)
+                or _name_from_target())
+    vehicle = {
+        "name": str(veh_name),
+        "make": str(getattr(_module, "VEHICLE_MAKE", "theia")),
+        "model": str(getattr(_module, "VEHICLE_MODEL", "workspace")),
+    }
+
+    # Which machines host ≥1 process → "target"; the rest are "host" consoles.
+    machines_with_procs = {p.machine for p in td.execution.processes}
+
+    def _component_dict(proc_name: str) -> dict:
+        p = procs_by_name.get(proc_name)
+        executable = p.executable if p is not None else ""
+        return {
+            "name": proc_name,
+            "bazel_target": executable,
+            "owner": "platform",
+            "art_node": "",
+            # A "//..."-shaped executable is a buildable Bazel label.
+            "bazel_buildable": bool(executable) and executable.startswith("//"),
+        }
+
+    apps_by_machine: dict[str, list] = {m.name: [] for m in machines}
+    for app in apps:
+        host = app.host_machine
         if host not in apps_by_machine:
             apps_by_machine[host] = []
         apps_by_machine[host].append(app)
 
-    def _component_dict(c) -> dict:
-        return {
-            "name": c.name,
-            "bazel_target": c.bazel_target,
-            "owner": c.owner,
-            "art_node": c.art_node,
-            "bazel_buildable": getattr(c, "bazel_buildable", False),
-        }
-
     machines_json = []
-    for m in rig.machines:
+    for m in machines:
         apps_json = []
-        for app in apps_by_machine.get(m.name, []):
+        for app in sorted(apps_by_machine.get(m.name, []), key=lambda a: a.name):
             apps_json.append({
                 "name": app.name,
-                "components": [_component_dict(c) for c in app.components],
+                "components": [_component_dict(pn)
+                              for pn in sorted(app.processes)],
             })
         machines_json.append({
             "name": m.name,
-            "kind": getattr(m, "kind", "target"),
-            "arch": _arch_token(m),
+            "kind": "target" if m.name in machines_with_procs else "host",
+            "arch": _DPKG_ARCH.get(m.arch, "amd64"),
             "applications": apps_json,
         })
 
-    # Flat list for convenience: every component the rig declares, with
-    # its machine binding.
+    # Flat list: every component across every machine, with its binding.
     flat_components = []
-    for m in rig.machines:
-        for app in apps_by_machine.get(m.name, []):
-            for c in app.components:
+    for m in machines:
+        for app in sorted(apps_by_machine.get(m.name, []), key=lambda a: a.name):
+            for pn in sorted(app.processes):
+                c = _component_dict(pn)
                 flat_components.append({
-                    "name": c.name,
-                    "bazel_target": c.bazel_target,
+                    "name": c["name"],
+                    "bazel_target": c["bazel_target"],
                     "machine": m.name,
-                    "owner": c.owner,
-                    "bazel_buildable": getattr(c, "bazel_buildable", False),
+                    "owner": c["owner"],
+                    "art_node": c["art_node"],
                 })
 
     doc = {
-        "vehicle": {
-            "name": rig.vehicle.name,
-            "make": rig.vehicle.make,
-            "model": rig.vehicle.model,
-        },
+        "vehicle": vehicle,
         "machines": machines_json,
         "flat_components": flat_components,
     }
