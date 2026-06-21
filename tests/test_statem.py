@@ -4,7 +4,7 @@ Covers Phase 3 of the gen_statem MVP (see
 ``docs/tasks/PROGRESS/gen_statem/design.md``):
 
 * the ``.art`` ``statem { ... }`` block parses cleanly
-* :func:`artheia.manifest.statem.statem_from_ast` lowers to a
+* :func:`artheia.generators.statem.statem_from_ast` lowers to a
   :class:`StateMSpec`
 * validation catches obvious mistakes (unknown initial state, unknown
   target state, halt with timeout)
@@ -16,7 +16,7 @@ import pytest
 from textx import TextXSemanticError, TextXSyntaxError
 
 from artheia.model import parse_string
-from artheia.manifest.statem import (
+from artheia.generators.statem import (
     StateMSpec,
     StateBlock,
     TransitionRule,

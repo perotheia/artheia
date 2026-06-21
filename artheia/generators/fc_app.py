@@ -53,7 +53,7 @@ from typing import Iterable, Optional
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from ..model import parse_file
-from ..manifest.statem import StateMSpec, statem_from_ast
+from .statem import StateMSpec, statem_from_ast
 from .proto import _proto_package_name
 
 

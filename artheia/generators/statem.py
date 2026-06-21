@@ -1,9 +1,11 @@
 """StateM — the finite state machine block on a node.
 
-A :class:`StateMSpec` describes the static transition table of an
-:class:`artheia.manifest.NodeDecl`. It is the parsed-AST→Python
-projection of the ``.art`` ``statem { ... }`` block (grammar:
-``StateMBody`` in ``artheia.tx``).
+A :class:`StateMSpec` describes the static transition table of a node's
+``statem`` block. It is the parsed-AST→Python projection of the ``.art``
+``statem { ... }`` block (grammar: ``StateMBody`` in ``artheia.tx``), lowered
+by :func:`statem_from_ast` and consumed by ``gen-app`` — which is why this
+lives in :mod:`artheia.generators` (a codegen concern), not the deployment
+manifest.
 
 Abstraction ladder::
 
@@ -227,8 +229,7 @@ def _rule_from_ast(rule_ast) -> TransitionRule:
 def statem_from_ast(node) -> Optional[StateMSpec]:
     """Build a :class:`StateMSpec` from a parsed textX ``NodeDecl``.
 
-    Returns ``None`` when the node has no ``statem`` block. Mirrors the
-    shape of :func:`artheia.manifest.cluster.cluster_from_ast`.
+    Returns ``None`` when the node has no ``statem`` block.
 
     The returned spec is validated via :meth:`StateMSpec.validate`
     before being returned; malformed FSMs raise :class:`ValueError`

@@ -15,8 +15,10 @@ Modules:
   Application) and :class:`DeploymentLayer` / :class:`DeploymentTarget`.
 - :mod:`.supervisor` — the declarative OTP-style supervisor dataclasses
   (:class:`SupervisorNode` etc.) the executor.py sidecars author.
-- :mod:`.statem` — the parsed-AST → :class:`StateMSpec` lowering used by the
-  ``gen-app`` GenStateM templates.
+
+(The parsed-AST → :class:`StateMSpec` lowering moved to
+:mod:`artheia.generators.statem` — it's a codegen concern, not a deployment
+manifest, and its sole user is ``gen-app``.)
 
 See ``docs/autosar/manifest.md`` for the conceptual model.
 """
@@ -58,10 +60,6 @@ from artheia.manifest.deployment import (  # noqa: F401
     ServiceInstanceTarget,
     ServiceLayer,
     ServiceTarget,
-)
-from artheia.manifest.statem import (  # noqa: F401
-    StateMSpec,
-    statem_from_ast,
 )
 from artheia.manifest.supervisor import (  # noqa: F401
     ChildSpec,
@@ -111,9 +109,6 @@ __all__ = [
     "ServiceInstanceTarget",
     "ServiceLayer",
     "ServiceTarget",
-    # statem
-    "StateMSpec",
-    "statem_from_ast",
     # supervisor
     "ChildSpec",
     "ChildType",
