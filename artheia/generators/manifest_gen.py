@@ -121,6 +121,62 @@ def _provided_services(model, members, pkg: str):
     return out
 
 
+def _node_infos(models: list, comp: str) -> list:
+    """Per-node supervisor metadata for composition *comp*: one dict per
+    prototyped node, ``{name, reporting, tipc_type, tipc_instance}``.
+
+    The C++ supervisor needs this in executor.json (load_worker → NodeInfo) to
+    synthesise node_sup rows, decide which nodes to watchdog (reporting=true),
+    and locate each node's trace-control TIPC server. The orthogonal
+    DeploymentLayer is .art-free, so we resolve it HERE (gen-manifest has the
+    model) and stash it in a PROCESS_NODES sidecar dict the serializer reads.
+
+    *models* is the entry model PLUS every import-reachable model — a services
+    cluster.art only forward-declares the per-FC compositions; their real
+    bodies (with node prototypes + tipc) live in the imported component.art, so
+    we search the whole set and use the FIRST composition body that carries
+    prototypes. tipc type/instance pass through as the .art wrote them (hex or
+    decimal; the supervisor get_str()s them). ``reporting`` mirrors fc_app.py's
+    rule (default true; ``reporting = false`` opts out)."""
+    for model in models:
+        for el in getattr(model, "elements", []):
+            if type(el).__name__ != "CompositionDecl" or el.name != comp:
+                continue
+            infos = []
+            for p in getattr(el, "elements", []):
+                if type(p).__name__ != "PrototypeDecl":
+                    continue
+                node = getattr(p, "type", None)
+                if node is None:
+                    continue
+                tipc = getattr(node, "tipc", None)
+                reporting_raw = (getattr(node, "reporting", "") or "true").lower()
+                infos.append({
+                    "name": p.name,
+                    "reporting": reporting_raw == "true",
+                    "tipc_type": str(getattr(tipc, "type", "")) if tipc else "",
+                    "tipc_instance": str(getattr(tipc, "instance", "0"))
+                                     if tipc else "0",
+                })
+            # The forward-decl stub has no prototypes; keep looking for the real
+            # body in an imported model. Return as soon as we find a non-empty.
+            if infos:
+                return infos
+    return []
+
+
+def _modules_for(target: str) -> list:
+    """The ChildSpec ``modules`` list (informational source path) from a bazel
+    label: ``//services/sm/main:sm`` → ``["services/sm"]``,
+    ``//apps/Demo3WayP1/main:apps`` → ``["apps/Demo3WayP1"]``."""
+    lbl = target.lstrip("/")
+    pkg = lbl.split(":", 1)[0]
+    # drop the trailing /main (the bazel package holding the cc_binary).
+    if pkg.endswith("/main"):
+        pkg = pkg[: -len("/main")]
+    return [pkg] if pkg else []
+
+
 # ---------------------------------------------------------------------------
 # manifest.py rendering — inline + literal DeploymentLayer.
 # ---------------------------------------------------------------------------
@@ -182,8 +238,27 @@ def _render_service(svc: str, fqn: str, inst: int, endpoint: "str | None",
     )
 
 
+def _render_process_nodes(process_nodes: dict) -> str:
+    """Render the PROCESS_NODES sidecar dict: process name → its worker-spec
+    detail (modules + per-node tipc/reporting) for the C++ supervisor's
+    executor.json. serialize-manifest reads this off the manifest module and
+    folds it into each leaf ChildSpec; the orthogonal DeploymentLayer stays
+    .art-free."""
+    import pprint
+    # pprint renders a Python literal (True/False, not JSON true/false) — this
+    # is a .py module, not JSON. sort_keys for stable regen.
+    body = pprint.pformat(process_nodes, indent=4, sort_dicts=True, width=88)
+    out = [
+        "\n\n# Per-process supervisor metadata (modules + nodes) resolved from\n"
+        "# the .art at gen-manifest time. serialize-manifest folds this into the\n"
+        "# executor.json worker leaves. DeploymentLayer stays transport-free.\n",
+        f"PROCESS_NODES = {body}\n",
+    ]
+    return "".join(out)
+
+
 def _render_manifest(source: str, processes, services, app_name: str,
-                     proc_names) -> str:
+                     proc_names, process_nodes: dict) -> str:
     out = [_MANIFEST_HEADER.format(source=source)]
 
     # --- execution axis ---------------------------------------------------
@@ -210,6 +285,7 @@ def _render_manifest(source: str, processes, services, app_name: str,
     out.append("    }),\n")
 
     out.append(")\n")
+    out.append(_render_process_nodes(process_nodes))
     return "".join(out)
 
 
@@ -271,6 +347,15 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
 
     clusters = _cluster_members(art_file)
     model = parse_file(art_file)
+    # The per-FC composition BODIES (node prototypes + tipc) live in the files
+    # cluster.art imports — follow them so PROCESS_NODES can resolve services
+    # nodes, not just same-file app nodes. Best-effort: a resolution failure
+    # leaves nodes empty rather than aborting the manifest.
+    from artheia.cli import _collect_imported_models
+    try:
+        models = [model] + [m for _p, m in _collect_imported_models(art_file, model)]
+    except Exception:
+        models = [model]
     pkg = ""
     for line in Path(art_file).read_text().splitlines():
         s = line.strip()
@@ -287,6 +372,7 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
     fg_to_procs: dict[str, list[str]] = {}
     proc_names: list[str] = []
     all_services = []
+    process_nodes: dict = {}   # ident -> {"modules": [...], "nodes": [...]}
     for cluster_name, cluster_base_dir, pkg_cluster, members in clusters:
         # The bazel-target prefix is the SOURCE-TREE root the members hang off:
         # the .art PACKAGE cluster (services / apps) when known, else the
@@ -303,11 +389,15 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
             processes.append((ident, comp, bdir, target, fg))
             proc_names.append(ident)
             fg_to_procs.setdefault(fg, []).append(ident)
+            process_nodes[ident] = {
+                "modules": _modules_for(target),
+                "nodes": _node_infos(models, comp),
+            }
         all_services.extend(_provided_services(model, members, pkg))
 
     app_name = (pkg.split(".")[-1] if pkg else default_base) or "app"
     rendered = _render_manifest(
-        art_file, processes, all_services, app_name, proc_names)
+        art_file, processes, all_services, app_name, proc_names, process_nodes)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)

@@ -1801,15 +1801,42 @@ def serialize_manifest_cmd(
             "processes": sorted(a.processes),
         }
 
-    def _sup_dict(node) -> dict:
-        return {
-            "name": node.name, "strategy": node.strategy.value,
-            "max_restarts": node.max_restarts, "max_seconds": node.max_seconds,
-            "children": list(node.children),
-        }
-
     # Supervisor tree from the source module's sidecar (executor.py), if any.
     supervisors = list(getattr(module, "SUPERVISORS", []) or [])
+    sup_by_name = {s.name: s for s in supervisors}
+
+    # Per-process node/module metadata resolved from the .art at gen-manifest
+    # time (PROCESS_NODES on the manifest module; empty for a placeholder FC).
+    process_nodes = dict(getattr(module, "PROCESS_NODES", {}) or {})
+
+    proc_by_name = {p.name: p for p in procs}
+
+    def _worker_dict(p) -> dict:
+        """A fully-populated ChildSpec worker leaf — the shape
+        platform/supervisor/impl/core/spec.cpp::load_worker parses. start_cmd
+        is split to argv; env carries the boot log level + logger sink + config
+        dir the supervisor exports to the child; nodes/modules come from
+        PROCESS_NODES."""
+        meta = process_nodes.get(p.name, {})
+        start = p.start_cmd or f"bin/{p.name}"
+        env = {
+            "THEIA_LOG_LEVEL": "info",
+            "THEIA_LOGGER": f"file:/tmp/theia/{p.name}.log",
+            "THEIA_CONFIG_DIR": "config",
+        }
+        w = {
+            "name": p.name,
+            "start_cmd": start.split() if isinstance(start, str) else list(start),
+            "restart": "permanent",
+            "shutdown": 5000,
+            "type": "worker",
+            "modules": list(meta.get("modules", [])),
+            "env": env,
+            "nodes": list(meta.get("nodes", [])),
+        }
+        if p.mem_limit_bytes:
+            w["mem_limit_bytes"] = p.mem_limit_bytes
+        return w
 
     out_dir = Path(out_path)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1840,13 +1867,54 @@ def serialize_manifest_cmd(
         _dump(mdir / "application.json",
               {"applications": [_app_dict(a) for a in m_apps]})
 
-        # executor.json: the sup tree sliced to nodes/leaves on this machine.
-        sliced = []
-        for node in supervisors:
-            kids = [c for c in node.children if c in m_proc_names
-                    or any(s.name == c for s in supervisors)]
-            sliced.append({**_sup_dict(node), "children": kids})
-        _dump(mdir / "executor.json", {"supervisors": sliced})
+        # executor.json: a NESTED supervisor tree rooted at `root`, sliced to
+        # this machine — the shape the C++ supervisor parses (spec.cpp:
+        # load_node = has 'children' → supervisor, else worker leaf). Each
+        # child name resolves to a nested SupervisorNode (recurse) or a process
+        # bound here (a full worker leaf); names that are neither (a process on
+        # another machine) drop out. Supervisor nodes whose subtree is empty on
+        # this machine are pruned.
+        def _build(node):
+            kids = []
+            for c in node.children:
+                if c in sup_by_name:
+                    sub = _build(sup_by_name[c])
+                    if sub is not None:
+                        kids.append(sub)
+                elif c in m_proc_names:
+                    kids.append(_worker_dict(proc_by_name[c]))
+                # else: a process on another machine — skip.
+            if not kids and node.name != "root":
+                return None
+            d = {
+                "name": node.name,
+                "strategy": node.strategy.value,
+                "max_restarts": node.max_restarts,
+                "max_seconds": node.max_seconds,
+                "children": kids,
+            }
+            if node.tombstone_dir:
+                d["tombstone_dir"] = node.tombstone_dir
+            return d
+
+        roots = [s for s in supervisors
+                 if not any(s.name in o.children for o in supervisors)]
+        if len(roots) == 1:
+            executor_doc = _build(roots[0])
+        elif roots:
+            # Multiple roots (no single 'root') — wrap under a synthetic one so
+            # the manifest still has the single-supervisor top the C++ loader
+            # requires.
+            executor_doc = {
+                "name": "root", "strategy": "one_for_all",
+                "max_restarts": 3, "max_seconds": 5,
+                "children": [c for c in (_build(r) for r in roots)
+                             if c is not None],
+            }
+        else:
+            executor_doc = {"name": "root", "strategy": "one_for_all",
+                            "max_restarts": 3, "max_seconds": 5, "children": []}
+        _dump(mdir / "executor.json", executor_doc)
 
     for p in written:
         click.echo(str(p))
