@@ -377,6 +377,16 @@ def generate_lib(
         results[_write(p,
                        env.get_template("Netgraph.hh.j2").render(**node_ctx),
                        overwrite=True)].append(str(p))
+        # State struct (write-once, APP-OWNED) — the shared Daemon.hh.j2 header
+        # `#include`s "impl/<Node>_state.hh", so it MUST be emitted or the lib
+        # won't compile. A statem node carries its data in the FSM holder, so it
+        # has no per-node state header (matches fc_app). overwrite=force keeps a
+        # user's hand-filled state from being clobbered on regen.
+        if nv.statem is None:
+            p = impl_dir / f"{nv.name}_state.hh"
+            results[_write(p,
+                           env.get_template("state.hh.j2").render(**node_ctx),
+                           overwrite=force)].append(str(p))
         # Handler stubs (write-once unless --force).
         p = impl_dir / f"{nv.name}_handlers.cc"
         results[_write(p,

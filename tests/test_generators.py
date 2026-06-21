@@ -476,3 +476,34 @@ def test_manifest_empty_application_emits_set_not_dict(tmp_path):
     # the (single) application's processes is an empty frozenset now
     app = next(iter(target.applications.applications))
     assert app.processes == frozenset()
+
+
+def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
+    """`gen-app --kind lib` must emit impl/<Node>_state.hh for a plain atomic
+    node — the shared Daemon.hh.j2 lib header `#include`s it, so a missing
+    _state.hh makes the standalone CMake lib fail to compile. Regression: lib
+    mode emitted _handlers.cc but not _state.hh (fc mode always did both)."""
+    from artheia.generators.lib_app import generate_lib
+
+    art = tmp_path / "component.art"
+    art.write_text(
+        """
+        package app.mon
+        message Ping { uint32 seq }
+        interface senderReceiver PingStream { data Ping ping }
+        node atomic MonNode {
+            tipc type=0x80060001 instance=0
+            tag = "MON"
+            ports { sender out provides PingStream }
+        }
+        composition Mon { prototype MonNode mon }
+        """
+    )
+    out = tmp_path / "client"
+    generate_lib(str(art), str(out))
+
+    state = out / "impl" / "MonNode_state.hh"
+    assert state.is_file(), "lib mode must emit impl/<Node>_state.hh"
+    # the lib header includes exactly this path
+    hdr = (out / "lib" / "MonNode.hh").read_text()
+    assert 'impl/MonNode_state.hh' in hdr
