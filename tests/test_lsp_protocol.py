@@ -28,6 +28,15 @@ from typing import Any
 
 import pytest
 
+# This e2e test spawns the `artheia-lsp` server, which needs the OPTIONAL [lsp]
+# extra (pygls + lsprotocol). The `artheia-lsp` console script is installed by
+# the base package regardless, so `shutil.which("artheia-lsp")` finding it is
+# NOT proof the deps are present — without them the server crashes on import and
+# `initialize` just times out. Gate on the actual deps so the module skips
+# cleanly under a [dev]-only install (what CI runs).
+pytest.importorskip("lsprotocol", reason="artheia[lsp] not installed")
+pytest.importorskip("pygls", reason="artheia[lsp] not installed")
+
 
 REPO = Path(__file__).resolve().parents[1]
 
