@@ -483,6 +483,16 @@ def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
     node — the shared Daemon.hh.j2 lib header `#include`s it, so a missing
     _state.hh makes the standalone CMake lib fail to compile. Regression: lib
     mode emitted _handlers.cc but not _state.hh (fc mode always did both)."""
+    import shutil
+
+    import pytest
+
+    # generate_lib shells out to `nanopb_generator` (a build tool, shipped by
+    # the `nanopb` pip pkg / vendored toolchain — NOT a test dep). The base CI
+    # job installs only artheia[dev], so skip cleanly when it's absent.
+    if shutil.which("nanopb_generator") is None:
+        pytest.skip("nanopb_generator not on PATH")
+
     from artheia.generators.lib_app import generate_lib
 
     art = tmp_path / "component.art"
