@@ -321,3 +321,72 @@ def test_verify_raises_on_error():
         execution=ExecutionLayer(processes={Append(_proc("ghost", "nope"))})))
     with pytest.raises(VerifyError, match="not declared in machines axis"):
         bad.verify()
+
+
+def _svc(name, iface, owner, endpoint, iid=None):
+    return ServiceInstanceLayer(
+        name=name, interface=Explicit(iface), provided_by=Explicit(owner),
+        endpoint=Explicit(endpoint),
+        instance_id=Explicit(iid) if iid is not None else Default(None))
+
+
+def test_invariant_tipc_endpoint_collision_distinct_providers_errors():
+    """Two DIFFERENT processes binding one TIPC endpoint = error."""
+    dep = _base().combine(DeploymentLayer(
+        execution=ExecutionLayer(processes={Append(_proc("b", "central"))}),
+        service=ServiceLayer(instances={
+            Append(_svc("s1", "I1", "counter", "tipc://0x80010001:0")),
+            Append(_svc("s2", "I2", "b",       "tipc://0x80010001:0")),
+        })))
+    errs = [i for i in validate(dep) if i.severity == "error"]
+    assert any("bound by two different processes" in i.message for i in errs)
+
+
+def test_invariant_tipc_endpoint_shared_by_same_provider_is_clean():
+    """One node offering several interfaces on its single TIPC port (same
+    endpoint, same provider) is fine — no collision."""
+    dep = _base().combine(DeploymentLayer(
+        service=ServiceLayer(instances={
+            Append(_svc("s1", "I1", "counter", "tipc://0x80010001:0")),
+            Append(_svc("s2", "I2", "counter", "tipc://0x80010001:0")),
+        })))
+    errs = [i for i in validate(dep) if i.severity == "error"]
+    assert not any("bound by two different" in i.message for i in errs)
+
+
+def test_invariant_instance_id_collision_per_interface_warns():
+    dep = _base().combine(DeploymentLayer(
+        execution=ExecutionLayer(processes={Append(_proc("b", "central"))}),
+        service=ServiceLayer(instances={
+            Append(_svc("s1", "I1", "counter", "tipc://0x1:0", iid=7)),
+            Append(_svc("s2", "I1", "b",       "tipc://0x2:0", iid=7)),
+        })))
+    warns = [i for i in validate(dep) if i.severity == "warning"]
+    assert any("instance_id" in i.path and "unique per interface" in i.message
+               for i in warns)
+    assert [i for i in validate(dep) if i.severity == "error"] == []
+
+
+def test_invariant_depends_on_cycle_warns():
+    a = ProcessLayer(name="a", executable=Explicit("//a"), start_cmd=Explicit("bin/a"),
+                     function_group=Explicit("app"), machine=Explicit("central"),
+                     depends_on={"b"})
+    b = ProcessLayer(name="b", executable=Explicit("//b"), start_cmd=Explicit("bin/b"),
+                     function_group=Explicit("app"), machine=Explicit("central"),
+                     depends_on={"a"})
+    dep = _base().combine(DeploymentLayer(
+        execution=ExecutionLayer(processes={Append(a), Append(b)})))
+    warns = [i for i in validate(dep) if i.severity == "warning"]
+    assert any("depends_on cycle" in i.message for i in warns)
+
+
+def test_invariant_fg_state_not_in_machine_states_warns():
+    p = ProcessLayer(name="x", executable=Explicit("//x"), start_cmd=Explicit("bin/x"),
+                     function_group=Explicit("app"), machine=Explicit("m"),
+                     fg_states={"Running", "Bogus"})
+    dep = DeploymentLayer(
+        machines=MachineSetLayer(machines={
+            MachineLayer(name="m", cores={0}, machine_states={"Startup", "Running"})}),
+        execution=ExecutionLayer(processes={p}))
+    warns = [i for i in validate(dep) if i.severity == "warning"]
+    assert any("Bogus" in i.message and "machine_states" in i.message for i in warns)

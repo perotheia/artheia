@@ -379,6 +379,105 @@ class DeploymentLayer(Layer):
                         f"{context}.execution.processes[{pname}].depends_on",
                         f"depends on process {dep!r} not in execution axis",
                     ))
+
+        # 5. (ERROR) No two DISTINCT providers share a TIPC endpoint. One node
+        #    legitimately offers several interfaces on its single TIPC port
+        #    (same endpoint, SAME provided_by — e.g. com's ComBridge/ComCtl/
+        #    ProbeCtl), so a clash is only real when two DIFFERENT processes bind
+        #    the same address. This is the post-assembly counterpart to the
+        #    per-.art `check-addresses`: a rig that overrides a node's tipc
+        #    instance per-machine can re-collide only once the axes are combined.
+        by_endpoint: dict[str, str] = {}   # endpoint -> first provider seen
+        for s in _members(self.service.instances):
+            endpoint = _value(s.endpoint)
+            owner = _value(s.provided_by)
+            if not endpoint or not str(endpoint).startswith("tipc://"):
+                continue  # only TIPC endpoints carry a (type,instance) address
+            if owner is None:
+                continue
+            prev = by_endpoint.get(endpoint)
+            if prev is not None and prev != owner:
+                issues.append(Issue(
+                    f"{context}.service.instances[{s.name}].endpoint",
+                    f"TIPC endpoint {endpoint} bound by two different processes "
+                    f"({prev!r} and {owner!r}) — addresses must be unique across "
+                    f"the assembled deployment",
+                ))
+            else:
+                by_endpoint.setdefault(endpoint, owner)
+
+        # 6. (WARNING) instance_id is unique per interface. Two instances of the
+        #    same interface with the same id collide in SOME/IP-style discovery.
+        seen_iid: dict[tuple, str] = {}    # (interface, instance_id) -> service name
+        for s in _members(self.service.instances):
+            iface = _value(s.interface)
+            iid = _value(s.instance_id)
+            if iface is None or iid is None:
+                continue
+            key = (iface, iid)
+            if key in seen_iid and seen_iid[key] != s.name:
+                issues.append(Issue(
+                    f"{context}.service.instances[{s.name}].instance_id",
+                    f"interface {iface!r} already has instance_id {iid!r} on "
+                    f"service {seen_iid[key]!r} — ids must be unique per interface",
+                    severity="warning",
+                ))
+            else:
+                seen_iid.setdefault(key, s.name)
+
+        # 7. (WARNING) depends_on is acyclic. A cycle is a supervisor start-order
+        #    deadlock (each waits on the other). DFS over the (resolved) graph.
+        dep_graph = {pn: [d for d in _members(p.depends_on) if d in procs]
+                     for pn, p in procs.items()}
+        WHITE, GREY, BLACK = 0, 1, 2
+        colour = {pn: WHITE for pn in dep_graph}
+
+        def _find_cycle(node: str, stack: list) -> "list | None":
+            colour[node] = GREY
+            stack.append(node)
+            for nxt in dep_graph.get(node, ()):
+                if colour.get(nxt) == GREY:
+                    return stack[stack.index(nxt):] + [nxt]
+                if colour.get(nxt) == WHITE:
+                    found = _find_cycle(nxt, stack)
+                    if found:
+                        return found
+            colour[node] = BLACK
+            stack.pop()
+            return None
+
+        for pn in dep_graph:
+            if colour[pn] == WHITE:
+                cyc = _find_cycle(pn, [])
+                if cyc:
+                    issues.append(Issue(
+                        f"{context}.execution.processes[{cyc[0]}].depends_on",
+                        f"depends_on cycle: {' -> '.join(cyc)} — a start-order "
+                        f"deadlock",
+                        severity="warning",
+                    ))
+                    break  # one cycle report is enough; the graph is suspect
+
+        # 8. (WARNING) A process's fg_states should be declared by its machine's
+        #    machine_states (the FG composition). A process asking to run in a
+        #    state the machine never enters is dead. Skip when the machine
+        #    declares no states (not every rig models them).
+        for pname, p in procs.items():
+            mname = _value(p.machine)
+            if mname is None or mname not in machines:
+                continue
+            mstates = _members(machines[mname].machine_states)
+            if not mstates:
+                continue
+            for st in _members(p.fg_states):
+                if st not in mstates:
+                    issues.append(Issue(
+                        f"{context}.execution.processes[{pname}].fg_states",
+                        f"runs in FG state {st!r} not in machine {mname!r}'s "
+                        f"machine_states {sorted(mstates)}",
+                        severity="warning",
+                    ))
+
         return issues
 
 
