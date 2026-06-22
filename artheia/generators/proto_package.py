@@ -434,10 +434,11 @@ def generate_package_proto(art_path: str | Path,
     # emits a plain member (not a pb_callback_t). nanopb_generator auto-loads the
     # same-basename .options. The field prefix is the FLAT proto package
     # (system_app.) — matching the proto's `package` decl, which nanopb keys on.
-    # Write it whenever the package has any string/bytes field.
+    # ALWAYS written (header-only when the package has no sized fields): the
+    # per-package BUILD.bazel lists `<leaf>.options` in srcs, and emitting it
+    # unconditionally makes a no-force regen a byte-clean no-op instead of
+    # leaving a stale hand-placeholder behind.
     options_text = _render_options(model, proto_package.replace(".", "_"))
-    if any(line and not line.startswith("#")
-           for line in options_text.splitlines()):
-        (out_dir / f"{leaf}.options").write_text(options_text)
+    (out_dir / f"{leaf}.options").write_text(options_text)
 
     return out_file
