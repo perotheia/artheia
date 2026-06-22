@@ -49,6 +49,17 @@ from artheia.manifest.algebra import (
 )
 
 
+class VerifyError(Exception):
+    """Raised by :meth:`DeploymentLayer.verify` when the assembled deployment
+    has consistency errors. Carries the offending :class:`Issue` list and
+    renders them one-per-line."""
+
+    def __init__(self, issues: "list[Issue]") -> None:
+        self.issues = issues
+        body = "\n".join(f"  {i.path}: {i.message}" for i in issues)
+        super().__init__(f"{len(issues)} deployment error(s):\n{body}")
+
+
 # =====================================================================
 # Execution axis — WHAT processes exist.
 # =====================================================================
@@ -266,6 +277,28 @@ class DeploymentLayer(Layer):
     def _resolver(self):
         return DeploymentTarget
 
+    # -- explicit gate a rig.py can call ------------------------------------
+
+    def verify(self, *, strict: bool = False) -> list[Issue]:
+        """Run the full validate pass over THIS (already combined) deployment
+        and raise on any error — the single call a ``rig.py`` makes after it has
+        assembled the product, so an assembly mistake fails at the rig with a
+        readable message instead of deep in serialize/simplify.
+
+        Returns the (non-error) issues so the caller can inspect warnings;
+        raises :class:`VerifyError` listing every error. ``strict=True`` also
+        treats warnings as fatal (e.g. CI that wants empty compositions to
+        fail). Run AFTER all ``combine``/import deltas are folded in — the
+        invariants assume the resolved product."""
+        from .algebra import validate
+
+        issues = validate(self)
+        fatal = [i for i in issues
+                 if i.severity == "error" or (strict and i.severity == "warning")]
+        if fatal:
+            raise VerifyError(fatal)
+        return [i for i in issues if i.severity == "warning"]
+
     # -- cross-axis consistency (run on the UNMATERIALIZED product) ---------
 
     def _invariants(self, context: str) -> list[Issue]:
@@ -312,12 +345,31 @@ class DeploymentLayer(Layer):
                     f"{context}.applications[{a.name}].host_machine",
                     f"app host {host!r} not a declared machine",
                 ))
-            for pn in _members(a.processes):
+            app_procs = _members(a.processes)
+            for pn in app_procs:
                 if pn not in procs:
                     issues.append(Issue(
                         f"{context}.applications[{a.name}].processes",
                         f"bundled process {pn!r} not in execution axis",
                     ))
+            # 3b. An application that bundles zero processes is DEAD — its
+            #     composition contributed nothing and no `import`/`combine` delta
+            #     filled it. Runs on the RESOLVED product, so this is a real
+            #     observation, not a mid-assembly forward-decl. WARNING (not
+            #     error): the bare-supervisor bootstrap legitimately ships an
+            #     empty `apps` AA (a workspace with no app yet), so we must not
+            #     block it — but we surface the empty composition so a genuine
+            #     "forgot to wire the process" mistake is visible. (It also
+            #     documents the empty-set that used to crash simplify() with
+            #     "unhashable type: 'dict'" before the gen-manifest set() fix.)
+            if not app_procs:
+                issues.append(Issue(
+                    f"{context}.applications[{a.name}].processes",
+                    f"application {a.name!r} bundles no processes — the "
+                    f"composition is empty (a bare-supervisor bootstrap is fine; "
+                    f"otherwise declare a process or drop the application)",
+                    severity="warning",
+                ))
 
         # 4. process depends_on references resolve.
         for pname, p in procs.items():
@@ -363,6 +415,7 @@ def _value(cf: object):
 
 
 __all__ = [
+    "VerifyError",
     "ProcessLayer", "ProcessTarget",
     "ExecutionLayer", "ExecutionTarget",
     "ServiceInstanceLayer", "ServiceInstanceTarget",

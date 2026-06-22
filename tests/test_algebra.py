@@ -188,6 +188,8 @@ def test_validate_recurses_into_set_members():
 # --------------------------------------------------------------------------
 
 from artheia.manifest.deployment import (  # noqa: E402
+    ApplicationLayer,
+    ApplicationSetLayer,
     DeploymentLayer,
     DeploymentTarget,
     ExecutionLayer,
@@ -196,6 +198,7 @@ from artheia.manifest.deployment import (  # noqa: E402
     ProcessLayer,
     ServiceInstanceLayer,
     ServiceLayer,
+    VerifyError,
     _members,
 )
 
@@ -262,3 +265,59 @@ def test_invariant_service_owner_missing():
             endpoint=Explicit("e"), provided_by=Explicit("missing")))})))
     msgs = [i.message for i in validate(bad)]
     assert any("not in execution axis" in m for m in msgs)
+
+
+def test_invariant_empty_application_warns_not_errors():
+    """An application bundling zero processes (an empty composition, post-import)
+    is a WARNING — surfaced so a forgotten process wiring is visible, but NOT a
+    hard error: the bare-supervisor bootstrap legitimately ships an empty `apps`
+    AA. (Also documents the empty-set that used to crash simplify() with
+    'unhashable type: dict'.)"""
+    dep = _base().combine(DeploymentLayer(
+        applications=ApplicationSetLayer(applications={
+            Append(ApplicationLayer(name="apps", host_machine=Explicit("central")))})))
+    issues = validate(dep)
+    # no error (must not block the bootstrap) ...
+    assert [i for i in issues if i.severity == "error"] == []
+    # ... but a warning naming the empty composition.
+    warns = [i for i in issues if i.severity == "warning"]
+    assert any("bundles no processes" in i.message and "apps" in i.message
+               for i in warns)
+
+
+def test_invariant_populated_application_is_clean():
+    """An application bundling a real process raises no empty-composition
+    warning."""
+    dep = _base().combine(DeploymentLayer(
+        applications=ApplicationSetLayer(applications={
+            Append(ApplicationLayer(name="apps", host_machine=Explicit("central"),
+                                    processes={"counter"}))})))
+    issues = validate(dep)
+    assert [i for i in issues if i.severity == "error"] == []
+    assert not any("bundles no processes" in i.message for i in issues)
+
+
+def test_verify_returns_warnings_does_not_raise_on_empty_app():
+    """DeploymentLayer.verify() is the explicit gate a rig.py calls: it returns
+    warnings (empty composition) without raising, so a bare-supervisor bootstrap
+    still serializes."""
+    dep = _base().combine(DeploymentLayer(
+        applications=ApplicationSetLayer(applications={
+            Append(ApplicationLayer(name="apps", host_machine=Explicit("central")))})))
+    warns = dep.verify()
+    assert any("bundles no processes" in w.message for w in warns)
+
+
+def test_verify_strict_raises_on_warning():
+    dep = _base().combine(DeploymentLayer(
+        applications=ApplicationSetLayer(applications={
+            Append(ApplicationLayer(name="apps", host_machine=Explicit("central")))})))
+    with pytest.raises(VerifyError, match="bundles no processes"):
+        dep.verify(strict=True)
+
+
+def test_verify_raises_on_error():
+    bad = _base().combine(DeploymentLayer(
+        execution=ExecutionLayer(processes={Append(_proc("ghost", "nope"))})))
+    with pytest.raises(VerifyError, match="not declared in machines axis"):
+        bad.verify()

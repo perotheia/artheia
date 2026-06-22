@@ -1751,6 +1751,11 @@ def serialize_manifest_cmd(
 
     # --- the validate-before-serialize gate -------------------------------
     issues = validate(dep)
+    warnings = [i for i in issues if i.severity == "warning"]
+    if warnings:
+        click.secho(f"⚠ {len(warnings)} warning(s):", fg="yellow", err=True)
+        for i in warnings:
+            click.echo(f"  {i.path}: {i.message}", err=True)
     errors = [i for i in issues if i.severity == "error"]
     if errors:
         click.secho(f"✗ {len(errors)} error(s) — refusing to serialize:",
