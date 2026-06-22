@@ -80,12 +80,20 @@ def _proto_type_for(field, cur_package: str):
     ref_pkg = _ref_package(ref)
     if ref_pkg and ref_pkg != cur_package:
         flat = _proto_package_name(ref_pkg).replace(".", "_")
-        # Import path uses the FLAT-package dir + leaf — matching the C++ include
-        # convention the bundled proto already exposes (e.g. the runtime ships
-        # proto/platform_runtime/runtime.proto and #include
-        # "platform_runtime/runtime.pb.h"). leaf = last .art-package segment.
         leaf = ref_pkg.split(".")[-1]
-        return f"{flat}.{ref.name}", f"{flat}/{leaf}.proto"
+        # The protoc import path MUST match the bundled proto's on-disk layout
+        # under the proto_root AND the C++ #include the fc_app codec emits
+        # (Codecs.hh: `#include "<subpath>/<leaf>.pb.h"`). fc_app uses the DOTTED
+        # subpath for a normal package (platform.msgs.sensor → platform/msgs/
+        # sensor) and the FLAT-package dir ONLY for platform.runtime (which ships
+        # under proto/platform_runtime/). Mirror that here so import + include
+        # resolve to the same file — a flat import for a dotted-laid-out package
+        # would not be found by protoc / would mismatch the .pb.h include.
+        if ref_pkg == "platform.runtime":
+            subpath = flat                       # platform_runtime/<leaf>.proto
+        else:
+            subpath = "/".join(ref_pkg.split("."))   # platform/msgs/sensor/<leaf>.proto
+        return f"{flat}.{ref.name}", f"{subpath}/{leaf}.proto"
     return ref.name, None
 
 
