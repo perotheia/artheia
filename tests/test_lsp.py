@@ -10,7 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from artheia.lsp.server import (
+# The LSP server is an OPTIONAL extra (`pip install artheia[lsp]`): it imports
+# pygls + lsprotocol, which the base/`[dev]` install (what CI runs) does not
+# pull in. Skip the whole module cleanly when those aren't present, rather than
+# failing collection with an ImportError.
+pytest.importorskip("lsprotocol", reason="artheia[lsp] not installed")
+pytest.importorskip("pygls", reason="artheia[lsp] not installed")
+
+from artheia.lsp.server import (  # noqa: E402
     _find_definition,
     _identifier_at,
     _offset_to_position,

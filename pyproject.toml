@@ -38,6 +38,7 @@ dev = [
 ]
 lsp = [
     "pygls>=1.3",
+    "lsprotocol",   # imported directly by lsp/server.py (pygls pulls it too)
 ]
 # The gen_server PROBE (artheia.gen_server.probe) + the trace observer compile
 # .proto → _pb2 at runtime via grpc_tools.protoc (compiler only — no gRPC) and
