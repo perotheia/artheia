@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <set>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -162,20 +163,30 @@ public:
     // group's TIPC type + a unique instance; broadcast_*() multicasts ONE
     // datagram to the whole group. A consumer pg_join<T>()s from init(); a
     // broadcaster pg_resolve<T>()s the type (cached). See [[project-pg-broadcast-model]].
-    void pg_attach(const char* node_name, ::theia::runtime::NodeBinding* b) {
+    void pg_attach(const char* node_name, ::theia::runtime::NodeBinding* b,
+                   uint32_t self_type = 0, uint32_t self_instance = 0) {
         pg_.attach(node_name, b);
+        pg_self_type_ = self_type; pg_self_instance_ = self_instance;
     }
     template <typename T> ::theia::runtime::PgClient::Group pg_join() {
         return pg_.join<T>();
     }
-    template <typename T> ::theia::runtime::PgClient::Group pg_resolve() {
-        if (!pg_groups_[::theia::runtime::RemoteCodec<T>::service_id].ok)
-            pg_groups_[::theia::runtime::RemoteCodec<T>::service_id] = pg_.resolve<T>();
-        return pg_groups_[::theia::runtime::RemoteCodec<T>::service_id];
+    template <typename T>
+    ::theia::runtime::PgClient::Group pg_watch(std::function<void()> on_change = {}) {
+        uint16_t _sid = ::theia::runtime::RemoteCodec<T>::service_id;
+        if (!pg_watched_.count(_sid)) {
+            pg_watched_.insert(_sid);
+            return pg_.watch<T>(pg_self_type_, pg_self_instance_, std::move(on_change));
+        }
+        return {true, 0, 0};
+    }
+    template <typename T>
+    std::vector<::theia::runtime::PgClient::Member> pg_members() {
+        return pg_.members<T>();
     }
     template <typename T> void pg_leave() { pg_.leave<T>(); }
     template <typename T>
-    void pg_broadcast(uint32_t group_type, const T& msg) {
+    void pg_broadcast(uint32_t group_type, const T& msg) {   // allocator escape hatch
         uint8_t _buf[8192];
         pb_ostream_t _os = pb_ostream_from_buffer(_buf, sizeof(_buf));
         if (!pb_encode(&_os, ::theia::runtime::RemoteCodec<T>::fields(), &msg))
@@ -316,23 +327,28 @@ public:
 {% endfor %}
 
 private:
-    // The node's PG client + broadcaster group-type cache (see the non-statem
-    // Daemon template). Idle until the first pg_join/broadcast.
+    // The node's PG client + watch state (see the non-statem Daemon template).
     ::theia::runtime::PgClient pg_;
-    std::map<uint16_t, ::theia::runtime::PgClient::Group> pg_groups_;
+    std::set<uint16_t> pg_watched_;
+    uint32_t pg_self_type_{0};
+    uint32_t pg_self_instance_{0};
 };
 
-// Broadcast fan-out — PG name-sequence multicast (one datagram → the whole
-// group). Kept in lib (auto-generated); the user touches on_enter/handle_* only.
+// Broadcast fan-out — OTP `[Pid ! Msg || Pid <- pg:get_members(group)]`. Kept in
+// lib (auto-generated); the user touches on_enter/handle_* only.
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
 inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg) {
-    // group identity = msg_type_name<{{ d.msg }}>() (the .art wire name); the
-    // supervisor allocates group_type on first resolve. Members pg_join the same
-    // type → register_cast<{{ d.msg }}> delivers it to their handle_cast.
-    auto _g = pg_resolve<{{ d.msg }}>();
-    if (!_g.ok) return;                       // supervisor unreachable — drop
-    pg_broadcast<{{ d.msg }}>(_g.type, msg);
+    // Monitor the group (OTP pg:monitor — idempotent), then cast to EACH watched
+    // member. group identity = msg_type_name<{{ d.msg }}>(); members pg_join the
+    // same type → register_cast<{{ d.msg }}> delivers to their handle_cast. The impl
+    // may pg_members<{{ d.msg }}>() to skip work when empty.
+    pg_watch<{{ d.msg }}>();
+    uint8_t _buf[8192];
+    pb_ostream_t _os = pb_ostream_from_buffer(_buf, sizeof(_buf));
+    if (!pb_encode(&_os, ::theia::runtime::RemoteCodec<{{ d.msg }}>::fields(), &msg))
+        return;
+    pg_.broadcast_members<{{ d.msg }}>(_buf, static_cast<uint16_t>(_os.bytes_written));
 }
 {% endfor -%}
 {% endfor %}

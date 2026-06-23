@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <set>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -126,36 +127,49 @@ public:
     // OTP pg:join/leave shape over TIPC name-sequence MULTICAST. A group's
     // identity is its message TYPE T (group name = msg_type_name<T>(), a
     // generated .art-derived wire constant — no strings, no collision). The
-    // SUPERVISOR is the namespace authority: pg_join<T>() CALLs it, gets a
-    // {group_type, unique instance}, and binds a recv socket — received group
-    // frames flow into this node's normal handle_cast via its demux. A
-    // broadcaster pg_resolve<T>()s the type once, then broadcast<T>() multicasts
-    // ONE datagram to the whole group (the kernel fans out — no per-member loop).
-    // JOINING/RESOLVING/BROADCASTING are DELIBERATE node calls (from init()/a
-    // handler), never automatic.
+    // OTP `pg` shape. The SUPERVISOR is the namespace authority + the membership
+    // monitor. A CONSUMER pg_join<T>()s (the supervisor allocates {group_type,
+    // unique instance}; received frames flow into this node's handle_cast via its
+    // demux). A PRODUCER pg_watch<T>()s (OTP pg:monitor) — gets the current member
+    // list AND a PgMembership push on every join/leave/reap; broadcast_*() then
+    // loops the WATCHED member list and casts to each (OTP `[Pid ! Msg || Pid <-
+    // pg:get_members]`). The producer impl keeps CONTROL: it can pg_members<T>()
+    // to see who's listening (empty → skip work, e.g. logcat stop-tailing) or
+    // branch on its own state. JOIN/WATCH/BROADCAST are DELIBERATE node calls.
     //   pg_join<T>()    — consume T's group (deliver to this node's handle_cast).
-    //   pg_resolve<T>() — learn T's group_type before broadcasting (sender only).
+    //   pg_watch<T>()   — monitor T's membership before broadcasting (producer).
+    //   pg_members<T>() — this producer's current view of T's member list.
     //   pg_leave<T>()   — stop consuming T (frees the instance).
-    //   broadcast_<port>_<data>(msg) — multicast to T's whole group.
+    //   broadcast_<port>_<data>(msg) — cast to each watched member of T's group.
     // pg_attach() is called once by main.cc with this node's name + demux binding
-    // so PgClient can route received frames into the node and label CALLs.
-    void pg_attach(const char* node_name, ::theia::runtime::NodeBinding* b) {
+    // + its bound addr (the watcher address the supervisor pushes PgMembership to).
+    void pg_attach(const char* node_name, ::theia::runtime::NodeBinding* b,
+                   uint32_t self_type = 0, uint32_t self_instance = 0) {
         pg_.attach(node_name, b);
+        pg_self_type_ = self_type; pg_self_instance_ = self_instance;
     }
     template <typename T> ::theia::runtime::PgClient::Group pg_join() {
         return pg_.join<T>();
     }
-    template <typename T> ::theia::runtime::PgClient::Group pg_resolve() {
-        if (!pg_groups_[::theia::runtime::RemoteCodec<T>::service_id].ok)
-            pg_groups_[::theia::runtime::RemoteCodec<T>::service_id] = pg_.resolve<T>();
-        return pg_groups_[::theia::runtime::RemoteCodec<T>::service_id];
+    // OTP pg:monitor — watch T's group (idempotent; watches once). on_change fires
+    // on every membership change so the impl can react ({pg_join}/{pg_leave}).
+    template <typename T>
+    ::theia::runtime::PgClient::Group pg_watch(std::function<void()> on_change = {}) {
+        uint16_t _sid = ::theia::runtime::RemoteCodec<T>::service_id;
+        if (!pg_watched_.count(_sid)) {
+            pg_watched_.insert(_sid);
+            return pg_.watch<T>(pg_self_type_, pg_self_instance_, std::move(on_change));
+        }
+        return {true, 0, 0};
+    }
+    template <typename T>
+    std::vector<::theia::runtime::PgClient::Member> pg_members() {
+        return pg_.members<T>();
     }
     template <typename T> void pg_leave() { pg_.leave<T>(); }
-    // Multicast `msg` to a group whose group_type the CALLER already resolved.
-    // For the SUPERVISOR, which is itself the allocator and must not TIPC-self-CALL
-    // pg_resolve: it resolves the type LOCALLY (engine registry) and calls this.
-    // A normal FC uses broadcast_*() (which pg_resolve()s) — this is the escape
-    // hatch for a node that owns the allocator.
+    // Escape hatch for a node that is ITSELF the allocator (the supervisor): it
+    // resolves the group type LOCALLY (engine registry) and nameseq-multicasts,
+    // never TIPC-self-CALLing watch/resolve. Normal FCs use broadcast_*().
     template <typename T>
     void pg_broadcast(uint32_t group_type, const T& msg) {
         uint8_t _buf[8192];
@@ -231,32 +245,29 @@ public:
 {% endfor %}
 
 private:
-    // The node's process-group client: owns the recv thread for joined groups and
-    // the supervisor CALL channel. Attached to this node's demux via pg_attach()
-    // from main.cc. Idle (no thread, no socket) until the first pg_join/broadcast.
+    // The node's process-group client: owns the recv thread for joined groups, the
+    // watch cache, and the supervisor CALL channel. Attached via pg_attach().
     ::theia::runtime::PgClient pg_;
-    // group_type cache for broadcasters: service_id(T) -> resolved {type,inst}.
-    std::map<uint16_t, ::theia::runtime::PgClient::Group> pg_groups_;
+    std::set<uint16_t> pg_watched_;          // groups this node already pg_watch'd
+    uint32_t pg_self_type_{0};               // this node's bound addr (watcher addr)
+    uint32_t pg_self_instance_{0};
 };
 
-// Broadcast fan-out — defined in the lib slice (not impl) so it stays
-// auto-generated. The user touches handle_* in impl.
+// Broadcast fan-out — OTP `[Pid ! Msg || Pid <- pg:get_members(group)]`. Defined
+// in the lib slice (auto-generated); the user touches handle_*/init in impl.
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
 inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg) {
-    // OTP-pg multicast: encode `msg` once and send ONE datagram to its TYPE's
-    // process group {group_type, 0..~0} — the TIPC kernel fans out a copy to every
-    // bound member (no per-member loop). group identity = msg_type_name<{{ d.msg }}>()
-    // (the .art wire name); the supervisor allocates group_type the first time we
-    // resolve it. Members receive it via register_cast<{{ d.msg }}> (same service_id),
-    // so the receive path is the node's normal handle_cast. Best-effort (lossy).
-    auto _g = pg_resolve<{{ d.msg }}>();
-    if (!_g.ok) return;                       // supervisor unreachable — drop
+    // Ensure we're monitoring the group (OTP pg:monitor — idempotent), then cast
+    // `msg` to EACH watched member. group identity = msg_type_name<{{ d.msg }}>().
+    // The impl can call pg_members<{{ d.msg }}>() first to skip work when the list
+    // is empty (e.g. logcat stop-tailing) — this default just fans out to all.
+    pg_watch<{{ d.msg }}>();
     uint8_t _buf[8192];
     pb_ostream_t _os = pb_ostream_from_buffer(_buf, sizeof(_buf));
     if (!pb_encode(&_os, ::theia::runtime::RemoteCodec<{{ d.msg }}>::fields(), &msg))
         return;
-    pg_.broadcast<{{ d.msg }}>(_g.type, _buf, static_cast<uint16_t>(_os.bytes_written));
+    pg_.broadcast_members<{{ d.msg }}>(_buf, static_cast<uint16_t>(_os.bytes_written));
 }
 {% endfor -%}
 {% endfor %}
