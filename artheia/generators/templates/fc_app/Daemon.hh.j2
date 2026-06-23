@@ -156,6 +156,20 @@ public:
         return pg_groups_[::theia::runtime::RemoteCodec<T>::service_id];
     }
     template <typename T> void pg_leave() { pg_.leave<T>(); }
+    // Multicast `msg` to a group whose group_type the CALLER already resolved.
+    // For the SUPERVISOR, which is itself the allocator and must not TIPC-self-CALL
+    // pg_resolve: it resolves the type LOCALLY (engine registry) and calls this.
+    // A normal FC uses broadcast_*() (which pg_resolve()s) — this is the escape
+    // hatch for a node that owns the allocator.
+    template <typename T>
+    void pg_broadcast(uint32_t group_type, const T& msg) {
+        uint8_t _buf[8192];
+        pb_ostream_t _os = pb_ostream_from_buffer(_buf, sizeof(_buf));
+        if (!pb_encode(&_os, ::theia::runtime::RemoteCodec<T>::fields(), &msg))
+            return;
+        pg_.broadcast<T>(group_type, _buf,
+                         static_cast<uint16_t>(_os.bytes_written));
+    }
 {% endif %}
 
     // ---- Subscriber registration ----------------------------------

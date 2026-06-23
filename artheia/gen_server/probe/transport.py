@@ -103,6 +103,77 @@ class TipcServer:
             self._listen = None
 
 
+class TipcDgramServer:
+    """Bind a TIPC SOCK_RDM (datagram) service address; recv framed casts on a
+    select loop. This is the PG MULTICAST receive side — the supervisor allocates
+    a group {type, instance}, the member binds it here, and a broadcaster's
+    name-sequence sendto delivers a copy to every bound member. SOCK_RDM (not
+    SEQPACKET) because TIPC multicast is connectionless; matches the C++
+    PgClient recv socket.
+
+    on_frame(header, payload) is called on the loop thread per inbound frame.
+    """
+
+    def __init__(self, tipc_type: int, tipc_instance: int,
+                 on_frame: Callable[[wire.Header, bytes], None]):
+        self.tipc_type = tipc_type
+        self.tipc_instance = tipc_instance
+        self._on_frame = on_frame
+        self._sock: Optional[socket.socket] = None
+        self._thread: Optional[threading.Thread] = None
+        self._running = False
+
+    def start(self) -> None:
+        s = socket.socket(_AF_TIPC, socket.SOCK_RDM)
+        s.bind(_bind_addr(self.tipc_type, self.tipc_instance))
+        self._sock = s
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while self._running:
+            try:
+                ready, _, _ = select.select([self._sock], [], [], 0.1)
+            except (OSError, ValueError):
+                break
+            if not ready:
+                continue
+            try:
+                buf = self._sock.recv(65536)
+            except OSError:
+                continue
+            if len(buf) < wire.HEADER_SIZE:
+                continue
+            hdr = wire.Header.unpack(buf)
+            payload = buf[wire.HEADER_SIZE:wire.HEADER_SIZE + hdr.proto_len]
+            self._on_frame(hdr, payload)
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        if self._sock:
+            self._sock.close()
+            self._sock = None
+
+
+def tipc_multicast_send(group_type: int, data: bytes) -> None:
+    """Send `data` to the WHOLE process group: one SOCK_RDM datagram to the
+    name-sequence (group_type, 0..~0) → the TIPC kernel fans out a copy to every
+    bound member. Matches the C++ PgClient::send_multicast_ (TIPC_ADDR_NAMESEQ
+    range send). Best-effort (lossy)."""
+    s = socket.socket(_AF_TIPC, socket.SOCK_RDM)
+    try:
+        # (TIPC_ADDR_NAMESEQ, type, lower, upper) — a RANGE addresses ALL
+        # instances bound under `type`, i.e. multicast (not anycast).
+        s.sendto(data, (socket.TIPC_ADDR_NAMESEQ, group_type, 0, 0xFFFFFFFF))
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+
 class TipcClient:
     """Connect to a peer's TIPC service address; send framed messages.
 

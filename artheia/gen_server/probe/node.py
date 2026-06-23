@@ -92,12 +92,20 @@ class NodeProbe:
         )
         self._client(tref).send(wire.frame(hdr, payload))
 
-    def cast_addr(self, tipc_type: int, tipc_instance: int,
-                  art_package: str, proto_type: str, **fields) -> None:
+    def cast_addr(self, __dst_type: int, __dst_instance: int,
+                  __art_package: str, __proto_type: str, **fields) -> None:
         """Cast a message (by art_package + flat proto_type) to an EXPLICIT TIPC
         address — not a .art node ref. Used for framework casts to a fixed
         address, e.g. the probe's PG join/watch/heartbeat to the supervisor
-        (0x80020001). The codec lazily compiles art_package's .proto."""
+        (0x80020001). The codec lazily compiles art_package's .proto.
+
+        The four positionals are dunder-prefixed so a **fields key that happens
+        to be named ``tipc_type`` / ``tipc_instance`` (PgJoin/PgWatch carry a
+        member address with exactly those field names) does not collide with the
+        positional parameter names — otherwise Python raises
+        "got multiple values for argument 'tipc_type'"."""
+        tipc_type, tipc_instance = __dst_type, __dst_instance
+        art_package, proto_type = __art_package, __proto_type
         payload = self.ctx.codec.encode(art_package, proto_type, **fields)
         hdr = wire.Header(
             msg_type=wire.MSG_GEN_CAST,
@@ -117,6 +125,73 @@ class NodeProbe:
             c.send(wire.frame(hdr, payload))
         except Exception:
             c.close(); self._clients.pop(key, None)   # reconnect next time
+
+    def call_addr(self, __dst_type: int, __dst_instance: int,
+                  __art_package: str, __req_type: str, __reply_type: str,
+                  __timeout: float = 2.0, **fields) -> dict:
+        """CALL an EXPLICIT TIPC address (not a .art op): encode `__req_type`,
+        send MSG_GEN_CALL, block for the reply, decode it as `__reply_type`.
+        Used for the probe's PG join/leave to the supervisor (PgJoinReq →
+        PgJoinReply), which are framework ops with no .art op binding on the
+        probe. Dunder positionals avoid collision with **fields keys (group_name,
+        pid, etc.). The codec lazily compiles __art_package's .proto."""
+        tipc_type, tipc_instance = __dst_type, __dst_instance
+        art_package = __art_package
+        req_type, reply_type, timeout = __req_type, __reply_type, __timeout
+        payload = self.ctx.codec.encode(art_package, req_type, **fields)
+        key = (tipc_type, tipc_instance)
+        # STALE-BINDING RESILIENCE: a TIPC name can have several bound ports (a
+        # SIGKILL'd predecessor leaves a publication the kernel never reaped); a
+        # SEQPACKET connect anycasts and may pick a DEAD one — send succeeds but
+        # no reply ever comes. So on a reply-timeout, DROP the cached connection
+        # and reconnect FRESH (re-rolling which port the kernel picks) up to a few
+        # attempts within the deadline. (Same cure as transport.TipcClient.connect
+        # uses for the connect itself.)
+        deadline = time.monotonic() + timeout
+        attempts = 0
+        while time.monotonic() < deadline and attempts < 12:
+            attempts += 1
+            with self._lock:
+                self._corr = (self._corr + 1) & 0xFFFFFFFF
+                corr = self._corr
+            hdr = wire.Header(
+                msg_type=wire.MSG_GEN_CALL,
+                proto_len=len(payload),
+                service_id=wire.service_id(req_type),
+                correlation_id=corr,
+                timestamp_ns=time.time_ns(),
+            )
+            c = self._clients.get(key)
+            if c is None:
+                c = TipcClient(tipc_type, tipc_instance)
+                # Bound the connect to a SHORT slice (not the whole remaining
+                # budget) so a single attempt's connect can't eat all the time —
+                # the outer loop re-rolls, and connect() already re-rolls the
+                # anycast internally within this slice.
+                if not c.connect(total_timeout_ms=400):
+                    continue
+                self._clients[key] = c
+            try:
+                c.send(wire.frame(hdr, payload))
+            except Exception:
+                c.close(); self._clients.pop(key, None)
+                continue
+            # Per-attempt reply wait. Long enough that a LIVE port whose handler
+            # delegates to a slow backend (e.g. the supervisor's engine call) still
+            # replies before we abandon it, but bounded so a DEAD port (stale
+            # binding anycast) is dropped and the next attempt re-rolls.
+            per_try = min(1.5, max(0.05, deadline - time.monotonic()))
+            got = c.recv_reply(per_try)
+            if got is None:
+                c.close(); self._clients.pop(key, None)   # likely a dead port
+                continue
+            rhdr, rpayload = got
+            if rhdr.msg_type != wire.MSG_GEN_CALL_REPLY or rhdr.correlation_id != corr:
+                continue
+            return self.ctx.codec.decode(art_package, reply_type, rpayload)
+        raise TimeoutError(
+            f"call_addr {req_type}->{{0x{tipc_type:08x},{tipc_instance}}} "
+            f"timed out after {timeout}s ({attempts} attempts)")
 
     def arm_known(self, art_package: str, proto_type: str) -> None:
         """Make a NON-port framework message decodable on this probe (e.g.
