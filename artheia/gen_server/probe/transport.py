@@ -174,6 +174,19 @@ def tipc_multicast_send(group_type: int, data: bytes) -> None:
         s.close()
 
 
+def tipc_unicast_send(tipc_type: int, tipc_instance: int, data: bytes) -> None:
+    """Send `data` to ONE member's {type,instance} (RDM datagram). The OTP
+    per-member cast (`Pid ! Msg`); matches the C++ PgClient::send_unicast_. Used
+    by the membership-list broadcast (broadcast_members)."""
+    s = socket.socket(_AF_TIPC, socket.SOCK_RDM)
+    try:
+        s.sendto(data, (socket.TIPC_ADDR_NAME, tipc_type, tipc_instance, 0))
+    except OSError:
+        pass
+    finally:
+        s.close()
+
+
 class TipcClient:
     """Connect to a peer's TIPC service address; send framed messages.
 

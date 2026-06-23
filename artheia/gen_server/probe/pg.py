@@ -38,7 +38,8 @@ import time
 from typing import Callable, Optional
 
 from . import wire
-from .transport import TipcDgramServer, tipc_multicast_send
+from .transport import (TipcDgramServer, tipc_multicast_send,
+                        tipc_unicast_send)
 
 # The supervisor's SupervisorControlIf receiver (PgClient::kSupTipc*).
 SUP_TIPC_TYPE = 0x80020001
@@ -62,6 +63,9 @@ class PgProbe:
         self._groups: dict[str, dict] = {}
         # broadcaster's resolved group_type cache: group_name -> type
         self._resolved: dict[str, int] = {}
+        # OTP pg:monitor — watched groups: group_name -> {type,instance,server,members}
+        self._watch: dict[str, dict] = {}
+        self._watch_seq: int = 1
         # per-group received-cast handlers: group_name -> callable(fields)
         self._handlers: dict[str, Callable[[dict], None]] = {}
         # per-group inbox of decoded casts (for await_broadcast)
@@ -155,6 +159,86 @@ class PgProbe:
         )
         tipc_multicast_send(gtype, wire.frame(hdr, payload))
 
+    # ---- OTP pg:monitor — the PRODUCER side (per-member broadcast) ---------
+    def watch(self, group_name: str) -> list:
+        """PgWatch the group (OTP pg:monitor): the supervisor returns the current
+        member list AND pushes a fresh PgMembership to us on every join/leave.
+        Binds a recv socket at a probe-unique watcher addr for the pushes; caches
+        the member list. Returns the initial [(type,instance), …]."""
+        # A probe-unique watcher addr (distinct from any node bind): reuse the
+        # supervisor group-type space is wrong — use a high synthetic type +
+        # pid-instance so the supervisor's RDM push reaches only us.
+        if group_name not in self._watch:
+            wt = 0x80050000 | (os.getpid() & 0xFFFF)
+            wi = self._watch_seq
+            self._watch_seq += 1
+            srv = TipcDgramServer(wt, wi,
+                                  lambda h, p, g=group_name: self._on_membership_push(g, h, p))
+            srv.start()
+            self._watch[group_name] = {"type": wt, "instance": wi,
+                                       "server": srv, "members": []}
+        w = self._watch[group_name]
+        rep = self._probe.call_addr(
+            SUP_TIPC_TYPE, SUP_TIPC_INSTANCE, _SUP_PKG,
+            "system_supervisor_PgWatchReq", "system_supervisor_PgMembership",
+            2.0,
+            node_name=self._node_name, group_name=group_name,
+            watcher_type=w["type"], watcher_instance=w["instance"], watch=True)
+        w["members"] = self._members_from_reply(rep)
+        self._resolved[group_name] = int(rep.get("group_type", 0)) or \
+            self._resolved.get(group_name, 0)
+        return list(w["members"])
+
+    def members(self, group_name: str) -> list:
+        w = self._watch.get(group_name)
+        return list(w["members"]) if w else []
+
+    def broadcast_members(self, group_name: str, art_package: str,
+                          proto_type: str, **fields) -> int:
+        """OTP `[Pid ! Msg || Pid <- pg:get_members]` — cast `proto_type` to EACH
+        watched member's {type,instance}. Must watch() first. Returns the member
+        count sent to."""
+        w = self._watch.get(group_name)
+        if not w:
+            return 0
+        payload = self._probe.ctx.codec.encode(art_package, proto_type, **fields)
+        hdr = wire.Header(
+            msg_type=wire.MSG_GEN_CAST,
+            proto_len=len(payload),
+            service_id=wire.service_id(proto_type),
+            correlation_id=0,
+            timestamp_ns=time.time_ns(),
+        )
+        frame = wire.frame(hdr, payload)
+        members = list(w["members"])
+        for (t, i) in members:
+            tipc_unicast_send(t, i, frame)
+        return len(members)
+
+    @staticmethod
+    def _members_from_reply(rep: dict) -> list:
+        """Extract [(tipc_type, tipc_instance), …] from a decoded PgMembership."""
+        out = []
+        for m in rep.get("members", []) or []:
+            if isinstance(m, dict):
+                out.append((int(m.get("tipc_type", 0)),
+                            int(m.get("tipc_instance", 0))))
+            else:
+                out.append((int(getattr(m, "tipc_type", 0)),
+                            int(getattr(m, "tipc_instance", 0))))
+        return out
+
+    def _on_membership_push(self, group_name: str, hdr, payload: bytes) -> None:
+        """A PgMembership push from the supervisor — refresh the cached members."""
+        try:
+            rep = self._probe.ctx.codec.decode(
+                _SUP_PKG, "system_supervisor_PgMembership", payload)
+        except Exception:
+            return
+        w = self._watch.get(group_name)
+        if w is not None:
+            w["members"] = self._members_from_reply(rep)
+
     # ---- received-frame dispatch ------------------------------------------
     def _on_group_frame(self, group_name: str, hdr: wire.Header,
                         payload: bytes) -> None:
@@ -230,3 +314,7 @@ class PgProbe:
         self.stop_keepalive()
         for name in list(self._groups.keys()):
             self.leave(name)
+        for w in self._watch.values():           # stop watch recv servers
+            try: w["server"].stop()
+            except Exception: pass
+        self._watch.clear()
