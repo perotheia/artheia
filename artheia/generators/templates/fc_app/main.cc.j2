@@ -24,6 +24,7 @@
                          // reporting runnables use bind_listener +
                          // register_cast_inline (no mailbox).
 #include "HeartbeatPublisher.hh"  // periodic liveness beat to the supervisor
+#include "PgClient.hh"            // process-group join/watch (broadcast fan-out)
                          // watchdog — every reporting node (GenServer AND
                          // runnable). Hand-framed cast, no supervisor-proto dep.
 #include <memory>
@@ -178,6 +179,27 @@ int main(int argc, char** argv) {
 {%- endfor %}
 {%- for d in n.unique_receiver_data() %}
         config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+{%- endfor %}
+        // ---- process groups (pg): the in-Theia broadcast fan-out ----------
+        // RECEIVER ports → JOIN each inbound type's group (deliver its broadcasts
+        // to this node's address). SENDER ports → WATCH each outbound type's group
+        // (be pushed its membership; broadcast_* fans out to those members). The
+        // supervisor maintains membership via the watchdog. PgMembership comes back
+        // as a RAW inline cast → PgClient parses it (no supervisor-proto dep).
+        config_mux.register_raw_inline({{ n.snake }}_cfg,
+            ::theia::runtime::PgClient::kMembershipSid,
+            [](const uint8_t* p, uint16_t l) {
+                ::theia::runtime::PgClient::instance().on_membership(p, l);
+            });
+{%- for d in n.unique_receiver_data() %}
+        ::theia::runtime::PgClient::instance().join(
+            ::theia::runtime::RemoteCodec<{{ d.msg }}>::service_id,
+            {{ n.snake }}_type, {{ n.snake }}_inst);
+{%- endfor %}
+{%- for d in n.unique_sender_data() %}
+        ::theia::runtime::PgClient::instance().watch(
+            ::theia::runtime::RemoteCodec<{{ d.msg }}>::service_id,
+            {{ n.snake }}_type, {{ n.snake }}_inst);
 {%- endfor %}
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "

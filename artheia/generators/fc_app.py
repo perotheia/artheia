@@ -278,6 +278,21 @@ class _NodeView:
                                            proto_type=op.rep_proto or ""))
         return out
 
+    def unique_sender_data(self) -> list[_DataEl]:
+        """SENDER-port data types, deduplicated by message type. The node WATCHEs
+        each (its pg broadcast groups) at init so the supervisor pushes it the
+        membership; broadcast_<port>_<field> then fans out to those members."""
+        seen: set[str] = set()
+        out: list[_DataEl] = []
+        for p in self.ports:
+            if p.kind != "sender":
+                continue
+            for d in p.data:
+                if d.msg not in seen:
+                    seen.add(d.msg)
+                    out.append(d)
+        return out
+
 
 @dataclass
 class _ModelView:

@@ -9,6 +9,8 @@
 #pragma once
 
 #include "GenServer.hh"
+#include "NodeRef.hh"   // cast(self, msg, TipcAddr) — pg broadcast fan-out
+#include "PgClient.hh"  // OTP-pg broadcast fan-out (sender-port broadcast_*)
 #include "Log.hh"      // sibling — per-FC ContextLogger + kLogTag
 #include "{{ model.fc_short }}_codecs.hh"   // FC-wide inbound RemoteCodecs (#387)
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
@@ -233,18 +235,18 @@ inline void {{ n.name }}::unsubscribe_{{ p.name }}_{{ d.name }}(uint32_t id) {
 }
 
 inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg) {
-    std::vector<{{ p.name|capitalize }}{{ d.name|capitalize }}Entry> snap;
-    {
-        std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-        snap = {{ p.name }}_{{ d.name }}_subs_;
-    }
-    for (const auto& e : snap) {
-        try { e.fn(msg); }
-        catch (...) {
-            std::fprintf(stderr,
-                "[%s] subscriber %u threw on {{ p.name }}.{{ d.name }} — dropping\n",
-                kNodeName, e.id);
-        }
+    // OTP-pg fan-out: cast `msg` to every member of its TYPE's process group
+    // (group_id = RemoteCodec<{{ d.msg }}>::service_id, the same id the receiver's
+    // register_cast demuxes on). The supervisor maintains membership via the
+    // watchdog + pushes it to this broadcaster (which watches the group at init).
+    // Best-effort, short connect budget — a slow/absent member never stalls us;
+    // the in-process subscriber list (above) is retained but unused (gen_event
+    // retired). 250ms/cast keeps the node thread responsive (defer-from-handler).
+    const uint32_t _gid = ::theia::runtime::RemoteCodec<{{ d.msg }}>::service_id;
+    for (const auto& _m : ::theia::runtime::PgClient::instance().members(_gid)) {
+        ::theia::runtime::cast(*this, msg,
+            ::theia::runtime::TipcAddr{_m.tipc_type, _m.tipc_instance},
+            /*dst_name=*/nullptr, /*connect_timeout_ms=*/250);
     }
 }
 {% endfor -%}
