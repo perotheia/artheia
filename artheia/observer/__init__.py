@@ -4,10 +4,10 @@ The OTP dbg:tracer shape for Theia. See TraceObserver. All internal TIPC, no
 gRPC; decode via libprotobuf (the probe Codec) + JSON. Collector addresses are
 resolved from the parsed log .art (generic).
 """
-from .observer import TraceObserver, TraceRec, SUBSCRIBER_TYPE
+from .observer import TraceObserver, TraceRec
 from .log_observer import LogObserver, LogRec, LOG_SUBSCRIBER_TYPE, LEVEL_CODES
 
 __all__ = [
-    "TraceObserver", "TraceRec", "SUBSCRIBER_TYPE",
+    "TraceObserver", "TraceRec",
     "LogObserver", "LogRec", "LOG_SUBSCRIBER_TYPE", "LEVEL_CODES",
 ]

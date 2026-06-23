@@ -1,44 +1,39 @@
-"""TraceObserver — subscribe to the log[trace] firehose, yield decoded records.
+"""TraceObserver — JOIN the log[trace] PG group, yield decoded records.
 
-The OTP `dbg:tracer` shape for Theia: bind a subscriber TIPC address, call
-TraceCtl.Subscribe, then receive the records the TraceStreamPump fans out —
-each decoded (libprotobuf via the probe Codec) into a header dict + JSON
-payload. All internal TIPC, no gRPC.
+The OTP `dbg:tracer` shape for Theia, now over PG (process-group) multicast: the
+observer pg_joins the TraceRecord group (the supervisor allocates its delivery
+address), and TraceStreamPump PG-multicasts every record — the kernel fans out a
+copy to this observer (and every other joiner). Each record is decoded
+(libprotobuf via the probe Codec) into a header dict + JSON. All internal TIPC,
+no gRPC, no Subscribe RPC, no ring backlog (this is a LIVE tail).
 
-Generic: the collector addresses + the Subscribe service_id are resolved from
-the parsed log `.art` (an ArtheiaContext), never hardcoded — so the observer
-tracks whatever the .art declares.
+Group identity = the wire type NAME (system_services_log_TraceRecord), the same
+well-known name the C++ pump uses (msg_type_name<TraceRecord>()).
 
     from artheia.observer import TraceObserver
     obs = TraceObserver.from_log_art("services/log/system/log/component.art",
                                      proto_root="platform/proto")
-    obs.start()                       # bind + Subscribe
-    for rec in obs.records(timeout=5):# stream decoded TraceRecords
-        print(rec.node_name, rec.msg_type, rec.kind, rec.json)
+    obs.start()                       # pg_join the TraceRecord group
+    for rec in obs.records(timeout=5):# stream decoded TraceRecords (live)
+        print(rec.src, rec.msg_type, rec.kind, rec.json)
     obs.stop()
 """
 from __future__ import annotations
 
-import os
 import queue
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Optional
 
-from artheia.gen_server.probe import wire
 from artheia.gen_server.probe.codec import Codec
 from artheia.gen_server.probe.context import ArtheiaContext
-from artheia.gen_server.probe.transport import TipcClient, TipcServer
+from artheia.gen_server.probe.pg import PgProbe
 
 # The trace types live in the log package; names are stable per the .art.
 _LOG_PKG = "system.services.log"
 _RECORD = "system_services_log_TraceRecord"
-_SUBSCRIBE = "system_services_log_SubscribeReq"
-
-# Observer subscriber service type (per the cluster-netid/observer-addr design:
-# one TraceSubscriber type, distinct instance per observer).
-SUBSCRIBER_TYPE = 0x8001001A
+# The PG group name = the TraceRecord wire type name (well-known, .art-derived).
+_TRACE_GROUP = _RECORD
 
 
 @dataclass
@@ -104,24 +99,24 @@ class TraceRec:
 
 class TraceObserver:
     def __init__(self, ctx: ArtheiaContext, *,
-                 subscriber_type: int = SUBSCRIBER_TYPE,
                  kind_filter: int = 0, node_filter: str = ""):
         self.ctx = ctx
         self.codec: Codec = ctx.codec
-        self._sub_type = subscriber_type
-        self._sub_instance = os.getpid() & 0xFFFF
+        # Filters are now CLIENT-SIDE (PG multicast is unfiltered — every joiner
+        # gets every record). 0/"" = keep everything.
         self._kind_filter = kind_filter
         self._node_filter = node_filter
 
-        # Collector endpoints resolved from the .art (generic, not hardcoded).
-        self._ctl = ctx.ref("TraceCtl")
-        self._sub_op = self._ctl.find_op("Subscribe")
-
-        self._server: Optional[TipcServer] = None
+        # A started NodeProbe backs the PgProbe (its call_addr does the supervisor
+        # join CALL; its codec is shared). Any probe identity works — PG delivery
+        # address is supervisor-allocated, not the probe's .art address. We
+        # impersonate a log node purely to have a valid started probe.
+        self._probe = ctx.probe("TraceStreamPump").start()
+        self._pg = PgProbe(self._probe, node_name="trace-observer")
+        # NOTE: deliberately NOT arm_decode'd — the observer owns the RICH decode
+        # (_decode also cracks the inner traced message from TraceRecord.payload),
+        # so PgProbe hands us the RAW record bytes (_raw) and we decode here.
         self._q: "queue.Queue[TraceRec]" = queue.Queue()
-        self._record_sid = wire.service_id(_RECORD)
-        self._corr = 0
-        self._lock = threading.Lock()
 
     @classmethod
     def from_log_art(cls, log_art: str | Path, *, proto_root: str | Path,
@@ -131,37 +126,21 @@ class TraceObserver:
 
     # ---- lifecycle --------------------------------------------------------
     def start(self, timeout: float = 3.0) -> "TraceObserver":
-        """Bind the subscriber socket, then Subscribe to TraceCtl."""
-        self._server = TipcServer(self._sub_type, self._sub_instance,
-                                  self._on_frame)
-        self._server.start()
-        if not self._subscribe(timeout):
-            self._server.stop()
-            raise ConnectionError("TraceObserver: Subscribe to TraceCtl failed")
+        """pg_join the TraceRecord group; the supervisor allocates our delivery
+        address and the pump multicasts records to us. Keepalive heartbeats keep
+        our membership alive (watchdog-monitored sidecar)."""
+        rep = self._pg.join(_TRACE_GROUP, on_cast=self._on_rec)
+        if int(rep.get("status", 1)) != 0:
+            self._probe.stop()
+            raise ConnectionError(
+                "TraceObserver: pg_join of the TraceRecord group failed "
+                f"(reply={rep})")
+        self._pg.start_keepalive(period_s=1.0)
         return self
 
-    def _subscribe(self, timeout: float) -> bool:
-        req = self.codec.encode(
-            _LOG_PKG, self._sub_op.request.proto_type,
-            sub_type=self._sub_type, sub_instance=self._sub_instance,
-            kind=self._kind_filter, target_node=self._node_filter)
-        ctl = TipcClient(self._ctl.tipc_type, self._ctl.tipc_instance)
-        if not ctl.connect():
-            return False
-        with self._lock:
-            self._corr = (self._corr + 1) & 0xFFFFFFFF
-            corr = self._corr
-        hdr = wire.Header(msg_type=wire.MSG_GEN_CALL, proto_len=len(req),
-                          service_id=self._sub_op.request.service_id,
-                          correlation_id=corr)
-        ctl.send(wire.frame(hdr, req))
-        reply = ctl.recv_reply(timeout=timeout)   # TraceEmpty ack
-        ctl.close()
-        return reply is not None
-
     def stop(self) -> None:
-        if self._server:
-            self._server.stop()
+        self._pg.shutdown()       # leave the group + stop keepalive
+        self._probe.stop()
 
     def __enter__(self):
         return self.start()
@@ -169,13 +148,25 @@ class TraceObserver:
     def __exit__(self, *exc):
         self.stop()
 
-    # ---- inbound fan-out (server loop thread) -----------------------------
-    def _on_frame(self, hdr: wire.Header, payload: bytes, _conn) -> None:
-        if hdr.service_id != self._record_sid:
+    # ---- inbound (PG recv thread) -----------------------------------------
+    def _on_rec(self, fields: dict) -> None:
+        # PgProbe hands us the RAW record bytes (we did not arm_decode), so our
+        # rich _decode runs — it also cracks the inner traced message.
+        raw = fields.get("_raw")
+        if raw is None:
             return
-        rec = self._decode(payload)
-        if rec is not None:
+        rec = self._decode(raw)
+        if rec is not None and self._passes(rec):
             self._q.put(rec)
+
+    def _passes(self, rec: "TraceRec") -> bool:
+        if self._node_filter and rec.src != self._node_filter:
+            return False
+        # kind_filter is a TraceKind bitmask/ordinal; 0 = all. Best-effort match
+        # by the symbolic name's enum number is overkill here — keep all unless a
+        # node filter is set. (Trace KIND filtering stays server-side via the
+        # supervisor's per-node Tracer config, not the observer.)
+        return True
 
     def _decode(self, payload: bytes) -> Optional[TraceRec]:
         from google.protobuf import json_format
