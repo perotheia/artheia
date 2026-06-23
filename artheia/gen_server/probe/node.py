@@ -92,6 +92,49 @@ class NodeProbe:
         )
         self._client(tref).send(wire.frame(hdr, payload))
 
+    def cast_addr(self, tipc_type: int, tipc_instance: int,
+                  art_package: str, proto_type: str, **fields) -> None:
+        """Cast a message (by art_package + flat proto_type) to an EXPLICIT TIPC
+        address — not a .art node ref. Used for framework casts to a fixed
+        address, e.g. the probe's PG join/watch/heartbeat to the supervisor
+        (0x80020001). The codec lazily compiles art_package's .proto."""
+        payload = self.ctx.codec.encode(art_package, proto_type, **fields)
+        hdr = wire.Header(
+            msg_type=wire.MSG_GEN_CAST,
+            proto_len=len(payload),
+            service_id=wire.service_id(proto_type),
+            correlation_id=0,
+            timestamp_ns=time.time_ns(),
+        )
+        key = (tipc_type, tipc_instance)
+        c = self._clients.get(key)
+        if c is None:
+            c = TipcClient(tipc_type, tipc_instance)
+            if not c.connect():
+                return   # best-effort (supervisor not up / restarting)
+            self._clients[key] = c
+        try:
+            c.send(wire.frame(hdr, payload))
+        except Exception:
+            c.close(); self._clients.pop(key, None)   # reconnect next time
+
+    def arm_known(self, art_package: str, proto_type: str) -> None:
+        """Make a NON-port framework message decodable on this probe (e.g.
+        system_supervisor_PgMembership), keyed by its service_id, so an inbound
+        push is decoded + delivered to an on_cast handler / inbox."""
+        from .context import MsgRef  # local: a lightweight decode descriptor
+        sid = wire.service_id(proto_type)
+        self._known_msgs[sid] = MsgRef(name=proto_type, proto_type=proto_type,
+                                       art_package=art_package)
+
+    def on_cast_known(self, proto_type: str,
+                      handler: Callable[[dict], None]) -> None:
+        """Register a handler for a NON-port framework cast (by flat proto_type).
+        Pair with arm_known() so the payload decodes. Used for PgMembership."""
+        sid = wire.service_id(proto_type)
+        m = self._known_msgs.get(sid)
+        self._cast_handlers[sid] = (m, handler)
+
     def call(self, target, op_name: str, timeout: float = 2.0, **fields) -> dict:
         """Call `op_name` on `target`; block for the reply; return it as dict."""
         tref = self._resolve(target)
