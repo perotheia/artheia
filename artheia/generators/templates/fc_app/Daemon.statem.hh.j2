@@ -14,6 +14,8 @@
 #pragma once
 
 #include "GenStateM.hh"
+#include "NodeRef.hh"   // TipcAddr (PG plumbing)
+#include "PgClient.hh"  // OTP-pg broadcast fan-out (sender-port broadcast_*)
 #include "Log.hh"      // sibling — per-FC ContextLogger + kLogTag
 #include "{{ model.fc_short }}_codecs.hh"   // FC-wide inbound RemoteCodecs (#387)
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
@@ -90,15 +92,9 @@ using {{ n.name }}Data = {{ n.statem.data_fqn.split(".")[-1] }};
 struct {{ n.name }}Data {};
 {%- endif %}
 
-// Subscribers (one type per sender-port data element). Free-functions
-// so the daemon stays delivery-flavor agnostic. on_enter — declared
-// in impl — typically broadcasts the new state to these.
-{% for p in n.ports if p.kind == "sender" -%}
-{% for d in p.data -%}
-using {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber =
-    std::function<void(const {{ d.msg }}&)>;
-{% endfor -%}
-{% endfor %}
+// (Subscriber-list / gen_event RETIRED — on_enter broadcasts the new state via
+// the sender-port broadcast_*(), which is PURE PG multicast. Consumers pg_join
+// the state message's group.)
 
 // Forward-declare the user-facing daemon so the GenStateM template
 // can be instantiated below (CRTP).
@@ -158,6 +154,34 @@ public:
     }
     void trace_clear_all() {
         ::theia::runtime::tracer_for(kNodeName).trace_clear_all();
+    }
+
+    // ---- process groups (pg): MANUAL pub/sub over TIPC nameseq multicast ----
+    // Same model as the non-statem Daemon template: group identity =
+    // msg_type_name<T>() (the .art wire name); the supervisor allocates the
+    // group's TIPC type + a unique instance; broadcast_*() multicasts ONE
+    // datagram to the whole group. A consumer pg_join<T>()s from init(); a
+    // broadcaster pg_resolve<T>()s the type (cached). See [[project-pg-broadcast-model]].
+    void pg_attach(const char* node_name, ::theia::runtime::NodeBinding* b) {
+        pg_.attach(node_name, b);
+    }
+    template <typename T> ::theia::runtime::PgClient::Group pg_join() {
+        return pg_.join<T>();
+    }
+    template <typename T> ::theia::runtime::PgClient::Group pg_resolve() {
+        if (!pg_groups_[::theia::runtime::RemoteCodec<T>::service_id].ok)
+            pg_groups_[::theia::runtime::RemoteCodec<T>::service_id] = pg_.resolve<T>();
+        return pg_groups_[::theia::runtime::RemoteCodec<T>::service_id];
+    }
+    template <typename T> void pg_leave() { pg_.leave<T>(); }
+    template <typename T>
+    void pg_broadcast(uint32_t group_type, const T& msg) {
+        uint8_t _buf[8192];
+        pb_ostream_t _os = pb_ostream_from_buffer(_buf, sizeof(_buf));
+        if (!pb_encode(&_os, ::theia::runtime::RemoteCodec<T>::fields(), &msg))
+            return;
+        pg_.broadcast<T>(group_type, _buf,
+                         static_cast<uint16_t>(_os.bytes_written));
     }
 
     // Keep the framework's config-service handler
@@ -273,12 +297,9 @@ public:
                           ::theia::runtime::GenStateMHolder<{{ n.name }}State, {{ n.name }}Data>& h);
 {%- endif %}
 
-    // ---- Subscriber registration (per sender-port data element) --------
+    // ---- Broadcast senders (per sender-port data element) — PG multicast --
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
-    uint32_t subscribe_{{ p.name }}_{{ d.name }}(
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber s);
-    void     unsubscribe_{{ p.name }}_{{ d.name }}(uint32_t id);
     void     broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg);
 {% endfor -%}
 {% endfor %}
@@ -295,53 +316,23 @@ public:
 {% endfor %}
 
 private:
-{% for p in n.ports if p.kind == "sender" %}
-{%- for d in p.data %}
-    struct {{ p.name|capitalize }}{{ d.name|capitalize }}Entry {
-        uint32_t id;
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber fn;
-    };
-    std::mutex {{ p.name }}_{{ d.name }}_mu_;
-    uint32_t {{ p.name }}_{{ d.name }}_next_id_{1};
-    std::vector<{{ p.name|capitalize }}{{ d.name|capitalize }}Entry>
-        {{ p.name }}_{{ d.name }}_subs_;
-{% endfor -%}
-{% endfor %}
+    // The node's PG client + broadcaster group-type cache (see the non-statem
+    // Daemon template). Idle until the first pg_join/broadcast.
+    ::theia::runtime::PgClient pg_;
+    std::map<uint16_t, ::theia::runtime::PgClient::Group> pg_groups_;
 };
 
-// Subscriber + broadcast inline impls — pure boilerplate; kept in
-// lib because they're per-instance bookkeeping with no policy.
+// Broadcast fan-out — PG name-sequence multicast (one datagram → the whole
+// group). Kept in lib (auto-generated); the user touches on_enter/handle_* only.
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
-inline uint32_t {{ n.name }}::subscribe_{{ p.name }}_{{ d.name }}(
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber s) {
-    std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-    uint32_t id = {{ p.name }}_{{ d.name }}_next_id_++;
-    {{ p.name }}_{{ d.name }}_subs_.push_back({id, std::move(s)});
-    return id;
-}
-
-inline void {{ n.name }}::unsubscribe_{{ p.name }}_{{ d.name }}(uint32_t id) {
-    std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-    auto& v = {{ p.name }}_{{ d.name }}_subs_;
-    v.erase(std::remove_if(v.begin(), v.end(),
-              [id](const auto& e) { return e.id == id; }), v.end());
-}
-
 inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg) {
-    std::vector<{{ p.name|capitalize }}{{ d.name|capitalize }}Entry> snap;
-    {
-        std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-        snap = {{ p.name }}_{{ d.name }}_subs_;
-    }
-    for (const auto& e : snap) {
-        try { e.fn(msg); }
-        catch (...) {
-            std::fprintf(stderr,
-                "[%s] subscriber %u threw on {{ p.name }}.{{ d.name }} — dropping\n",
-                kNodeName, e.id);
-        }
-    }
+    // group identity = msg_type_name<{{ d.msg }}>() (the .art wire name); the
+    // supervisor allocates group_type on first resolve. Members pg_join the same
+    // type → register_cast<{{ d.msg }}> delivers it to their handle_cast.
+    auto _g = pg_resolve<{{ d.msg }}>();
+    if (!_g.ok) return;                       // supervisor unreachable — drop
+    pg_broadcast<{{ d.msg }}>(_g.type, msg);
 }
 {% endfor -%}
 {% endfor %}

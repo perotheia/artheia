@@ -72,15 +72,10 @@ using {{ op.rep_msg }} = {{ op.rep_proto }};
 // for FCs with statem blocks, run gen-cpp-stubs alongside.)
 {%- endif %}
 
-// One subscriber on every sender-port broadcast. Free-function so
-// the daemon doesn't care whether delivery is in-process, TIPC, or
-// gRPC. Subscribers MUST be best-effort.
-{% for p in n.ports if p.kind == "sender" -%}
-{% for d in p.data -%}
-using {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber =
-    std::function<void(const {{ d.msg }}&)>;
-{% endfor -%}
-{% endfor %}
+// (The in-process subscriber-list / gen_event pattern is RETIRED — OTP
+// deprecated gen_event. A sender-port broadcast_*() is PURE PG multicast now;
+// consumers pg_join the message type's group. No std::function subscriber
+// typedef, no subscribe_*/unsubscribe_*, no per-node _subs_ list.)
 
 class {{ n.name }} : public ::theia::runtime::GenServer<{{ n.name }}, {{ n.name }}State> {
 public:
@@ -172,16 +167,6 @@ public:
     }
 {% endif %}
 
-    // ---- Subscriber registration ----------------------------------
-{% for p in n.ports if p.kind == "sender" %}
-{%- for d in p.data %}
-    // {{ p.name }}.{{ d.name }} broadcast subscribers.
-    uint32_t subscribe_{{ p.name }}_{{ d.name }}(
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber s);
-    void     unsubscribe_{{ p.name }}_{{ d.name }}(uint32_t id);
-{% endfor -%}
-{% endfor %}
-
     // ---- GenServer plumbing: terminate default
     //
     // terminate keeps an inline no-op default; impl may shadow it.
@@ -252,39 +237,12 @@ private:
     ::theia::runtime::PgClient pg_;
     // group_type cache for broadcasters: service_id(T) -> resolved {type,inst}.
     std::map<uint16_t, ::theia::runtime::PgClient::Group> pg_groups_;
-{% for p in n.ports if p.kind == "sender" %}
-{%- for d in p.data %}
-    struct {{ p.name|capitalize }}{{ d.name|capitalize }}Entry {
-        uint32_t id;
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber fn;
-    };
-    std::mutex {{ p.name }}_{{ d.name }}_mu_;
-    uint32_t {{ p.name }}_{{ d.name }}_next_id_{1};
-    std::vector<{{ p.name|capitalize }}{{ d.name|capitalize }}Entry>
-        {{ p.name }}_{{ d.name }}_subs_;
-{% endfor -%}
-{% endfor %}
 };
 
-// Subscriber registration — defined in the lib slice (not impl) so
-// it stays auto-generated. The user touches handle_* in impl.
+// Broadcast fan-out — defined in the lib slice (not impl) so it stays
+// auto-generated. The user touches handle_* in impl.
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
-inline uint32_t {{ n.name }}::subscribe_{{ p.name }}_{{ d.name }}(
-        {{ p.name|capitalize }}{{ d.name|capitalize }}Subscriber s) {
-    std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-    uint32_t id = {{ p.name }}_{{ d.name }}_next_id_++;
-    {{ p.name }}_{{ d.name }}_subs_.push_back({id, std::move(s)});
-    return id;
-}
-
-inline void {{ n.name }}::unsubscribe_{{ p.name }}_{{ d.name }}(uint32_t id) {
-    std::lock_guard<std::mutex> lk({{ p.name }}_{{ d.name }}_mu_);
-    auto& v = {{ p.name }}_{{ d.name }}_subs_;
-    v.erase(std::remove_if(v.begin(), v.end(),
-              [id](const auto& e) { return e.id == id; }), v.end());
-}
-
 inline void {{ n.name }}::broadcast_{{ p.name }}_{{ d.name }}(const {{ d.msg }}& msg) {
     // OTP-pg multicast: encode `msg` once and send ONE datagram to its TYPE's
     // process group {group_type, 0..~0} — the TIPC kernel fans out a copy to every

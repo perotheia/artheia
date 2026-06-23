@@ -158,6 +158,10 @@ int main(int argc, char** argv) {
 {%- for d in n.unique_receiver_data() %}
         config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
+        // PG (manual pub/sub): attach this statem node's PgClient to its demux
+        // binding so a joined group's multicast datagrams route into its normal
+        // handle_cast (register_cast above). The node pg_join<T>()s from init().
+        {{ n.snake }}.pg_attach({{ n.name }}::kNodeName, {{ n.snake }}_cfg);
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "
                                  "push + signal inject disabled");
