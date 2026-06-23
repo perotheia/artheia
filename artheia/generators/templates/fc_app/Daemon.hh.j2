@@ -125,6 +125,37 @@ public:
     void trace_clear_all() {
         ::theia::runtime::tracer_for(kNodeName).trace_clear_all();
     }
+
+    // ---- process groups (pg): MANUAL pub/sub, the node decides WHEN ------
+    //
+    // OTP pg:join/leave shape. Declaring a port wires the CAPABILITY (codec +
+    // broadcast_*); JOINING a group to actually receive, or WATCHING it before
+    // broadcasting, is a DELIBERATE call the node makes from init()/a handler —
+    // never automatic. group_id = RemoteCodec<T>::service_id (the wire type).
+    //   pg_join<T>()   — consume T's broadcast group (deliver to this node).
+    //   pg_watch<T>()  — be pushed T's membership (call before broadcast_*<...>).
+    //   pg_leave<T>()  — stop consuming T.
+    //   pg_members<T>()— this node's current view of T's group (broadcaster loop).
+    // pg_set_addr() is called once by main.cc with this node's resolved TIPC addr
+    // so join/watch tell the supervisor where to deliver.
+    void pg_set_addr(uint32_t t, uint32_t i) { pg_rx_type_ = t; pg_rx_inst_ = i; }
+    template <typename T> void pg_join() {
+        ::theia::runtime::PgClient::instance().join(
+            ::theia::runtime::RemoteCodec<T>::service_id, pg_rx_type_, pg_rx_inst_);
+    }
+    template <typename T> void pg_watch() {
+        ::theia::runtime::PgClient::instance().watch(
+            ::theia::runtime::RemoteCodec<T>::service_id, pg_rx_type_, pg_rx_inst_);
+    }
+    template <typename T> void pg_leave() {
+        ::theia::runtime::PgClient::instance().leave(
+            ::theia::runtime::RemoteCodec<T>::service_id);
+    }
+    template <typename T>
+    std::vector<::theia::runtime::PgClient::Member> pg_members() {
+        return ::theia::runtime::PgClient::instance().members(
+            ::theia::runtime::RemoteCodec<T>::service_id);
+    }
 {% endif %}
 
     // ---- Subscriber registration ----------------------------------
@@ -201,6 +232,10 @@ public:
 {% endfor %}
 
 private:
+    // This node's TIPC receive address — where pg_join/pg_watch<T>() tell the
+    // supervisor to deliver. Set once by main.cc via pg_set_addr().
+    uint32_t pg_rx_type_ = kTipcType;
+    uint32_t pg_rx_inst_ = kTipcInstance;
 {% for p in n.ports if p.kind == "sender" %}
 {%- for d in p.data %}
     struct {{ p.name|capitalize }}{{ d.name|capitalize }}Entry {
