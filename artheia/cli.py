@@ -1737,10 +1737,19 @@ def _load_deployment(target: str, attr: str | None):
     show_default=True,
     help="Output directory for the per-machine deploy JSON.",
 )
+@click.option(
+    "--arch",
+    "arch_override",
+    default=None,
+    help="Override EVERY machine's arch (e.g. x86_64 / aarch64) before serializing. "
+    "Lets ONE rig serialize to per-arch outputs (services-rig-x86 / -aarch) instead "
+    "of duplicate per-arch rig files — removes that duplication.",
+)
 def serialize_manifest_cmd(
     target: str,
     attr: str | None,
     out_path: str,
+    arch_override: str | None,
 ) -> None:
     """Import a DeploymentLayer module, validate it, and write per-machine JSON."""
     import json
@@ -1748,6 +1757,19 @@ def serialize_manifest_cmd(
     from artheia.manifest.algebra import validate
 
     module, dep = _load_deployment(target, attr)
+
+    # --- arch override: one rig → per-arch output ------------------------
+    # Rebuild every MachineLayer's arch to the requested token, so a single
+    # services rig serializes to services-rig-x86 / -aarch without a duplicate
+    # per-arch rig file. The arch flows into machine.json (+ the dpkg-arch map).
+    if arch_override:
+        import dataclasses
+        from artheia.manifest.algebra import Explicit
+        from artheia.manifest.deployment import MachineSetLayer
+        machs = [dataclasses.replace(m, arch=Explicit(arch_override))
+                 for m in dep.machines.machines]
+        dep = dataclasses.replace(
+            dep, machines=MachineSetLayer(machines=set(machs)))
 
     # --- the validate-before-serialize gate -------------------------------
     issues = validate(dep)
