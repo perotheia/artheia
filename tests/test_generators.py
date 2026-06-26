@@ -544,6 +544,65 @@ def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch
     assert compute["applications"][0]["processes"] == ["c"]
 
 
+def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
+    """A process whose PROCESS_NODES meta carries run_on_start=False must emit
+    `run_on_start: false` on its executor.json worker leaf (so the supervisor
+    defines but does not boot it — a HW-dependent FC like nm opting out for a
+    given deploy). A process without it must NOT emit the key (default true)."""
+    import sys
+
+    from artheia.cli import serialize_manifest_cmd
+    _serialize = serialize_manifest_cmd.callback
+
+    mod = tmp_path / "_ros_fixture.py"
+    mod.write_text(
+        "from artheia.manifest.algebra import Explicit\n"
+        "from artheia.manifest.deployment import (\n"
+        "    DeploymentLayer, ExecutionLayer, ProcessLayer,\n"
+        "    MachineSetLayer, MachineLayer,\n"
+        "    ApplicationSetLayer, ApplicationLayer)\n"
+        "RIG = DeploymentLayer(\n"
+        "    execution=ExecutionLayer(processes={\n"
+        "        ProcessLayer(name='nm', executable=Explicit('//x:nm'),\n"
+        "                     start_cmd=Explicit('bin/nm'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('central')),\n"
+        "        ProcessLayer(name='com', executable=Explicit('//x:com'),\n"
+        "                     start_cmd=Explicit('bin/com'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('central')),\n"
+        "    }),\n"
+        "    machines=MachineSetLayer(machines={\n"
+        "        MachineLayer(name='central', arch=Explicit('x86_64')),\n"
+        "    }),\n"
+        "    applications=ApplicationSetLayer(applications={\n"
+        "        ApplicationLayer(name='services', host_machine=Explicit('central'),\n"
+        "                         processes={'nm', 'com'}),\n"
+        "    }),\n"
+        ")\n"
+        # A supervisor tree listing both workers, so executor.json has leaves.
+        "from artheia.manifest.supervisor import SupervisorNode, RestartStrategy\n"
+        "SUPERVISORS = [SupervisorNode(name='root',\n"
+        "    strategy=RestartStrategy.ONE_FOR_ALL, children=['nm', 'com'])]\n"
+        # nm opts out of boot; com is a normal (default-true) worker.
+        "PROCESS_NODES = {'nm': {'run_on_start': False}, 'com': {}}\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("_ros_fixture", None)
+    out = tmp_path / "out"
+    _serialize("_ros_fixture", "RIG", str(out), None)
+
+    execu = json.loads((out / "central" / "executor.json").read_text())
+
+    def leaves(n):
+        return ([n] if not n.get("children")
+                else [x for c in n["children"] for x in leaves(c)])
+    by_name = {w["name"]: w for w in leaves(execu) if w.get("type") == "worker"}
+    # nm carries run_on_start:false; com omits the key (default true).
+    assert by_name["nm"]["run_on_start"] is False
+    assert "run_on_start" not in by_name["com"]
+
+
 def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
     """`gen-app --kind lib` must emit impl/<Node>_state.hh for a plain atomic
     node — the shared Daemon.hh.j2 lib header `#include`s it, so a missing

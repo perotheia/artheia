@@ -1869,6 +1869,13 @@ def serialize_manifest_cmd(
         }
         if p.mem_limit_bytes:
             w["mem_limit_bytes"] = p.mem_limit_bytes
+        # run_on_start (default true → omitted). A process whose PROCESS_NODES
+        # meta carries run_on_start=false is DEFINED in the tree but not booted by
+        # the supervisor (a HW-dependent FC opted out for this deploy — e.g. nm on
+        # a container rig). Deploy tooling may also patch this into executor.json
+        # post-serialize for a deploy-specific opt-out.
+        if meta.get("run_on_start") is False:
+            w["run_on_start"] = False
         return w
 
     out_dir = Path(out_path)
