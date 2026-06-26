@@ -56,3 +56,20 @@ THEIA_DECLARE_REMOTE_CODEC({{ d.proto_type }})
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}
+{%- if model.enums %}
+
+// FC-wide enum aliases — the enum TYPE and each VALUE inside the FC namespace, so
+// impl code writes the readable `{{ model.enums[0][0] }}` / `{{ model.enums[0][1][0] }}`
+// instead of nanopb's double-prefixed name
+// ({{ model.proto_package }}_<Enum>_<Enum>_<VALUE>). Emitted ONCE here (this header
+// is #pragma once + included by every node header) — NOT per-node, so two node
+// headers in one TU don't redefine them.
+namespace {{ model.cxx_namespace }} {
+{%- for ename, evals in model.enums %}
+using {{ ename }} = {{ model.proto_package }}_{{ ename }};
+{%- for v in evals %}
+inline constexpr {{ ename }} {{ v }} = {{ model.proto_package }}_{{ ename }}_{{ ename }}_{{ v }};
+{%- endfor %}
+{%- endfor %}
+}  // namespace {{ model.cxx_namespace }}
+{%- endif %}

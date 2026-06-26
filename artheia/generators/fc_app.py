@@ -321,6 +321,13 @@ class _ModelView:
     # daemon needs an #include "..pb.h" per entry.
     messages_used: list[str] = field(default_factory=list)
 
+    # Enums declared in the .art, as (name, [value_names]). The lib aliases the
+    # enum TYPE and each VALUE so impl code writes `ActivationState`/`ACT_NONE`
+    # instead of the double-prefixed nanopb name
+    # (system_services_ucm_ActivationState_ActivationState_ACT_NONE). Hands-off
+    # generation: no manual constants in the impl. Pairs (enum_name, values).
+    enums: list[tuple] = field(default_factory=list)
+
 
 # ---- model harvesting ------------------------------------------------------
 
@@ -719,14 +726,23 @@ def _build_model_view(art_path: Path,
     # _proto_package_name → "system.services.sm" → flatten to
     # "system_services_sm". That's the prefix glued to every typedef.
     proto_pkg = _proto_package_name(art_package).replace(".", "_")
-    # User-facing C++ namespace. Defaults to the .art-package as one
-    # underscore-flat identifier (so `system.services.sm` ⇒ the single
-    # symbol `system_services_sm`); user override accepts nested
-    # colon-colon segments — e.g. ``--ns ara::sm`` emits
-    # ``namespace ara::sm { ... }`` directly. The flag is the
-    # single point of conformity for AUTOSAR-style FC names and for
-    # vendor-app namespaces (e.g. ``--ns vendor::tornado``).
-    cxx_ns = cxx_namespace_override or art_package.replace(".", "_")
+    # User-facing C++ namespace. Resolution order (most→least specific):
+    #   1. an explicit --ns override (CLI), then
+    #   2. CONVENTION: a `system.services.<fc>` package is an AUTOSAR Adaptive
+    #      functional cluster, so it lands in `ara::<fc>` (sm → ara::sm, ucm →
+    #      ara::ucm). This is DETERMINISTIC from the package name — no flag, no
+    #      .art keyword, no post-regen hand-rename. The committed FC libs (per/
+    #      crypto/sm/phm/ucm) already use exactly this; the convention makes regen
+    #      reproduce it hands-off instead of needing --ns every time.
+    #   3. otherwise the package flattened to one underscore identifier
+    #      (`vendor.app` ⇒ `vendor_app`) — the legacy default for non-ARA apps.
+    # The override accepts nested colon-colon segments (`vendor::tornado`).
+    if cxx_namespace_override:
+        cxx_ns = cxx_namespace_override
+    elif art_package.startswith("system.services.") and len(parts) == 3:
+        cxx_ns = f"ara::{fc_short}"          # the AUTOSAR Adaptive FC convention
+    else:
+        cxx_ns = art_package.replace(".", "_")
     daemon_class = ""
 
     # Per-composition partitioning (one composition = one process / one
@@ -833,6 +849,16 @@ def _build_model_view(art_path: Path,
                 destinations=dests,
             ))
 
+    # Harvest enums (name + value names) so the lib can alias the TYPE and each
+    # VALUE — impl code writes `ActivationState`/`ACT_NONE`, not the nanopb
+    # double-prefix. Identified structurally (an element with .values whose items
+    # carry .name) to avoid importing the textX class.
+    enums: list[tuple] = []
+    for el in model.elements:
+        vals = getattr(el, "values", None)
+        if vals and getattr(el, "name", None) and all(hasattr(v, "name") for v in vals):
+            enums.append((el.name, [v.name for v in vals]))
+
     return _ModelView(
         art_package=art_package,
         proto_package=proto_pkg,
@@ -848,6 +874,7 @@ def _build_model_view(art_path: Path,
         bazel_pkg_prefix=f"services/{fc_short}",
         nodes=nodes,
         messages_used=_messages_used(nodes),
+        enums=enums,
     )
 
 
