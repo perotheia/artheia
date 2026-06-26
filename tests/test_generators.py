@@ -478,6 +478,72 @@ def test_manifest_empty_application_emits_set_not_dict(tmp_path):
     assert app.processes == frozenset()
 
 
+def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch):
+    """serialize-manifest must slice an application's process list to EACH
+    machine — not copy the whole set onto the host board and leave the other
+    board empty. Regression for the L4-B split (central+compute): the `services`
+    AA spans both boards, but application.json gave central all 16 processes
+    (incl. compute's ucm/shwa) and compute an EMPTY applications list, because
+    _app_dict copied a.processes verbatim and m_apps filtered only on
+    host_machine. Each board's application.json must list exactly the processes
+    bound there."""
+    import sys
+
+    from artheia.cli import serialize_manifest_cmd
+    # serialize_manifest_cmd is a click Command; .callback is the raw function.
+    _serialize = serialize_manifest_cmd.callback
+
+    # A tiny two-machine rig: one `services` app whose processes split across
+    # central (a, b) + compute (c) — the shape of split_rig (host_machine on
+    # central, but c runs on compute).
+    mod = tmp_path / "_split_fixture.py"
+    mod.write_text(
+        "from artheia.manifest.algebra import Explicit\n"
+        "from artheia.manifest.deployment import (\n"
+        "    DeploymentLayer, ExecutionLayer, ProcessLayer,\n"
+        "    MachineSetLayer, MachineLayer,\n"
+        "    ApplicationSetLayer, ApplicationLayer)\n"
+        "RIG = DeploymentLayer(\n"
+        "    execution=ExecutionLayer(processes={\n"
+        "        ProcessLayer(name='a', executable=Explicit('//x:a'),\n"
+        "                     start_cmd=Explicit('bin/a'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('central')),\n"
+        "        ProcessLayer(name='b', executable=Explicit('//x:b'),\n"
+        "                     start_cmd=Explicit('bin/b'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('central')),\n"
+        "        ProcessLayer(name='c', executable=Explicit('//x:c'),\n"
+        "                     start_cmd=Explicit('bin/c'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('compute')),\n"
+        "    }),\n"
+        "    machines=MachineSetLayer(machines={\n"
+        "        MachineLayer(name='central', arch=Explicit('x86_64')),\n"
+        "        MachineLayer(name='compute', arch=Explicit('x86_64')),\n"
+        "    }),\n"
+        "    applications=ApplicationSetLayer(applications={\n"
+        "        ApplicationLayer(name='services', host_machine=Explicit('central'),\n"
+        "                         processes={'a', 'b', 'c'}),\n"
+        "    }),\n"
+        ")\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("_split_fixture", None)
+    out = tmp_path / "out"
+    _serialize("_split_fixture", "RIG", str(out), None)
+
+    central = json.loads((out / "central" / "application.json").read_text())
+    compute = json.loads((out / "compute" / "application.json").read_text())
+
+    # central: the `services` app sliced to ITS processes — a, b (NOT c).
+    assert [x["name"] for x in central["applications"]] == ["services"]
+    assert central["applications"][0]["processes"] == ["a", "b"]
+    # compute: the app is PRESENT (not empty) with only its process — c.
+    assert [x["name"] for x in compute["applications"]] == ["services"]
+    assert compute["applications"][0]["processes"] == ["c"]
+
+
 def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
     """`gen-app --kind lib` must emit impl/<Node>_state.hh for a plain atomic
     node — the shared Daemon.hh.j2 lib header `#include`s it, so a missing

@@ -1822,10 +1822,16 @@ def serialize_manifest_cmd(
             "os_packages": sorted(m.os_packages), "time_base": m.time_base,
         }
 
-    def _app_dict(a) -> dict:
+    def _app_dict(a, on_machine=None) -> dict:
+        """Application slice for one machine. `on_machine` (the machine's process
+        names) intersects the app's process set so each board's application.json
+        lists ONLY the processes that run there — matching execution.json /
+        executor.json. None → the whole-deployment view (every process)."""
+        procs = sorted(a.processes if on_machine is None
+                       else (set(a.processes) & on_machine))
         return {
             "name": a.name, "host_machine": a.host_machine,
-            "processes": sorted(a.processes),
+            "processes": procs,
         }
 
     # Supervisor tree from the source module's sidecar (executor.py), if any.
@@ -1884,7 +1890,15 @@ def serialize_manifest_cmd(
         m_proc_names = {p.name for p in m_procs}
         m_svcs = [s for s in services
                   if proc_machine.get(s.provided_by) == m.name]
-        m_apps = [a for a in apps if a.host_machine == m.name]
+        # An application appears on THIS machine if any of its processes is bound
+        # here (a split app like the `services` AA spans both boards) — not only
+        # where its declared host_machine sits. Without this, the non-host board
+        # gets an EMPTY application.json and the host board lists processes it
+        # doesn't run (e.g. central listing compute's ucm/shwa). The per-machine
+        # slice is the app's processes ∩ this machine's processes (below).
+        m_apps = [a for a in apps
+                  if a.host_machine == m.name
+                  or (set(a.processes) & m_proc_names)]
 
         _dump(mdir / "machine.json", _machine_dict(m))
         _dump(mdir / "execution.json",
@@ -1892,7 +1906,7 @@ def serialize_manifest_cmd(
         _dump(mdir / "service.json",
               {"instances": [_svc_dict(s) for s in m_svcs]})
         _dump(mdir / "application.json",
-              {"applications": [_app_dict(a) for a in m_apps]})
+              {"applications": [_app_dict(a, m_proc_names) for a in m_apps]})
 
         # executor.json: a NESTED supervisor tree rooted at `root`, sliced to
         # this machine — the shape the C++ supervisor parses (spec.cpp:
