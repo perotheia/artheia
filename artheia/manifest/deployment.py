@@ -493,23 +493,29 @@ class DeploymentLayer(Layer):
 
         # 8. (WARNING) A process's fg_states should be declared by its machine's
         #    machine_states (the FG composition). A process asking to run in a
-        #    state the machine never enters is dead. Skip when the machine
+        #    state the machine never enters is dead. Checked against EACH placed
+        #    machine ({machine} ∪ machines) — a fanned-out process (shwa on both
+        #    boards) must be valid on every board it runs on. Skip a machine that
         #    declares no states (not every rig models them).
         for pname, p in procs.items():
-            mname = _value(p.machine)
-            if mname is None or mname not in machines:
-                continue
-            mstates = _members(machines[mname].machine_states)
-            if not mstates:
-                continue
-            for st in _members(p.fg_states):
-                if st not in mstates:
-                    issues.append(Issue(
-                        f"{context}.execution.processes[{pname}].fg_states",
-                        f"runs in FG state {st!r} not in machine {mname!r}'s "
-                        f"machine_states {sorted(mstates)}",
-                        severity="warning",
-                    ))
+            placed = set()
+            if (mscalar := _value(p.machine)) is not None:
+                placed.add(mscalar)
+            placed |= set(_members(p.machines))
+            for mname in sorted(placed):
+                if mname not in machines:
+                    continue
+                mstates = _members(machines[mname].machine_states)
+                if not mstates:
+                    continue
+                for st in _members(p.fg_states):
+                    if st not in mstates:
+                        issues.append(Issue(
+                            f"{context}.execution.processes[{pname}].fg_states",
+                            f"runs in FG state {st!r} not in machine {mname!r}'s "
+                            f"machine_states {sorted(mstates)}",
+                            severity="warning",
+                        ))
 
         return issues
 
