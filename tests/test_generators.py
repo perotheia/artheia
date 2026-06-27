@@ -446,8 +446,33 @@ def test_manifest_empty_application_emits_set_not_dict(tmp_path):
         source="empty.art", processes=[], services=[],
         app_name="apps", proc_names=[], process_nodes={},
     )
-    assert "processes=set()" in text
-    assert "processes={}" not in text
+    # BOTH axes must use set() when empty: the application's processes AND the
+    # top-level ExecutionLayer(processes=...). The execution axis used to render
+    # `processes={\n    }` (an empty DICT across two lines, so the old substring
+    # check missed it), which broke combine()/mappend_set with `set | dict` the
+    # moment a fresh `theia init` workspace combined its empty apps with services.
+    assert "ExecutionLayer(processes=set())" in text
+    assert "ExecutionLayer(processes={" not in text
+    assert "processes=set()" in text          # the application axis too
+
+    # And it must actually COMBINE with a non-empty layer (the real failure mode):
+    # exec the rendered module and combine it the way the bootstrap rig does.
+    import sys as _sys
+    ns: dict = {}
+    mod = tmp_path / "empty_apps.py"
+    mod.write_text(text)
+    exec(compile(text, str(mod), "exec"), ns)
+    empty = ns["DEPLOYMENT"]
+    from artheia.manifest.algebra import Explicit
+    from artheia.manifest.deployment import (
+        DeploymentLayer, ExecutionLayer, ProcessLayer)
+    nonempty = DeploymentLayer(execution=ExecutionLayer(processes={
+        ProcessLayer(name="com", executable=Explicit("//x:com"),
+                     start_cmd=Explicit("bin/com"),
+                     function_group=Explicit("services")),
+    }))
+    merged = nonempty.combine(empty)   # must NOT raise `set | dict`
+    assert any(p.name == "com" for p in merged.execution.processes)
 
     # And it must actually simplify (the real failure mode): exec the rendered
     # module, bind host_machine the way a rig does (Append over the apps AA), then

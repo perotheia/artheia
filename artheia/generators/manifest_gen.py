@@ -262,10 +262,18 @@ def _render_manifest(source: str, processes, services, app_name: str,
     out = [_MANIFEST_HEADER.format(source=source)]
 
     # --- execution axis ---------------------------------------------------
-    out.append("    execution=ExecutionLayer(processes={\n")
-    for ident, comp, base_dir, leaf, fg in processes:
-        out.append(_render_process(ident, comp, base_dir, leaf, fg))
-    out.append("    }),\n")
+    # processes is a SET. A bare `{}` is an empty DICT, not a set, so an empty
+    # process list (e.g. an app package with zero compositions — the freshly
+    # `theia init`'d workspace's bootstrap apps) must emit `set()`. Otherwise
+    # combine()/mappend_set hits `set | dict` (TypeError) the moment this layer is
+    # combined with a non-empty one. (Same rule as the application axis below.)
+    if processes:
+        out.append("    execution=ExecutionLayer(processes={\n")
+        for ident, comp, base_dir, leaf, fg in processes:
+            out.append(_render_process(ident, comp, base_dir, leaf, fg))
+        out.append("    }),\n")
+    else:
+        out.append("    execution=ExecutionLayer(processes=set()),\n")
 
     # --- service axis (best-effort, from provided ports) ------------------
     if services:
