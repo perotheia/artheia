@@ -25,7 +25,7 @@ cc_library(
     # root is the FC out_dir (one above impl/).
     includes = [".."],
     copts = ["-std=c++17", "-fPIC"],
-    deps = ["//platform/runtime:runtime"],
+    deps = ["{{ platform_repo }}//platform/runtime:runtime"],
 )
 
 cc_library(

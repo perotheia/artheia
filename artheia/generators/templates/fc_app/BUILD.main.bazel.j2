@@ -20,10 +20,10 @@ cc_binary(
         "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
         "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_impl",
         # Crash forensics — main.cc installs the fatal-signal handler.
-        "//platform/supervisor/tombstone:tombstone",
+        "{{ platform_repo }}//platform/supervisor/tombstone:tombstone",
 {%- if model.nodes | selectattr("requires_rds") | list %}
         # RDS zero-copy data plane (a requires_rds node) — ara::rds + iceoryx.
-        "//services/rds/transport:rds",
+        "{{ platform_repo }}//services/rds/transport:rds",
 {%- endif %}
     ],
     linkopts = [

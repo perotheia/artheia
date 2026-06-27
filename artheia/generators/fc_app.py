@@ -1043,10 +1043,22 @@ def generate_fc(
     else:
         proto_label = "//platform/proto:platform_protos"
 
+    # Platform-repo prefix for the framework labels gen-app bakes into every FC
+    # (//platform/runtime, //platform/supervisor/tombstone, //services/rds). In
+    # the framework's own services FCs (--out services) these are REAL in-repo
+    # targets, so the prefix is empty (bare //platform/...). In a CONSUMING
+    # workspace (any non-services --out: demo/apps, gataway_ws/apps) the framework
+    # is the sibling `pero_theia` bazel module, so qualify them as
+    # @pero_theia//platform/... — resolving without per-workspace alias shims (the
+    # gataway_ws pattern, formerly hand-written by `theia init`). Mirrors the same
+    # framework-vs-consuming split proto_label keys on (_is_app_layout / --out).
+    platform_repo = "@pero_theia" if _is_app_layout(out_dir) else ""
+
     ctx = {
         "model": mv,
         "source_file": str(art_path),
         "proto_label": proto_label,
+        "platform_repo": platform_repo,
     }
 
     # Template-pair selection. `.statem.` templates derive from
