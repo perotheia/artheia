@@ -174,6 +174,12 @@ class MachineLayer(Identifiable):
     Processor exposes (an Execution cpu_affinity must reference one of these)."""
     name: str
     arch: ConfigField = field(default_factory=lambda: Default("aarch64"))
+    # OS / distro tag (e.g. bookworm, focal). Pairs with arch to pick the versioned
+    # runtime artifact (theia-runtime/<ver>-<os>-<arch>): a board's binaries are a
+    # function of (arch, os, version), nothing rig-specific. Set per-machine at
+    # serialize time (--os), so ONE split rig serializes for a mixed fleet
+    # (rpi4=bookworm + jetson=focal) without a duplicate rig file.
+    os: ConfigField = field(default_factory=lambda: Default("linux"))
     cores: object = field(default_factory=empty_set)           # set[int] core ids
     machine_states: object = field(default_factory=empty_set)  # FG composition per state
     network_interfaces: object = field(default_factory=empty_set)
@@ -198,6 +204,7 @@ class MachineTarget:
     network_interfaces: frozenset
     os_packages: frozenset
     time_base: str
+    os: str = "linux"
     com_endpoint: object = None
 
 

@@ -1741,15 +1741,26 @@ def _load_deployment(target: str, attr: str | None):
     "--arch",
     "arch_override",
     default=None,
-    help="Override EVERY machine's arch (e.g. x86_64 / aarch64) before serializing. "
-    "Lets ONE rig serialize to per-arch outputs (services-rig-x86 / -aarch) instead "
-    "of duplicate per-arch rig files — removes that duplication.",
+    help="Override machine arch before serializing. A single token (x86_64) sets "
+    "EVERY machine; a comma-list (aarch64,aarch64) sets one PER machine in machine-"
+    "name order. Lets ONE rig serialize to per-arch outputs — and a SPLIT rig to a "
+    "MIXED fleet (rpi4+jetson) — without duplicate per-arch rig files.",
+)
+@click.option(
+    "--os",
+    "os_override",
+    default=None,
+    help="Override machine OS/distro tag (bookworm / focal). Single token sets all; "
+    "comma-list sets one per machine (name order). Pairs with --arch to pick the "
+    "versioned runtime artifact per board, e.g. --arch aarch64,aarch64 --os "
+    "bookworm,focal for a rpi4(bookworm)+jetson(focal) split.",
 )
 def serialize_manifest_cmd(
     target: str,
     attr: str | None,
     out_path: str,
     arch_override: str | None,
+    os_override: str | None,
 ) -> None:
     """Import a DeploymentLayer module, validate it, and write per-machine JSON."""
     import json
@@ -1758,16 +1769,41 @@ def serialize_manifest_cmd(
 
     module, dep = _load_deployment(target, attr)
 
-    # --- arch override: one rig → per-arch output ------------------------
-    # Rebuild every MachineLayer's arch to the requested token, so a single
-    # services rig serializes to services-rig-x86 / -aarch without a duplicate
-    # per-arch rig file. The arch flows into machine.json (+ the dpkg-arch map).
-    if arch_override:
+    # --- per-machine arch / os override: one rig → per-board output -------
+    # Rebuild each MachineLayer's arch/os from --arch/--os. A single token applies
+    # to every machine; a comma-list maps one token PER machine in sorted machine-
+    # name order (so `--arch a,b` over machines {central, compute} → central=a,
+    # compute=b). The values flow into machine.json (arch + os), so the SAME rig
+    # serializes for a mixed fleet without a duplicate per-arch/os rig file.
+    if arch_override or os_override:
         import dataclasses
         from artheia.manifest.algebra import Explicit
         from artheia.manifest.deployment import MachineSetLayer
-        machs = [dataclasses.replace(m, arch=Explicit(arch_override))
-                 for m in dep.machines.machines]
+
+        def _per_machine(spec, names):
+            # single token → dict(name→token); comma-list → zipped by sorted name.
+            if spec is None:
+                return {}
+            toks = [t.strip() for t in spec.split(",")]
+            if len(toks) == 1:
+                return {n: toks[0] for n in names}
+            if len(toks) != len(names):
+                raise click.ClickException(
+                    f"--arch/--os list has {len(toks)} token(s) but there are "
+                    f"{len(names)} machine(s) {names}; give one token or one per machine")
+            return dict(zip(names, toks))
+
+        names = sorted(m.name for m in dep.machines.machines)
+        arch_by = _per_machine(arch_override, names)
+        os_by = _per_machine(os_override, names)
+        machs = []
+        for m in dep.machines.machines:
+            repl = {}
+            if m.name in arch_by:
+                repl["arch"] = Explicit(arch_by[m.name])
+            if m.name in os_by:
+                repl["os"] = Explicit(os_by[m.name])
+            machs.append(dataclasses.replace(m, **repl) if repl else m)
         dep = dataclasses.replace(
             dep, machines=MachineSetLayer(machines=set(machs)))
 
@@ -1816,7 +1852,8 @@ def serialize_manifest_cmd(
 
     def _machine_dict(m) -> dict:
         return {
-            "name": m.name, "arch": m.arch, "cores": sorted(m.cores),
+            "name": m.name, "arch": m.arch, "os": getattr(m, "os", "linux"),
+            "cores": sorted(m.cores),
             "machine_states": sorted(m.machine_states),
             "network_interfaces": sorted(m.network_interfaces),
             "os_packages": sorted(m.os_packages), "time_base": m.time_base,

@@ -556,7 +556,7 @@ def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_split_fixture", None)
     out = tmp_path / "out"
-    _serialize("_split_fixture", "RIG", str(out), None)
+    _serialize("_split_fixture", "RIG", str(out), None, None)
 
     central = json.loads((out / "central" / "application.json").read_text())
     compute = json.loads((out / "compute" / "application.json").read_text())
@@ -615,7 +615,7 @@ def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_ros_fixture", None)
     out = tmp_path / "out"
-    _serialize("_ros_fixture", "RIG", str(out), None)
+    _serialize("_ros_fixture", "RIG", str(out), None, None)
 
     execu = json.loads((out / "central" / "executor.json").read_text())
 
@@ -626,6 +626,54 @@ def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
     # nm carries run_on_start:false; com omits the key (default true).
     assert by_name["nm"]["run_on_start"] is False
     assert "run_on_start" not in by_name["com"]
+
+
+def test_serialize_manifest_per_machine_arch_os(tmp_path, monkeypatch):
+    """`serialize-manifest --arch a,b --os x,y` sets arch+os PER machine (sorted
+    name order), so ONE split rig serializes for a mixed fleet (rpi4=bookworm +
+    jetson=focal) without a duplicate per-arch rig file. A single token still
+    applies to every machine."""
+    import sys
+    from artheia.cli import serialize_manifest_cmd
+    _serialize = serialize_manifest_cmd.callback
+
+    mod = tmp_path / "_mixed_fixture.py"
+    mod.write_text(
+        "from artheia.manifest.algebra import Explicit\n"
+        "from artheia.manifest.deployment import (\n"
+        "    DeploymentLayer, ExecutionLayer, ProcessLayer,\n"
+        "    MachineSetLayer, MachineLayer,\n"
+        "    ApplicationSetLayer, ApplicationLayer)\n"
+        "RIG = DeploymentLayer(\n"
+        "    execution=ExecutionLayer(processes={\n"
+        "        ProcessLayer(name='a', executable=Explicit('//x:a'),\n"
+        "                     start_cmd=Explicit('bin/a'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('central')),\n"
+        "        ProcessLayer(name='b', executable=Explicit('//x:b'),\n"
+        "                     start_cmd=Explicit('bin/b'),\n"
+        "                     function_group=Explicit('services'),\n"
+        "                     machine=Explicit('compute')),\n"
+        "    }),\n"
+        "    machines=MachineSetLayer(machines={\n"
+        "        MachineLayer(name='central'), MachineLayer(name='compute'),\n"
+        "    }),\n"
+        "    applications=ApplicationSetLayer(applications={\n"
+        "        ApplicationLayer(name='svc', host_machine=Explicit('central'),\n"
+        "                         processes={'a','b'}),\n"
+        "    }),\n"
+        ")\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("_mixed_fixture", None)
+    out = tmp_path / "out"
+    # central=aarch64/bookworm, compute=aarch64/focal (sorted name order: central, compute)
+    _serialize("_mixed_fixture", "RIG", str(out), "aarch64,aarch64", "bookworm,focal")
+
+    cen = json.loads((out / "central" / "machine.json").read_text())
+    com = json.loads((out / "compute" / "machine.json").read_text())
+    assert (cen["arch"], cen["os"]) == ("aarch64", "bookworm")
+    assert (com["arch"], com["os"]) == ("aarch64", "focal")
 
 
 def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
