@@ -2034,6 +2034,11 @@ def serialize_manifest_cmd(
         else:
             executor_doc = {"name": "root", "strategy": "one_for_all",
                             "max_restarts": 3, "max_seconds": 5, "children": []}
+        # Stamp THIS machine's name on the tree root so the supervisor knows its
+        # own machine identity (it reads executor.json anyway) and reports it in
+        # GetSystemInfo — com then labels per-machine telemetry by the REAL name
+        # without a separate THEIA_MACHINE_MANIFEST lookup.
+        executor_doc["machine"] = m.name
         _dump(mdir / "executor.json", executor_doc)
 
     for p in written:
