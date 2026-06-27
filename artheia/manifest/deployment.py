@@ -76,7 +76,20 @@ class ProcessLayer(Identifiable):
     scheduling: ConfigField = field(default_factory=lambda: Default("OTHER"))
     priority: ConfigField = field(default_factory=lambda: Default(0))
     mem_limit_bytes: ConfigField = field(default_factory=lambda: Default(None))
-    machine: ConfigField = field(default_factory=Undefined)     # target machine name
+    # Placement. `machine` (scalar) is the common 1:1 case — a process runs on
+    # ONE machine. `machines` (a set, union-merged under the monoid like
+    # fg_states) is the RELATIONAL case — the SAME logical process fanned onto
+    # SEVERAL machines (a host-monitor like shwa, one per board). When `machines`
+    # is non-empty the process is sliced onto EACH (the .art definition is shared;
+    # addressing disambiguates per machine via the supervisor's machine_index
+    # instance shift). `machine` and `machines` compose: the effective placement
+    # is {machine} ∪ machines (see deployment slicing). Leave `machines` empty for
+    # the ordinary single-machine process.
+    # Optional scalar (Default(None), not Undefined-required): a process places
+    # via `machine` OR `machines` OR both. The _invariants check enforces that at
+    # least one resolves to a declared machine.
+    machine: ConfigField = field(default_factory=lambda: Default(None))  # target machine name
+    machines: object = field(default_factory=empty_set)         # set of machine names (fan-out)
     depends_on: object = field(default_factory=empty_set)            # process names
 
     @property
@@ -96,6 +109,7 @@ class ProcessTarget:
     priority: int
     mem_limit_bytes: object
     machine: str
+    machines: frozenset
     depends_on: frozenset
 
 
@@ -314,26 +328,38 @@ class DeploymentLayer(Layer):
         procs = {p.name: p for p in _members(self.execution.processes)}
         machines = {m.name: m for m in _members(self.machines.machines)}
 
-        # 1. Every execution process maps to a declared machine, and its CPU
-        #    affinity references cores that machine actually exposes.
+        # 1. Every execution process maps to at least one declared machine, and
+        #    its CPU affinity references cores each placed machine exposes. The
+        #    effective placement is {machine} ∪ machines (a process may fan onto
+        #    several boards — a host-monitor like shwa, one instance per machine).
         for pname, p in procs.items():
-            mname = _value(p.machine)
-            if mname is None:
-                continue  # Undefined machine is caught by the per-field check
-            if mname not in machines:
+            placed = set()
+            mscalar = _value(p.machine)
+            if mscalar is not None:
+                placed.add(mscalar)
+            placed |= set(_members(p.machines))
+            if not placed:
                 issues.append(Issue(
                     f"{context}.execution.processes[{pname}].machine",
-                    f"process maps to machine {mname!r} not declared in machines axis",
+                    "process has no placement (set `machine` or `machines`)",
                 ))
                 continue
-            cores = _members(machines[mname].cores)
-            for core in _members(p.cpu_affinity):
-                if core not in cores:
+            for mname in sorted(placed):
+                if mname not in machines:
                     issues.append(Issue(
-                        f"{context}.execution.processes[{pname}].cpu_affinity",
-                        f"affinity core {core!r} absent on machine {mname!r} "
-                        f"(has {sorted(cores)})",
+                        f"{context}.execution.processes[{pname}].machine",
+                        f"process maps to machine {mname!r} not declared in "
+                        f"machines axis",
                     ))
+                    continue
+                cores = _members(machines[mname].cores)
+                for core in _members(p.cpu_affinity):
+                    if core not in cores:
+                        issues.append(Issue(
+                            f"{context}.execution.processes[{pname}].cpu_affinity",
+                            f"affinity core {core!r} absent on machine {mname!r} "
+                            f"(has {sorted(cores)})",
+                        ))
 
         # 2. Every service instance is provided by a process that exists.
         for s in _members(self.service.instances):

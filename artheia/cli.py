@@ -1826,20 +1826,44 @@ def serialize_manifest_cmd(
 
     # --- per-machine slicing ----------------------------------------------
     procs = list(target_dep.execution.processes)
-    machines = list(target_dep.machines.machines)
+    # DeploymentLayer.machines is a SET — iteration order is unstable. Sort to a
+    # STABLE, canonical order so the derived machine_index (and everything keyed
+    # on it: the supervisor's --tipc instance shift, com's instance→name map, the
+    # GUI machine tabs) is reproducible across runs. Convention: "central" first
+    # (index 0 — the etcd/gateway host), then the rest alphabetically. Matches the
+    # central=0 / compute=1 instance scheme the supervisor + shwa already assume.
+    machines = sorted(target_dep.machines.machines,
+                      key=lambda m: (m.name != "central", m.name))
+    machine_index = {m.name: i for i, m in enumerate(machines)}
     services = list(target_dep.service.instances)
     apps = list(target_dep.applications.applications)
 
-    proc_machine = {p.name: p.machine for p in procs}
+    def _proc_machines(p) -> set:
+        """The EFFECTIVE placement of a process: {machine} ∪ machines. A process
+        with a set-valued `machines` fans onto SEVERAL boards (a host-monitor like
+        shwa); the scalar `machine` is the ordinary single-board case. Either may
+        be empty; the deployment invariants guarantee at least one resolves."""
+        out = set(getattr(p, "machines", None) or ())
+        if p.machine:
+            out.add(p.machine)
+        return out
 
-    def _proc_dict(p) -> dict:
+    def _proc_on(p, mname: str) -> bool:
+        return mname in _proc_machines(p)
+
+    def _proc_dict(p, on_machine=None) -> dict:
+        # `machine` in the per-machine slice is THIS machine (a fanned-out process
+        # binds itself here), not the authored scalar — so execution.json on each
+        # board lists the process as local. Falls back to p.machine for the
+        # whole-deployment view (on_machine=None).
         return {
             "name": p.name, "executable": p.executable,
             "start_cmd": p.start_cmd, "function_group": p.function_group,
             "fg_states": sorted(p.fg_states),
             "cpu_affinity": sorted(p.cpu_affinity),
             "scheduling": p.scheduling, "priority": p.priority,
-            "mem_limit_bytes": p.mem_limit_bytes, "machine": p.machine,
+            "mem_limit_bytes": p.mem_limit_bytes,
+            "machine": on_machine if on_machine is not None else p.machine,
             "depends_on": sorted(p.depends_on),
         }
 
@@ -1853,6 +1877,12 @@ def serialize_manifest_cmd(
     def _machine_dict(m) -> dict:
         return {
             "name": m.name, "arch": m.arch, "os": getattr(m, "os", "linux"),
+            # The machine's STABLE cluster index (central=0, compute=1, …). The
+            # supervisor adds it to each child's --tipc instance (run-supervisor.sh
+            # → THEIA_MACHINE_INSTANCE), and com maps it back to the machine name
+            # (machine_manifest.cc). Without it both fall back to 0/"mN" — nodes on
+            # the 2nd machine collide at instance 0 and machines lose their names.
+            "machine_index": machine_index[m.name],
             "cores": sorted(m.cores),
             "machine_states": sorted(m.machine_states),
             "network_interfaces": sorted(m.network_interfaces),
@@ -1928,12 +1958,17 @@ def serialize_manifest_cmd(
     _dump(out_dir / "machines.json",
           {"machines": [m.name for m in machines]})
 
+    # Index the procs by name so a service's provided_by resolves to the full
+    # process (for its effective placement), not just the authored scalar machine.
+    proc_by_pname = {p.name: p for p in procs}
+
     for m in machines:
         mdir = out_dir / m.name
-        m_procs = [p for p in procs if p.machine == m.name]
+        m_procs = [p for p in procs if _proc_on(p, m.name)]
         m_proc_names = {p.name for p in m_procs}
         m_svcs = [s for s in services
-                  if proc_machine.get(s.provided_by) == m.name]
+                  if (sp := proc_by_pname.get(s.provided_by)) is not None
+                  and _proc_on(sp, m.name)]
         # An application appears on THIS machine if any of its processes is bound
         # here (a split app like the `services` AA spans both boards) — not only
         # where its declared host_machine sits. Without this, the non-host board
@@ -1946,7 +1981,7 @@ def serialize_manifest_cmd(
 
         _dump(mdir / "machine.json", _machine_dict(m))
         _dump(mdir / "execution.json",
-              {"processes": [_proc_dict(p) for p in m_procs]})
+              {"processes": [_proc_dict(p, on_machine=m.name) for p in m_procs]})
         _dump(mdir / "service.json",
               {"instances": [_svc_dict(s) for s in m_svcs]})
         _dump(mdir / "application.json",
@@ -2049,7 +2084,14 @@ def gui_emit(target: str, attr: str | None, out_file: str | None) -> None:
 
     # Machines that host ≥1 process are the observable targets; the rest are
     # host/admin consoles the GUI itself runs on.
-    machines_with_procs = {p.machine for p in td.execution.processes}
+    # Effective placement {machine} ∪ machines per process — a fanned-out
+    # host-monitor (machines-set, no scalar) still counts its boards as targets.
+    machines_with_procs = {
+        mn
+        for p in td.execution.processes
+        for mn in ((set(getattr(p, "machines", None) or ()))
+                   | ({p.machine} if p.machine else set()))
+    }
 
     rows: list[dict] = []
     for m in td.machines.machines:
@@ -2165,7 +2207,14 @@ def rig_deps(target: str, attr: str | None, out_file: str | None) -> None:
     }
 
     # Which machines host ≥1 process → "target"; the rest are "host" consoles.
-    machines_with_procs = {p.machine for p in td.execution.processes}
+    # Effective placement {machine} ∪ machines per process — a fanned-out
+    # host-monitor (machines-set, no scalar) still counts its boards as targets.
+    machines_with_procs = {
+        mn
+        for p in td.execution.processes
+        for mn in ((set(getattr(p, "machines", None) or ()))
+                   | ({p.machine} if p.machine else set()))
+    }
 
     def _component_dict(proc_name: str) -> dict:
         p = procs_by_name.get(proc_name)
