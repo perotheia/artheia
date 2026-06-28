@@ -1924,6 +1924,11 @@ def serialize_manifest_cmd(
             "THEIA_LOGGER": f"file:/tmp/theia/{p.name}.log",
             "THEIA_CONFIG_DIR": "config",
         }
+        # Per-process env from PROCESS_NODES (app-specific knobs an FC reads from
+        # the environment — e.g. the gateway's THEIA_GW_CAPTURE_IFACE / _PSP_ROOT).
+        # Merged on top of the boot defaults so a process can override or extend.
+        if isinstance(meta.get("env"), dict):
+            env.update({str(k): str(v) for k, v in meta["env"].items()})
         w = {
             "name": p.name,
             "start_cmd": start.split() if isinstance(start, str) else list(start),
