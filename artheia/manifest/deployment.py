@@ -199,6 +199,11 @@ class MachineLayer(Identifiable):
     network_interfaces: object = field(default_factory=empty_set)
     os_packages: object = field(default_factory=empty_set)
     time_base: ConfigField = field(default_factory=lambda: Default("monotonic"))
+    # Does this machine HOST the cluster's etcd? ONE per cluster (the coordinator
+    # board) — a multi-machine rig puts etcd on central only; the others connect to
+    # it. Provisioning (colony etcd.yml) keys off this. Default False; a single-rig
+    # sets its sole machine True.
+    etcd: ConfigField = field(default_factory=lambda: Default(False))
     # GUI com endpoint (address, port) the supervisor-GUI opens a gRPC channel
     # to. Optional: None → the GUI manifest defaults to 127.0.0.1:7700. Carried
     # as a plain (address, port) tuple so the orthogonal axes stay decoupled.
@@ -220,6 +225,7 @@ class MachineTarget:
     time_base: str
     os: str = "linux"
     com_endpoint: object = None
+    etcd: bool = False
 
 
 @identifiable_dataclass

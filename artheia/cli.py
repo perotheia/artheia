@@ -1887,6 +1887,9 @@ def serialize_manifest_cmd(
             "machine_states": sorted(m.machine_states),
             "network_interfaces": sorted(m.network_interfaces),
             "os_packages": sorted(m.os_packages), "time_base": m.time_base,
+            # Whether this machine hosts the cluster etcd (one per cluster — the
+            # coordinator). Provisioning reads it to install etcd on central only.
+            "etcd": bool(getattr(m, "etcd", False)),
         }
 
     def _app_dict(a, on_machine=None) -> dict:
@@ -1959,9 +1962,38 @@ def serialize_manifest_cmd(
         path.write_text(json.dumps(doc, indent=2) + "\n")
         written.append(path)
 
-    # Whole-deployment machine list.
-    _dump(out_dir / "machines.json",
-          {"machines": [m.name for m in machines]})
+    # Whole-deployment machine list + the user Software Package(s). The SWP name
+    # comes from the .art CLUSTER (gen-manifest scaffolds the ApplicationLayer name
+    # from it); `services` is the platform AA, never a user SWP. This is the single
+    # source the .deb / SWP is NAMED from (theia dist / release-swp read it here);
+    # no swp.json duplicates it.
+    #
+    # ROLES = the DEPLOYMENT machine list (every board the Distribution targets:
+    # runtime to all, the SWP overlay to the machine(s) running its processes).
+    # arity = len(roles) — a single rig is arity 1, central+compute is arity 2.
+    # `on` records which of those roles actually run the SWP's processes (compute
+    # for the split demo), so the per-role deploy overlays the SWP only there.
+    role_names = [m.name for m in machines]    # canonical central-first order
+
+    def _app_on(a) -> list:
+        names = {m.name for m in machines
+                 if (a.host_machine == m.name
+                     or (set(a.processes) & {p.name for p in procs
+                                             if _proc_on(p, m.name)}))}
+        return sorted(names, key=lambda n: (n != "central", n))
+
+    user_apps = [a for a in apps if a.name != "services"]
+    swps = [{"app": a.name, "roles": role_names, "arity": len(role_names),
+             "on": _app_on(a)} for a in user_apps]
+    machines_doc = {"machines": role_names, "apps": swps}
+    # Convenience: the primary SWP at top level (single-SWP rigs, the common case)
+    # so consumers don't have to index `apps`.
+    if len(swps) == 1:
+        machines_doc["app"] = swps[0]["app"]
+        machines_doc["roles"] = swps[0]["roles"]
+        machines_doc["arity"] = swps[0]["arity"]
+        machines_doc["on"] = swps[0]["on"]
+    _dump(out_dir / "machines.json", machines_doc)
 
     # Index the procs by name so a service's provided_by resolves to the full
     # process (for its effective placement), not just the authored scalar machine.
