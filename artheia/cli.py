@@ -1755,12 +1755,23 @@ def _load_deployment(target: str, attr: str | None):
     "versioned runtime artifact per board, e.g. --arch aarch64,aarch64 --os "
     "bookworm,focal for a rpi4(bookworm)+jetson(focal) split.",
 )
+@click.option(
+    "--rig-name",
+    "rig_name",
+    default=None,
+    help="The deployment/rig NAME (e.g. single / split) → machines.json `rig`, and "
+    "the name the user Software Package / .deb is keyed from. Falls back to the "
+    "DeploymentLayer's MachineSetLayer.name when that is set (the model carrier); "
+    "this CLI value is the robust source `theia manifest <target>` passes (the "
+    "target dir name), surviving the layer fold that can clobber a model name.",
+)
 def serialize_manifest_cmd(
     target: str,
     attr: str | None,
     out_path: str,
     arch_override: str | None,
     os_override: str | None,
+    rig_name: str | None,
 ) -> None:
     """Import a DeploymentLayer module, validate it, and write per-machine JSON."""
     import json
@@ -1982,14 +1993,28 @@ def serialize_manifest_cmd(
                                              if _proc_on(p, m.name)}))}
         return sorted(names, key=lambda n: (n != "central", n))
 
+    # The RIG NAME — the deployment's identity (e.g. single / split). This is what
+    # the user Software Package / .deb is NAMED from, so two rigs of the SAME app
+    # (single vs split) become DISTINCT named SWPs instead of both showing "apps".
+    # Source order: the CLI --rig-name (what `theia manifest <target>` passes — the
+    # target dir name; ROBUST, survives the layer fold + the arch/os rebuild that
+    # drop a model name) → else the model's MachineSetLayer.name when an author set
+    # it (not the default "machine") → else the app name (back-compat).
+    set_name = getattr(target_dep.machines, "name", None)
+    model_name = set_name if (set_name and set_name != "machine") else None
+    rig = rig_name or model_name
     user_apps = [a for a in apps if a.name != "services"]
-    swps = [{"app": a.name, "roles": role_names, "arity": len(role_names),
+    # SWP `app` = the rig name (the deployment identity); fall back to the
+    # application name when no rig name is available.
+    swps = [{"app": (rig or a.name), "rig": rig, "application": a.name,
+             "roles": role_names, "arity": len(role_names),
              "on": _app_on(a)} for a in user_apps]
-    machines_doc = {"machines": role_names, "apps": swps}
+    machines_doc = {"machines": role_names, "rig": rig, "apps": swps}
     # Convenience: the primary SWP at top level (single-SWP rigs, the common case)
     # so consumers don't have to index `apps`.
     if len(swps) == 1:
         machines_doc["app"] = swps[0]["app"]
+        machines_doc["application"] = swps[0]["application"]
         machines_doc["roles"] = swps[0]["roles"]
         machines_doc["arity"] = swps[0]["arity"]
         machines_doc["on"] = swps[0]["on"]
