@@ -1932,6 +1932,13 @@ def serialize_manifest_cmd(
     # time (PROCESS_NODES on the manifest module; empty for a placeholder FC).
     process_nodes = dict(getattr(module, "PROCESS_NODES", {}) or {})
 
+    # Per-process static params (params{} defaults) and etcd config-defaults
+    # (config{} declared values + digest), both captured at gen-manifest time.
+    # serialize-manifest uses these to emit config/<fc>.json per machine and
+    # config-defaults.json for the first-boot etcd seed — no .art backtrack.
+    process_params = dict(getattr(module, "PROCESS_PARAMS", {}) or {})
+    process_config_defaults = dict(getattr(module, "PROCESS_CONFIG_DEFAULTS", {}) or {})
+
     proc_by_name = {p.name: p for p in procs}
 
     def _worker_dict(p) -> dict:
@@ -2111,6 +2118,56 @@ def serialize_manifest_cmd(
         # without a separate THEIA_MACHINE_MANIFEST lookup.
         executor_doc["machine"] = m.name
         _dump(mdir / "executor.json", executor_doc)
+
+        # config/<fc>.json — static params + etcd config-defaults per machine.
+        # Emitted for every process on THIS machine from the PROCESS_PARAMS and
+        # PROCESS_CONFIG_DEFAULTS sidecars captured at gen-manifest time.
+        # User override: deploy/config/<machine>/<fc>.json (partial, same shape
+        # as gen-params output) is deep-merged on top so per-rig knobs (e.g.
+        # tsync central=GPS-grandmaster / compute=PTP-slave) don't require a
+        # separate .art. This is what Ansible's seed-config.yml copies to the
+        # device as-is — it expects a ready-to-ship file, not a base+override.
+        if m_procs and (process_params or process_config_defaults):
+            cfg_dir = mdir / "config"
+            cfg_dir.mkdir(parents=True, exist_ok=True)
+            _dump(cfg_dir / "executor.json", executor_doc)  # collocate sup manifest
+            # Workspace root: the CWD at serialize-manifest time (deploy/ lives here).
+            ws_root = Path(".")
+            override_dir = ws_root / "deploy" / "config" / m.name
+            for proc in m_procs:
+                params_data = dict(process_params.get(proc.name, {}) or {})
+                if not params_data:
+                    params_data = {"package": "", "nodes": {}}
+                # Deep-merge deploy/config/<machine>/<fc>.json override on top.
+                override_file = override_dir / f"{proc.name}.json"
+                if override_file.is_file():
+                    try:
+                        override = json.loads(override_file.read_text())
+                        # nodes section: merge each node's fields individually.
+                        for node_name, node_vals in override.get("nodes", {}).items():
+                            params_data.setdefault("nodes", {})[node_name] = {
+                                **params_data.get("nodes", {}).get(node_name, {}),
+                                **node_vals,
+                            }
+                        # top-level keys other than nodes (e.g. package) override directly.
+                        for k, v in override.items():
+                            if k != "nodes":
+                                params_data[k] = v
+                    except Exception:
+                        pass
+                _dump(cfg_dir / f"{proc.name}.json", params_data)
+            # config-defaults.json — merged across all processes on this machine.
+            # seed.py reads a single per-machine file so we merge all FCs' configs.
+            if process_config_defaults:
+                merged_configs: dict = {}
+                merged_pkg = ""
+                for proc in m_procs:
+                    cd = process_config_defaults.get(proc.name) or {}
+                    merged_pkg = merged_pkg or cd.get("package", "")
+                    merged_configs.update(cd.get("configs", {}))
+                if merged_configs:
+                    _dump(cfg_dir / "config-defaults.json",
+                          {"package": merged_pkg, "configs": merged_configs})
 
     for p in written:
         click.echo(str(p))

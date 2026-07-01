@@ -238,6 +238,90 @@ def _render_service(svc: str, fqn: str, inst: int, endpoint: "str | None",
     )
 
 
+def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
+    """Return the gen-params dict for composition *comp* (the params{} defaults
+    for each prototype node it hosts), derived from the first model in *models*
+    that defines *comp* with a non-empty body.
+
+    Mirrors :func:`build_params` from params_config.py but scoped to ONE
+    composition so a multi-composition package produces a SEPARATE params dict
+    per process ident rather than one merged blob."""
+    from artheia.model import flatten_composition
+    from artheia.generators.etcd_schema import _coerce_default
+
+    for model in models:
+        for el in getattr(model, "elements", []):
+            if type(el).__name__ != "CompositionDecl" or el.name != comp:
+                continue
+            proto_decls, _ = flatten_composition(el)
+            if not proto_decls:
+                continue
+            nodes: dict = {}
+            const: dict = {}
+            for proto in proto_decls:
+                node_type = proto.type
+                params = getattr(node_type, "params", None) or []
+                if not params:
+                    continue
+                nodes[proto.name] = {p.name: _coerce_default(p) for p in params}
+                ro = [p.name for p in params if getattr(p, "is_const", False)]
+                if ro:
+                    const[proto.name] = ro
+            model_pkg = getattr(model, "name", None) or pkg
+            out: dict = {"package": model_pkg, "nodes": nodes}
+            if const:
+                out["const"] = const
+            return out
+    return {"package": pkg, "nodes": {}}
+
+
+def _config_defaults_for_comp(models: list, comp: str, pkg: str) -> dict:
+    """Return the gen-config-defaults dict for composition *comp* (the etcd
+    config defaults: config_type + digest + declared field values per prototype
+    node), scoped to ONE composition from the first model that defines it.
+
+    Mirrors :func:`build_config_defaults` from config_defaults.py but per-
+    composition so a multi-composition package produces separate dicts."""
+    from artheia.model import flatten_composition
+    from artheia.generators.config_schema import _field_shape, _digest
+    from artheia.generators.proto import _proto_package_name
+
+    for model in models:
+        for el in getattr(model, "elements", []):
+            if type(el).__name__ != "CompositionDecl" or el.name != comp:
+                continue
+            proto_decls, _ = flatten_composition(el)
+            if not proto_decls:
+                continue
+            configs: dict = {}
+            for proto in proto_decls:
+                node_type = proto.type
+                cfg = getattr(node_type, "config", None)
+                if cfg is None:
+                    continue
+                cfg_name = getattr(cfg, "name", None)
+                if not cfg_name:
+                    continue
+                fields = _field_shape(cfg)
+                values = {f["name"]: f["default"] for f in fields if "default" in f}
+                try:
+                    from textx import get_model
+                    art_pkg = get_model(cfg).name or (model.name or "")
+                except Exception:
+                    art_pkg = model.name or ""
+                flat = _proto_package_name(art_pkg).replace(".", "_") + "_" + cfg_name
+                configs[proto.name] = {
+                    "config_type": cfg_name,
+                    "art_package": art_pkg,
+                    "proto_type": flat,
+                    "digest": _digest(cfg_name, fields),
+                    "values": values,
+                }
+            model_pkg = getattr(model, "name", None) or pkg
+            return {"package": model_pkg, "configs": configs}
+    return {"package": pkg, "configs": {}}
+
+
 def _render_process_nodes(process_nodes: dict) -> str:
     """Render the PROCESS_NODES sidecar dict: process name → its worker-spec
     detail (modules + per-node tipc/reporting) for the C++ supervisor's
@@ -245,8 +329,6 @@ def _render_process_nodes(process_nodes: dict) -> str:
     folds it into each leaf ChildSpec; the orthogonal DeploymentLayer stays
     .art-free."""
     import pprint
-    # pprint renders a Python literal (True/False, not JSON true/false) — this
-    # is a .py module, not JSON. sort_keys for stable regen.
     body = pprint.pformat(process_nodes, indent=4, sort_dicts=True, width=88)
     out = [
         "\n\n# Per-process supervisor metadata (modules + nodes) resolved from\n"
@@ -257,8 +339,41 @@ def _render_process_nodes(process_nodes: dict) -> str:
     return "".join(out)
 
 
+def _render_process_params(process_params: dict) -> str:
+    """Render the PROCESS_PARAMS sidecar: process name → gen-params JSON dict
+    (the params{} defaults declared in the .art, one section per node keyed by
+    prototype name). serialize-manifest writes this as config/<fc>.json per
+    machine, deep-merging deploy/config/<machine>/<fc>.json on top."""
+    import pprint
+    body = pprint.pformat(process_params, indent=4, sort_dicts=True, width=88)
+    out = [
+        "\n\n# Per-process static params defaults derived from the .art at\n"
+        "# gen-manifest time. serialize-manifest emits config/<fc>.json per\n"
+        "# machine from this — no .art backtrack needed at install/deploy time.\n",
+        f"PROCESS_PARAMS = {body}\n",
+    ]
+    return "".join(out)
+
+
+def _render_process_config_defaults(process_config_defaults: dict) -> str:
+    """Render the PROCESS_CONFIG_DEFAULTS sidecar: process name → gen-config-
+    defaults dict (the config{} etcd-seed defaults per prototype node).
+    serialize-manifest uses this for the first-boot etcd seed."""
+    import pprint
+    body = pprint.pformat(process_config_defaults, indent=4, sort_dicts=True, width=88)
+    out = [
+        "\n\n# Per-process etcd config-defaults derived from the .art at\n"
+        "# gen-manifest time. serialize-manifest emits config-defaults.json per\n"
+        "# machine for the first-boot etcd seed (migration/seed.py).\n",
+        f"PROCESS_CONFIG_DEFAULTS = {body}\n",
+    ]
+    return "".join(out)
+
+
 def _render_manifest(source: str, processes, services, app_name: str,
-                     proc_names, process_nodes: dict) -> str:
+                     proc_names, process_nodes: dict,
+                     process_params: dict | None = None,
+                     process_config_defaults: dict | None = None) -> str:
     out = [_MANIFEST_HEADER.format(source=source)]
 
     # --- execution axis ---------------------------------------------------
@@ -300,6 +415,10 @@ def _render_manifest(source: str, processes, services, app_name: str,
 
     out.append(")\n")
     out.append(_render_process_nodes(process_nodes))
+    if process_params is not None:
+        out.append(_render_process_params(process_params))
+    if process_config_defaults is not None:
+        out.append(_render_process_config_defaults(process_config_defaults))
     return "".join(out)
 
 
@@ -387,6 +506,11 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
     proc_names: list[str] = []
     all_services = []
     process_nodes: dict = {}   # ident -> {"modules": [...], "nodes": [...]}
+    # ident -> gen-params dict (params{} defaults). Built at gen-manifest time
+    # so serialize-manifest can emit config/<fc>.json without any .art backtrack.
+    process_params: dict = {}
+    # ident -> gen-config-defaults dict (etcd config seed defaults).
+    process_config_defaults: dict = {}
     for cluster_name, cluster_base_dir, pkg_cluster, members in clusters:
         # The bazel-target prefix is the SOURCE-TREE root the members hang off:
         # the .art PACKAGE cluster (services / apps) when known, else the
@@ -407,11 +531,20 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
                 "modules": _modules_for(target),
                 "nodes": _node_infos(models, comp),
             }
+            # Build params from the model that defines this composition. The
+            # merged `models` list includes imported models so services nodes
+            # resolve just as app nodes do. build_params walks ALL compositions
+            # in the model — scope to the one matching `comp` by building a
+            # mini-model view: find the right model then filter.
+            process_params[ident] = _params_for_comp(models, comp, pkg)
+            process_config_defaults[ident] = _config_defaults_for_comp(
+                models, comp, pkg)
         all_services.extend(_provided_services(model, members, pkg))
 
     app_name = (pkg.split(".")[-1] if pkg else default_base) or "app"
     rendered = _render_manifest(
-        art_file, processes, all_services, app_name, proc_names, process_nodes)
+        art_file, processes, all_services, app_name, proc_names,
+        process_nodes, process_params, process_config_defaults)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(rendered)
