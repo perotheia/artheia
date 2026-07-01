@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "artheia"
-version = "0.2.1"
+version = "0.2.2"
 description = "Host-side DSL for Adaptive-AUTOSAR-style nodes that talk to Classical AUTOSAR via the Theia CAN/FR gateway. Inspired by ARText."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,8 @@ dependencies = [
     "click>=8.1",
     "PyYAML>=6.0",
     "fastmcp>=2.0",
+    "pygls>=1.3",
+    "lsprotocol",
 ]
 
 [project.urls]
@@ -37,8 +39,8 @@ dev = [
     "pytest-snapshot>=0.9",
 ]
 lsp = [
-    "pygls>=1.3",
-    "lsprotocol",   # imported directly by lsp/server.py (pygls pulls it too)
+    "pygls>=1.3",   # kept for back-compat; now in base deps
+    "lsprotocol",
 ]
 # The gen_server PROBE (artheia.gen_server.probe) + the trace observer compile
 # .proto → _pb2 at runtime via grpc_tools.protoc (compiler only — no gRPC) and
