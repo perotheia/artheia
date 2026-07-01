@@ -1670,7 +1670,16 @@ def _load_deployment(target: str, attr: str | None):
 
     from artheia.manifest.deployment import DeploymentLayer
 
-    module = importlib.import_module(target)
+    try:
+        module = importlib.import_module(target)
+    except ModuleNotFoundError as e:
+        click.secho(
+            f"error: can't import '{target}' ({e}) — check it's a real "
+            f"dotted module path under this workspace (e.g. "
+            f"manifest/<target>/rig.py → manifest.<target>.rig) and that "
+            "you're running from the workspace root.",
+            fg="red", err=True)
+        sys.exit(2)
 
     if attr is not None:
         if not hasattr(module, attr):
