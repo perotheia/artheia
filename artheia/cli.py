@@ -1849,11 +1849,15 @@ def serialize_manifest_cmd(
     # DeploymentLayer.machines is a SET — iteration order is unstable. Sort to a
     # STABLE, canonical order so the derived machine_index (and everything keyed
     # on it: the supervisor's --tipc instance shift, com's instance→name map, the
-    # GUI machine tabs) is reproducible across runs. Convention: "central" first
-    # (index 0 — the etcd/gateway host), then the rest alphabetically. Matches the
-    # central=0 / compute=1 instance scheme the supervisor + shwa already assume.
+    # GUI machine tabs) is reproducible across runs. Convention: the MASTER first
+    # (index 0 — the etcd/coordinator: role=="master"/"central", or etcd=True, or
+    # the legacy name "central"), then the rest alphabetically. Matches the
+    # master=0 / worker=1,2,… instance scheme the supervisor + shwa assume.
+    def _is_master(m):
+        return (str(getattr(m, "role", "") or "") in ("master", "central")
+                or bool(getattr(m, "etcd", False)) or m.name == "central")
     machines = sorted(target_dep.machines.machines,
-                      key=lambda m: (m.name != "central", m.name))
+                      key=lambda m: (not _is_master(m), m.name))
     machine_index = {m.name: i for i, m in enumerate(machines)}
     services = list(target_dep.service.instances)
     apps = list(target_dep.applications.applications)
@@ -2018,7 +2022,9 @@ def serialize_manifest_cmd(
                  if (a.host_machine == m.name
                      or (set(a.processes) & {p.name for p in procs
                                              if _proc_on(p, m.name)}))}
-        return sorted(names, key=lambda n: (n != "central", n))
+        # Master first, then the canonical machine order (machine_index already
+        # sorts master → workers). Preserve that instead of a name=="central" test.
+        return sorted(names, key=lambda n: machine_index.get(n, 1 << 30))
 
     # The RIG NAME — the deployment's identity (e.g. single / split). This is what
     # the user Software Package / .deb is NAMED from, so two rigs of the SAME app
