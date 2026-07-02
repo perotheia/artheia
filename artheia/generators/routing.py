@@ -96,8 +96,13 @@ def _harvest_composition(comp) -> _Composition:
 
 
 def _render_header(comp: _Composition, this_process: str,
-                    source_file: str) -> str:
-    """Emit the routing header for one process within a composition."""
+                    source_file: str, cxx_ns: str) -> str:
+    """Emit the routing header for one process within a composition.
+
+    ``cxx_ns`` is the C++ namespace the node types live in — the .art package
+    in underscore form (system.services.com → system_services_com), matching
+    fc_app.py's `art_package.replace(".", "_")`. NOT hardcoded (it used to emit
+    ``demo::`` — wrong for any package but the demo)."""
     self_proc = comp.processes[this_process]
     other_procs = [p for n, p in comp.processes.items() if n != this_process]
 
@@ -132,14 +137,15 @@ def _render_header(comp: _Composition, this_process: str,
     lines.append("")
     lines.append(f"struct {this_process}_Refs {{")
 
+    ns = f"{cxx_ns}::" if cxx_ns else ""
     for r in self_proc.refs:
         lines.append(f"    // local: owned by this process")
-        lines.append(f"    theia::runtime::LocalRef<demo::{r.node_type}> {r.proto_name};")
+        lines.append(f"    theia::runtime::LocalRef<{ns}{r.node_type}> {r.proto_name};")
     for p in other_procs:
         for r in p.refs:
             lines.append(f"    // remote: lives in process {p.name}")
             lines.append(
-                f"    theia::runtime::RemoteRef<demo::{r.node_type}, "
+                f"    theia::runtime::RemoteRef<{ns}{r.node_type}, "
                 f"{r.tipc_type}u, {r.tipc_instance}u> {r.proto_name};"
             )
 
@@ -172,10 +178,19 @@ def generate_routing(art_path: str | Path,
         raise ValueError(
             f"no composition named {composition_name!r} in {art_path}")
 
+    # C++ namespace for the node types = the .art package in underscore form
+    # (system.services.com → system_services_com), the same convention fc_app.py
+    # uses (art_package.replace(".", "_")). The grammar stores `package
+    # <QualifiedName>` as the model root's `name` (root rule: `('package'
+    # name=QualifiedName)?`); fall back to no namespace if a bare .art omits it.
+    art_package = getattr(model, "name", None) or ""
+    cxx_ns = str(art_package).replace(".", "_")
+
     comp = _harvest_composition(target)
     written: List[Path] = []
     for proc_name in comp.processes:
-        rendered = _render_header(comp, proc_name, source_file=str(art_path))
+        rendered = _render_header(comp, proc_name, source_file=str(art_path),
+                                  cxx_ns=cxx_ns)
         out_file = out_dir / f"{comp.name}__{proc_name}_refs.hh"
         out_file.write_text(rendered)
         written.append(out_file)

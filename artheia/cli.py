@@ -1910,6 +1910,11 @@ def serialize_manifest_cmd(
             # Whether this machine hosts the cluster etcd (one per cluster — the
             # coordinator). Provisioning reads it to install etcd on central only.
             "etcd": bool(getattr(m, "etcd", False)),
+            # Deployment ROLE (central | zonal | …) — the master/zone distinction
+            # colony provisions against and the GS Distribution binds role→board.
+            # Unset falls back to the machine name, so a lone "central" is its own
+            # master with no authoring change.
+            "role": getattr(m, "role", None) or m.name,
         }
 
     def _app_dict(a, on_machine=None) -> dict:
@@ -2001,6 +2006,12 @@ def serialize_manifest_cmd(
     # `on` records which of those roles actually run the SWP's processes (compute
     # for the split demo), so the per-role deploy overlays the SWP only there.
     role_names = [m.name for m in machines]    # canonical central-first order
+    # name → deployment ROLE (central | zonal | …). The Distribution binds each
+    # role to a board ($name) and colony provisions per role (central → etcd/wifi/
+    # mender-gw + full services; zonal → ucm/shwa + mender-agent). `roles` stays a
+    # NAME list for back-compat (release-swp reads it as names); `role_map` is the
+    # additive name→role hint colony/GS consume. Unset role falls back to the name.
+    role_map = {m.name: (getattr(m, "role", None) or m.name) for m in machines}
 
     def _app_on(a) -> list:
         names = {m.name for m in machines
@@ -2025,7 +2036,8 @@ def serialize_manifest_cmd(
     swps = [{"app": (rig or a.name), "rig": rig, "application": a.name,
              "roles": role_names, "arity": len(role_names),
              "on": _app_on(a)} for a in user_apps]
-    machines_doc = {"machines": role_names, "rig": rig, "apps": swps}
+    machines_doc = {"machines": role_names, "rig": rig, "apps": swps,
+                    "role_map": role_map}
     # Convenience: the primary SWP at top level (single-SWP rigs, the common case)
     # so consumers don't have to index `apps`.
     if len(swps) == 1:

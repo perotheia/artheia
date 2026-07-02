@@ -556,7 +556,7 @@ def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_split_fixture", None)
     out = tmp_path / "out"
-    _serialize("_split_fixture", "RIG", str(out), None, None)
+    _serialize("_split_fixture", "RIG", str(out), None, None, None)
 
     central = json.loads((out / "central" / "application.json").read_text())
     compute = json.loads((out / "compute" / "application.json").read_text())
@@ -615,7 +615,7 @@ def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_ros_fixture", None)
     out = tmp_path / "out"
-    _serialize("_ros_fixture", "RIG", str(out), None, None)
+    _serialize("_ros_fixture", "RIG", str(out), None, None, None)
 
     execu = json.loads((out / "central" / "executor.json").read_text())
 
@@ -668,7 +668,7 @@ def test_serialize_manifest_per_machine_arch_os(tmp_path, monkeypatch):
     sys.modules.pop("_mixed_fixture", None)
     out = tmp_path / "out"
     # central=aarch64/bookworm, compute=aarch64/focal (sorted name order: central, compute)
-    _serialize("_mixed_fixture", "RIG", str(out), "aarch64,aarch64", "bookworm,focal")
+    _serialize("_mixed_fixture", "RIG", str(out), "aarch64,aarch64", "bookworm,focal", None)
 
     cen = json.loads((out / "central" / "machine.json").read_text())
     com = json.loads((out / "compute" / "machine.json").read_text())

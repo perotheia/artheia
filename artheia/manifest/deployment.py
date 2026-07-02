@@ -204,6 +204,17 @@ class MachineLayer(Identifiable):
     # it. Provisioning (colony etcd.yml) keys off this. Default False; a single-rig
     # sets its sole machine True.
     etcd: ConfigField = field(default_factory=lambda: Default(False))
+    # This machine's DEPLOYMENT ROLE — the first-class master/zone distinction the
+    # Distribution binds a board to. "central" = the master: full services set +
+    # etcd + the deployment-wide singletons (per/sm/phm/com/vucm) + the mender
+    # gateway/proxy. "zonal" = a zone-of-responsibility worker: the minimal set
+    # (ucm + shwa) + a mender agent that reaches the server via central's proxy.
+    # colony keys provisioning off role (role==central → etcd/wifi/mender-gw;
+    # role==zonal → ucm/agent); the GS Distribution maps role→board ($name). This
+    # REPLACES the single/split rig shapes — one rig declares the roles, the
+    # Distribution's roles[] selects which materialize. Defaults to the machine
+    # name so a legacy single-machine "central" rig is a master with no edit.
+    role: ConfigField = field(default_factory=lambda: Default(None))
     # GUI com endpoint (address, port) the supervisor-GUI opens a gRPC channel
     # to. Optional: None → the GUI manifest defaults to 127.0.0.1:7700. Carried
     # as a plain (address, port) tuple so the orthogonal axes stay decoupled.
@@ -226,6 +237,9 @@ class MachineTarget:
     os: str = "linux"
     com_endpoint: object = None
     etcd: bool = False
+    # Deployment role (central | zonal | …). None → falls back to `name` at
+    # serialize time (a lone "central" is its own master). See MachineLayer.role.
+    role: object = None
 
 
 @identifiable_dataclass
