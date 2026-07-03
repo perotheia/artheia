@@ -128,6 +128,8 @@ int main(int argc, char** argv) {
         {{ n.snake }}.log().info(_tipc);
     }
 {%- endif %}
+    // Hand the node its OWN resolved instance (see GenServerBase::tipc_instance).
+    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
     // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (supervisor sets it
     // from the rig's NodeToCPUMapping). No-op when unset; soft-fails on EPERM.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),

@@ -1037,22 +1037,23 @@ def generate_fc(
     # workspace, whose protos live under proto/ — distinct from the framework's
     # platform/proto/). Default (no --proto-out, the legacy <out>/generated
     # co-location) keeps the framework's //platform/proto:platform_protos.
-    if proto_out is not None:
-        _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
-        proto_label = f"//{_proto_top}:platform_protos"
-    else:
-        proto_label = "//platform/proto:platform_protos"
-
     # Platform-repo prefix for the framework labels gen-app bakes into every FC
     # (//platform/runtime, //platform/supervisor/tombstone, //services/rds). In
     # the framework's own services FCs (--out services) these are REAL in-repo
     # targets, so the prefix is empty (bare //platform/...). In a CONSUMING
-    # workspace (any non-services --out: demo/apps, gataway_ws/apps) the framework
-    # is the sibling `pero_theia` bazel module, so qualify them as
-    # @pero_theia//platform/... — resolving without per-workspace alias shims (the
-    # gataway_ws pattern, formerly hand-written by `theia init`). Mirrors the same
-    # framework-vs-consuming split proto_label keys on (_is_app_layout / --out).
+    # workspace (any non-services --out) the framework is the sibling `pero_theia`
+    # bazel module, so qualify them as @pero_theia//platform/... .
     platform_repo = "@pero_theia" if _is_app_layout(out_dir) else ""
+
+    if proto_out is not None:
+        # --proto-out points at THIS workspace's own proto tree — a local label.
+        _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
+        proto_label = f"//{_proto_top}:platform_protos"
+    else:
+        # The FRAMEWORK's proto tree — qualify it with the platform repo in a
+        # consuming workspace (else //platform/proto isn't a local package and the
+        # build fails "no such package 'platform/proto'").
+        proto_label = f"{platform_repo}//platform/proto:platform_protos"
 
     ctx = {
         "model": mv,

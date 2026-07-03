@@ -154,6 +154,11 @@ int main(int argc, char** argv) {
                       {{ n.snake }}_type, {{ n.snake }}_inst);
         {{ n.snake }}.log().info(_tipc);
     }
+    // Hand the node its OWN resolved instance so handler code can key per-instance
+    // config as "<component>/<instance>" + notify itself (see GenServerBase::
+    // tipc_instance / per WatchConfigReq.subscriber_instance). No-op-equivalent
+    // (0) for the single-instance common case.
+    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
 {% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,
