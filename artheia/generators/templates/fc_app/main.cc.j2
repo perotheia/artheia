@@ -133,32 +133,31 @@ int main(int argc, char** argv) {
 {%- endif %}
         {{ n.snake }}.set_logger(std::move({{ n.snake }}_log));
     }
-    {{ n.snake }}.start();
-    // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (the supervisor
-    // sets it from the rig's NodeToCPUMapping). No-op when unset / no entry for
-    // this node; soft-fails (logs) on EPERM. Applied AFTER start() — the thread
-    // exists now.
-    ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
-        {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
     // Resolve this node's TIPC address from the --tipc arg the supervisor built
     // from executor.json (per node, instance machine-shifted), so the BINARY is
     // address-agnostic — same binary on every machine. Falls back to the compiled
-    // kTipcType/kTipcInstance (the .art instance) for a standalone run.
+    // kTipcType/kTipcInstance (the .art instance) for a standalone run. Done BEFORE
+    // start() so the node's init() — which runs on the node thread right after
+    // start() — sees its own instance via tipc_instance() (a clone that keys its
+    // per-instance config in init() would otherwise race and read 0).
     uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
     ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
         {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
         {{ n.snake }}_type, {{ n.snake }}_inst);
+    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
+    {{ n.snake }}.start();
     {
         char _tipc[64];
         std::snprintf(_tipc, sizeof(_tipc), "up — TIPC type=0x%x instance=%u",
                       {{ n.snake }}_type, {{ n.snake }}_inst);
         {{ n.snake }}.log().info(_tipc);
     }
-    // Hand the node its OWN resolved instance so handler code can key per-instance
-    // config as "<component>/<instance>" + notify itself (see GenServerBase::
-    // tipc_instance / per WatchConfigReq.subscriber_instance). No-op-equivalent
-    // (0) for the single-instance common case.
-    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
+    // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (the supervisor
+    // sets it from the rig's NodeToCPUMapping). No-op when unset / no entry for
+    // this node; soft-fails (logs) on EPERM. Applied AFTER start() — the thread
+    // exists now.
+    ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
+        {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
 {% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,

@@ -99,19 +99,22 @@ int main(int argc, char** argv) {
 {%- endif %}
         {{ n.snake }}.set_logger(std::move({{ n.snake }}_log));
     }
+    // Resolve this node’s TIPC address from the --tipc arg (the supervisor built
+    // it per node from executor.json, instance machine-shifted) so the binary is
+    // address-agnostic. Falls back to the compiled kTipcType/kTipcInstance for a
+    // standalone run. Done + set_tipc_instance BEFORE start so init()/on_enter (run
+    // on the node thread right after start) see this node's own instance — a clone
+    // keying per-instance config in init() would otherwise race and read 0.
+    uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
+    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
+        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
+        {{ n.snake }}_type, {{ n.snake }}_inst);
+    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
 {%- if n.statem is not none %}
     {{ n.snake }}.start_statem(timers);
 {%- else %}
     {{ n.snake }}.start();
 {%- endif %}
-    // Resolve this node’s TIPC address from the --tipc arg (the supervisor built
-    // it per node from executor.json, instance machine-shifted) so the binary is
-    // address-agnostic. Falls back to the compiled kTipcType/kTipcInstance for a
-    // standalone run.
-    uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
-    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
-        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
-        {{ n.snake }}_type, {{ n.snake }}_inst);
 {%- if n.statem is not none %}
     {
         char _tipc[96];
@@ -128,8 +131,6 @@ int main(int argc, char** argv) {
         {{ n.snake }}.log().info(_tipc);
     }
 {%- endif %}
-    // Hand the node its OWN resolved instance (see GenServerBase::tipc_instance).
-    {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
     // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (supervisor sets it
     // from the rig's NodeToCPUMapping). No-op when unset; soft-fails on EPERM.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
