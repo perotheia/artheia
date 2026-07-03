@@ -1859,6 +1859,39 @@ def serialize_manifest_cmd(
     machines = sorted(target_dep.machines.machines,
                       key=lambda m: (not _is_master(m), m.name))
     machine_index = {m.name: i for i, m in enumerate(machines)}
+
+    # ── Machine-identity invariants (run right after the TIPC address-uniqueness
+    #    gate). com correlates a discovered TIPC instance N → machine_index → the
+    #    UNIQUE machine NAME (the RUNTIME identity; role and hostname are NOT unique
+    #    and must never be the key). These rules GUARANTEE that correlation always
+    #    resolves, so com never needs a fallback:
+    #      (a) machine NAMES are unique — two boards can't share a name (a role like
+    #          "zonal" used as N boards' name is the classic mixup: role is the
+    #          DEPLOYMENT identity, the name is the RUNTIME identity — keep them
+    #          separate, give each board a distinct name e.g. compute/frontal).
+    #      (b) machine_index is SEQUENTIAL from 0 (0,1,2,…) — no gaps, so instance→
+    #          index→name is total.
+    #      (c) index 0 is the MASTER/central (the etcd coordinator) — the supervisor
+    #          + shwa + com all assume master=instance-0.
+    if machines:
+        names = [m.name for m in machines]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise click.ClickException(
+                "serialize-manifest: machine NAMES must be unique — the machine "
+                f"name is the runtime identity com/GUI key on. Duplicated: {dupes}. "
+                "Give each board a distinct name (role master/zonal is the "
+                "deployment identity, NOT the name).")
+        idxs = sorted(machine_index.values())
+        if idxs != list(range(len(machines))):
+            raise click.ClickException(
+                f"serialize-manifest: machine_index must be sequential from 0 "
+                f"(got {idxs}).")
+        if not _is_master(machines[0]):
+            raise click.ClickException(
+                "serialize-manifest: machine_index 0 must be the MASTER/central "
+                f"(etcd coordinator); got {machines[0].name!r}.")
+
     services = list(target_dep.service.instances)
     apps = list(target_dep.applications.applications)
 
@@ -2042,8 +2075,16 @@ def serialize_manifest_cmd(
     swps = [{"app": (rig or a.name), "rig": rig, "application": a.name,
              "roles": role_names, "arity": len(role_names),
              "on": _app_on(a)} for a in user_apps]
+    # name → STABLE cluster machine_index (master=0, then canonical worker order).
+    # This is the RUNTIME identity com keys on: com discovers a supervisor at TIPC
+    # instance N and correlates N → machine_index → the UNIQUE machine NAME here.
+    # machines.json is the ONLY manifest com references, so the index MUST live here
+    # (not only in the per-machine machine.json). Names are unique by construction
+    # (a rig can't declare two machines of the same name); ROLE (master/zonal) and
+    # hostname are NOT unique, so neither can be the identity — the machine name is.
+    machine_index_map = {m.name: machine_index[m.name] for m in machines}
     machines_doc = {"machines": role_names, "rig": rig, "apps": swps,
-                    "role_map": role_map}
+                    "role_map": role_map, "machine_index": machine_index_map}
     # Convenience: the primary SWP at top level (single-SWP rigs, the common case)
     # so consumers don't have to index `apps`.
     if len(swps) == 1:
