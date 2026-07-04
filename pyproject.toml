@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "artheia"
-version = "0.2.2"
+version = "0.3.0"
 description = "Host-side DSL for Adaptive-AUTOSAR-style nodes that talk to Classical AUTOSAR via the Theia CAN/FR gateway. Inspired by ARText."
 readme = "README.md"
 requires-python = ">=3.10"
