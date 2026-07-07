@@ -144,7 +144,28 @@ int main(int argc, char** argv) {
     ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
         {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
         {{ n.snake }}_type, {{ n.snake }}_inst);
+{%- if not n.runnable %}
+    // set_tipc_instance() is a GenServer method (a runnable resolves its own
+    // instance in do_start via resolve_node_tipc); only emit it for gen_server/
+    // statem nodes so init() sees its instance before start().
     {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
+{%- endif %}
+    // Generic node params (read via the static-deploy ParamsConfig, overridable
+    // per-rig in config/<fc>.json under this node's section — same mechanism as
+    // tsync's prebuilt `enabled`):
+    //   enabled          (default true)  — boot gate; a disabled node does NOT
+    //                     start, freeing its TIPC slot (e.g. a probe replaces it).
+    //   start_delay_ms   (default 0)     — deterministic intra-executable ordering.
+    // A node section may be absent entirely → all defaults apply (start normally).
+    const auto {{ n.snake }}_params =
+        ::theia::runtime::get_config().node({{ n.name }}::kNodeName);
+    const bool {{ n.snake }}_enabled = {{ n.snake }}_params.boolean("enabled", true);
+    if (!{{ n.snake }}_enabled) {
+        {{ n.snake }}.log().info("node disabled (params.enabled=false) — not "
+            "started; its TIPC address is free for a test/probe to bind");
+    } else {
+    if (auto {{ n.snake }}_delay = {{ n.snake }}_params.u32("start_delay_ms", 0))
+        std::this_thread::sleep_for(std::chrono::milliseconds({{ n.snake }}_delay));
     {{ n.snake }}.start();
     {
         char _tipc[64];
@@ -234,6 +255,7 @@ int main(int argc, char** argv) {
         }
     }
 {% endif %}
+    }  // end if ({{ n.snake }}_enabled)
 {% endfor %}
 {% if model.nodes | selectattr("reporting") | list %}
     config_mux.start();
