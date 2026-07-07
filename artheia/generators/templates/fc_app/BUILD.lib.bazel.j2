@@ -13,7 +13,7 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "{{ model.fc_short }}_lib",
     hdrs = [
-{%- for n in model.nodes %}
+{%- for n in model.nodes if not n.imported %}
         "{{ n.name }}.hh",
         "{{ n.name }}_netgraph.hh",
 {%- endfor %}
@@ -33,6 +33,10 @@ cc_library(
     deps = [
         "{{ platform_repo }}//platform/runtime:runtime",
         "{{ proto_label }}",
+{%- for dep in imported_proto_deps %}
+        # imported package's proto (this package references its messages).
+        "{{ dep }}",
+{%- endfor %}
         # The State structs the lib binds as the GenServer State type live
         # in the (write-once, app-owned) impl/<Node>_state.hh headers,
         # exposed by the leaf {{ model.fc_short }}_state target — depended

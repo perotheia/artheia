@@ -124,13 +124,15 @@ int main(int argc, char** argv) {
     std::vector<std::unique_ptr<::theia::runtime::HeartbeatPublisher>> heartbeats;
 {% endif %}
 {% for n in model.nodes %}
-    {{ n.name }} {{ n.snake }};
+{%- set cls = n.qual_name if n.imported else n.name %}
+{%- set qns = (n.qual_name.rsplit('::', 1)[0] ~ '::') if n.imported else '' %}
+    {{ cls }} {{ n.snake }};
     // Per-node logger: tagged [#{{ n.snake }}] (kNodeName, matches `tdb ps`),
     // sink chosen by $THEIA_LOGGER. Installed BEFORE start() so do_start/init
     // log through it. The FIRST node's logger also backs process_logger() — the
     // ConfigureLogLevel-push fallback target + any process_logger() caller.
     {
-        auto {{ n.snake }}_log = MakeContextLogger({{ n.name }}::kNodeName);
+        auto {{ n.snake }}_log = MakeContextLogger({{ cls }}::kNodeName);
         {{ n.snake }}_log->set_level(boot_level);
 {%- if loop.first %}
         ::theia::runtime::set_process_logger({{ n.snake }}_log);
@@ -145,8 +147,8 @@ int main(int argc, char** argv) {
     // start() — sees its own instance via tipc_instance() (a clone that keys its
     // per-instance config in init() would otherwise race and read 0).
     uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
-    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
-        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
+    ::theia::runtime::resolve_node_tipc({{ cls }}::kNodeName,
+        {{ cls }}::kTipcType, {{ cls }}::kTipcInstance,
         {{ n.snake }}_type, {{ n.snake }}_inst);
 {%- if not n.runnable %}
     // set_tipc_instance() is a GenServer method (a runnable resolves its own
@@ -162,7 +164,7 @@ int main(int argc, char** argv) {
     //   start_delay_ms   (default 0)     — deterministic intra-executable ordering.
     // A node section may be absent entirely → all defaults apply (start normally).
     const auto {{ n.snake }}_params =
-        ::theia::runtime::get_config().node({{ n.name }}::kNodeName);
+        ::theia::runtime::get_config().node({{ cls }}::kNodeName);
     const bool {{ n.snake }}_enabled = {{ n.snake }}_params.boolean("enabled", true);
     if (!{{ n.snake }}_enabled) {
         {{ n.snake }}.log().info("node disabled (params.enabled=false) — not "
@@ -182,7 +184,7 @@ int main(int argc, char** argv) {
     // this node; soft-fails (logs) on EPERM. Applied AFTER start() — the thread
     // exists now.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
-        {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
+        {{ cls }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
 {% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,
@@ -203,11 +205,11 @@ int main(int argc, char** argv) {
         // — lands on the same handle_call / handle_cast path. clientServer
         // ops → register_call; senderReceiver `in` data → register_cast.
 {%- for op in n.unique_handler_ops() %}
-        config_mux.register_call<{{ op.req_msg }}, {{ op.rep_msg }}>(
+        config_mux.register_call<{{ qns }}{{ op.req_msg }}, {{ qns }}{{ op.rep_msg }}>(
             {{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
 {%- for d in n.unique_receiver_data() %}
-        config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+        config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
         // ---- process groups (pg): MANUAL pub/sub control (OTP pg shape) ----
         // The node OWNS its membership: pg_join<T>() to CONSUME a group,
@@ -217,7 +219,7 @@ int main(int argc, char** argv) {
         // supervisor's PgMembership pushes route into handle_cast) and pass its
         // BOUND ADDRESS as the watcher address — where the supervisor casts
         // PgMembership when this node pg_watch'es a group it produces to.
-        {{ n.snake }}.pg_attach({{ n.name }}::kNodeName, {{ n.snake }}_cfg,
+        {{ n.snake }}.pg_attach({{ cls }}::kNodeName, {{ n.snake }}_cfg,
                                 {{ n.snake }}_type, {{ n.snake }}_inst);
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "
@@ -234,9 +236,9 @@ int main(int argc, char** argv) {
     if (auto* {{ n.snake }}_cfg = config_mux.bind_listener(
             {{ n.snake }}_type, {{ n.snake }}_inst)) {
         config_mux.register_cast_inline<platform_runtime_LogLevelPush>(
-            {{ n.snake }}_cfg, {{ n.snake }}, &{{ n.name }}::on_log_level_push);
+            {{ n.snake }}_cfg, {{ n.snake }}, &{{ cls }}::on_log_level_push);
         config_mux.register_cast_inline<platform_runtime_TraceControlPush>(
-            {{ n.snake }}_cfg, {{ n.snake }}, &{{ n.name }}::on_trace_control_push);
+            {{ n.snake }}_cfg, {{ n.snake }}, &{{ cls }}::on_trace_control_push);
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "
                                  "push disabled");
@@ -249,7 +251,7 @@ int main(int argc, char** argv) {
     // manifest (1s default matches the supervisor's check cadence).
     {
         auto {{ n.snake }}_hb = std::make_unique<
-            ::theia::runtime::HeartbeatPublisher>({{ n.name }}::kNodeName);
+            ::theia::runtime::HeartbeatPublisher>({{ cls }}::kNodeName);
         if ({{ n.snake }}_hb->open()) {
             {{ n.snake }}_hb->start(/*period_ms=*/1000);
             heartbeats.push_back(std::move({{ n.snake }}_hb));

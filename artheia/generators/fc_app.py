@@ -208,6 +208,11 @@ class _NodeView:
     imported: bool = False
     pkg_lib_label: str = ""       # e.g. //packages/v2v/lib:v2v_lib
     pkg_lib_include: str = ""     # e.g. packages/v2v/lib/OsiV2v.hh
+    # Fully-qualified C++ class name. Empty for a LOCAL node (main.cc references it
+    # bare, resolved via the composition's own `namespace`); for an IMPORTED node
+    # it's "ara::<pkg_short>::<Name>" — the package's namespace, NOT the
+    # composition's — so main.cc constructs the right class.
+    qual_name: str = ""
 
     def unique_handler_ops(self) -> list[_IfaceOp]:
         """Server-port operations, deduplicated by (req_msg, rep_msg).
@@ -378,30 +383,72 @@ def _ws_root_of(p) -> "Path | None":
     return None
 
 
-def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str]:
+def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     """For a node whose body lives in a DIFFERENT .art than the composition,
-    return (lib_bazel_label, lib_include_path) for its package — e.g.
-    ("//packages/v2v/lib:v2v_lib", "packages/v2v/lib/OsiV2v.hh"). ("","") when the
-    node is local (same .art) or unresolvable. The composition uses these to
-    include the node's header + skip regenerating its lib/impl."""
+    return (lib_bazel_label, lib_include_path, cpp_namespace) for its package —
+    e.g. ("//packages/v2v/lib:v2v_lib", "packages/v2v/lib/OsiV2v.hh", "ara::v2v").
+    ("","","") when the node is local (same .art) or unresolvable. The composition
+    uses these to include the node's header, skip regenerating its lib/impl, and
+    qualify the class with the package's namespace. The namespace follows the
+    package convention ara::<pkg_short> (the --ns used to generate the package)."""
     from textx import get_model
     from pathlib import Path as _P
     gm = get_model(node)
     nfile = getattr(gm, "_tx_filename", None)
     if not nfile:
-        return "", ""
+        return "", "", ""
     nreal = str(_P(nfile).resolve())
     if self_real is not None and nreal == self_real:
-        return "", ""
+        return "", "", ""
     root = _ws_root_of(nreal)
     if root is None:
-        return "", ""
+        return "", "", ""
     pkg_dir = _P(nreal).parent.relative_to(root).as_posix()   # packages/<name>
     pkg_name = getattr(gm, "name", "") or ""
     pkg_short = pkg_name.split(".")[-1] if pkg_name else _P(nreal).parent.name
     node_name = getattr(node, "name", "")
     return ("//%s/lib:%s_lib" % (pkg_dir, pkg_short),
-            "%s/lib/%s.hh" % (pkg_dir, node_name))
+            "%s/lib/%s.hh" % (pkg_dir, node_name),
+            "ara::%s" % pkg_short)
+
+
+def _imported_package_proto_deps(model, proto_out) -> list[str]:
+    """Proto-lib bazel deps for the PACKAGES this .art imports messages from — a
+    package/composition that references another package's message (e.g. meshtastic
+    decodes v2v's Beacon) must link that package's proto. Walks the `import` FQNs,
+    resolves each to its .art dir under the workspace, and emits
+    //<proto-out>/<imported-subpath>:<short>_proto. Distinct, sorted."""
+    from pathlib import Path as _P
+    from ..model.scope import _import_dir
+    self_file = getattr(model, "_tx_filename", None)
+    if not self_file:
+        return []
+    entry = _P(self_file)
+    entry_pkg = ""
+    for el in getattr(model, "elements", []):
+        if el.__class__.__name__ == "PackageDecl":
+            entry_pkg = getattr(el, "name", "") or ""
+            break
+    if not entry_pkg:
+        entry_pkg = getattr(model, "name", "") or ""
+    proto_top = _P(proto_out).as_posix().strip("./").rstrip("/")
+    root = _ws_root_of(entry)
+    deps: dict[str, None] = {}
+    for imp in getattr(model, "imports", []) or []:
+        imp_pkg = getattr(imp, "name", None) or (imp if isinstance(imp, str) else "")
+        imp_pkg = imp_pkg.rstrip(".*").rstrip(".")
+        if not imp_pkg:
+            continue
+        pkg_dir = _import_dir(entry, entry_pkg, imp_pkg)
+        if pkg_dir is None or root is None:
+            continue
+        try:
+            sub = _P(pkg_dir).resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        short = imp_pkg.split(".")[-1]
+        deps["//%s/%s:%s_proto" % (proto_top, sub, short)] = None
+    return sorted(deps)
 
 
 def _imported_package_impl_deps(model) -> list[str]:
@@ -938,11 +985,12 @@ def _build_model_view(art_path: Path,
         # Is this node's body in ANOTHER .art (an imported package)? If so, mark it
         # imported so its lib/impl are NOT regenerated here — main.cc links the
         # package's prebuilt impl (dep emitted in BUILD.main) and includes its lib.
-        _lbl, _inc = _imported_node_lib(_rnode, self_real)
+        _lbl, _inc, _ns = _imported_node_lib(_rnode, self_real)
         if _lbl:
             _nv.imported = True
             _nv.pkg_lib_label = _lbl
             _nv.pkg_lib_include = _inc
+            _nv.qual_name = "%s::%s" % (_ns, rname) if _ns else rname
         nodes.append(_nv)
         _have.add(rname)
         if not daemon_class:
@@ -1177,7 +1225,14 @@ def generate_fc(
     # bazel module, so qualify them as @pero_theia//platform/... .
     platform_repo = "@pero_theia" if _is_app_layout(out_dir) else ""
 
-    if proto_out is not None:
+    if package_mode and proto_out is not None:
+        # A PACKAGE owns its OWN proto (not the framework aggregate), so a consuming
+        # SWP links just this package's messages. The proto lands at
+        # <proto-out>/<pkg-subpath>/<short>.proto; the self-contained cc_library the
+        # proto BUILD emits is //<proto-out>/<pkg-subpath>:<short>_proto.
+        _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
+        proto_label = f"//{_proto_top}/{mv.bazel_pkg_prefix}:{mv.fc_short}_proto"
+    elif proto_out is not None:
         # --proto-out points at THIS workspace's own proto tree — a local label.
         _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
         proto_label = f"//{_proto_top}:platform_protos"
@@ -1190,7 +1245,14 @@ def generate_fc(
     # Impl-lib deps for PACKAGES this composition imports nodes from (ROS-package
     # assembly): the composition executable links each imported package's prebuilt
     # impl lib, keyed OFF the .art import. Empty for an ordinary single-package FC.
-    imported_pkg_deps = _imported_package_impl_deps(parse_file(str(art_path)))
+    _parsed = parse_file(str(art_path))
+    imported_pkg_deps = _imported_package_impl_deps(_parsed)
+    # Proto libs of imported packages — a package/composition that imports another
+    # package's messages (e.g. meshtastic decodes v2v's Beacon) must link that
+    # package's proto too. Derived from the .art imports; the proto lives at
+    # <proto-out>/<imported-pkg-subpath>:<short>_proto.
+    imported_proto_deps = (
+        _imported_package_proto_deps(_parsed, proto_out) if proto_out else [])
 
     ctx = {
         "model": mv,
@@ -1198,6 +1260,7 @@ def generate_fc(
         "proto_label": proto_label,
         "platform_repo": platform_repo,
         "imported_pkg_deps": imported_pkg_deps,
+        "imported_proto_deps": imported_proto_deps,
     }
 
     # Template-pair selection. `.statem.` templates derive from
@@ -1346,5 +1409,42 @@ def generate_fc(
         proto_path = generate_package_proto(art_path, proto_out)
         # Treat as "wrote" — gen-proto-package handles overwrite itself.
         results["wrote"].append(str(proto_path))
+
+        # PACKAGE MODE: a package owns its proto, so emit a SELF-CONTAINED proto
+        # BUILD.bazel (nanopb genrule + a <short>_proto cc_library) next to the
+        # .proto — the package lib deps on //<proto-out>/<subpath>:<short>_proto
+        # (set above). A framework FC folds into //platform/proto:platform_protos
+        # instead, so this is package-only.
+        if package_mode:
+            _leaf = mv.fc_short
+            _depth = len(Path(mv.bazel_pkg_prefix).parts)   # proto-out → package dir
+            _up = "/".join([".."] * _depth) if _depth else "."
+            _pb_build = Path(proto_path).parent / "BUILD.bazel"
+            _pb_build.write_text(
+                f'# AUTO-GENERATED by `artheia gen-app --kind package`. Self-contained\n'
+                f'# nanopb proto for the {mv.proto_package} package — a consuming SWP\n'
+                f'# links //<this>:{_leaf}_proto directly (not the framework aggregate).\n'
+                f'load("@rules_cc//cc:defs.bzl", "cc_library")\n\n'
+                f'package(default_visibility = ["//visibility:public"])\n\n'
+                f'genrule(\n'
+                f'    name = "{_leaf}_pb",\n'
+                f'    srcs = ["{_leaf}.proto", "{_leaf}.options",\n'
+                f'            "@theia_codegen//:nanopb_generator_src"],\n'
+                f'    outs = ["{_leaf}.pb.c", "{_leaf}.pb.h"],\n'
+                f'    cmd = "set -e;"\n'
+                f'        + " in_dir=$$(dirname $(location {_leaf}.proto));"\n'
+                f'        + " out_dir=$$(dirname $(location {_leaf}.pb.c));"\n'
+                f'        + " nanopb_generator -I $$in_dir -D $$out_dir {_leaf}.proto;",\n'
+                f'    local = True,\n'
+                f')\n\n'
+                f'cc_library(\n'
+                f'    name = "{_leaf}_proto",\n'
+                f'    srcs = ["{_leaf}.pb.c"],\n'
+                f'    hdrs = ["{_leaf}.pb.h"],\n'
+                f'    includes = ["{_up}"],\n'
+                f'    copts = ["-fPIC"],\n'
+                f'    deps = ["@pero_theia//platform/runtime:runtime_proto_cc"],\n'
+                f')\n')
+            results["wrote"].append(str(_pb_build))
 
     return results
