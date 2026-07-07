@@ -1329,12 +1329,16 @@ def gen_autosar_system(
     "(The legacy --kind psp arm was retired; vendor signal-routing apps "
     "now use --kind lib.)",
 )
-@click.option("--kind", type=click.Choice(["fc", "lib"]), default="fc",
+@click.option("--kind", type=click.Choice(["fc", "lib", "package"]), default="fc",
               help="Generator mode (default: fc). "
               "fc — Adaptive FC daemon (lib + impl + main, Bazel). "
               "lib — standalone app's platform/ slice (lib + impl + "
               "vendored runtime + CMake, NO main — the app owns its own "
-              "main and runnable lifecycle).")
+              "main and runnable lifecycle). "
+              "package — a ROS-style node PACKAGE (lib + impl + proto, NO main): "
+              "nodes + protocol built ONCE as a linkable cc_library; a COMPOSITION "
+              "that imports the package assembles its nodes into an executable and "
+              "links this lib.")
 # --- shared --
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
               help="Output dir. For fc mode: services/<fc>/ (the impl "
@@ -1389,10 +1393,10 @@ def gen_app(kind: str,
                                proto_out=proto_out,
                                cxx_namespace=cxx_namespace,
                                force=force)
-    else:  # fc
+    else:  # fc | package (package = fc-shaped, minus the main slice)
         if not art_file:
             click.secho(
-                "error: --kind fc requires an .art file as positional arg",
+                f"error: --kind {kind} requires an .art file as positional arg",
                 fg="red", err=True)
             sys.exit(2)
         from .generators.fc_app import generate_fc
@@ -1401,7 +1405,8 @@ def gen_app(kind: str,
                                   proto_out=proto_out,
                                   cxx_namespace=cxx_namespace,
                                   composition=composition,
-                                  force=force)
+                                  force=force,
+                                  package_mode=(kind == "package"))
         except ValueError as e:
             # Unknown / empty --composition. generate_fc raises a clear
             # message naming the available compositions.

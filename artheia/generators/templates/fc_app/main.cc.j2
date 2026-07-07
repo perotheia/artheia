@@ -5,7 +5,11 @@
 // Regenerated on every gen-app run. User code lives in
 // impl/<Node>_handlers.cc (one per node).
 {% for n in model.nodes %}
+{%- if n.imported %}
+#include "{{ n.pkg_lib_include }}"   // imported package node — links via bazel dep
+{%- else %}
 #include "lib/{{ n.name }}.hh"
+{%- endif %}
 {%- endfor %}
 
 #include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink

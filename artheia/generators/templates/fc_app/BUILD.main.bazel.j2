@@ -19,6 +19,14 @@ cc_binary(
     deps = [
         "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
         "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_impl",
+{%- for n in model.nodes if n.imported %}
+        # imported package (ROS-style): {{ n.name }}'s nodes are assembled into
+        # this composition; link its prebuilt lib + impl rather than regenerating.
+        "{{ n.pkg_lib_label }}",
+{%- endfor %}
+{%- for dep in imported_pkg_deps %}
+        "{{ dep }}",
+{%- endfor %}
         # Crash forensics — main.cc installs the fatal-signal handler.
         "{{ platform_repo }}//platform/supervisor/tombstone:tombstone",
 {%- if model.nodes | selectattr("requires_rds") | list %}

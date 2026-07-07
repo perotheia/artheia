@@ -199,6 +199,15 @@ class _NodeView:
     # Empty when the .art has no compositions/clusters with connects
     # referencing this node.
     signals: list[_SignalEntry] = field(default_factory=list)
+    # ROS-package assembly: True when this node is prototyped from an IMPORTED
+    # package (its lib+impl are built THERE and linked via a bazel dep). The
+    # composition's main.cc still CONSTRUCTS + starts it, but gen-app must NOT
+    # regenerate its per-node lib/impl files here (that would duplicate the class
+    # decl + emit a conflicting empty handler stub). `pkg_lib_label` is the
+    # imported package's lib bazel label so main.cc includes its header.
+    imported: bool = False
+    pkg_lib_label: str = ""       # e.g. //packages/v2v/lib:v2v_lib
+    pkg_lib_include: str = ""     # e.g. packages/v2v/lib/OsiV2v.hh
 
     def unique_handler_ops(self) -> list[_IfaceOp]:
         """Server-port operations, deduplicated by (req_msg, rep_msg).
@@ -355,6 +364,96 @@ def _defining_package(msg_ref) -> str:
         return getattr(get_model(msg_ref), "name", "") or ""
     except Exception:
         return ""
+
+
+def _ws_root_of(p) -> "Path | None":
+    from pathlib import Path as _P
+    p = _P(p).resolve()
+    d = p.parent
+    while d != d.parent:
+        if (d / "MODULE.bazel").exists() or (d / "WORKSPACE").exists() \
+                or (d / "WORKSPACE.bazel").exists():
+            return d
+        d = d.parent
+    return None
+
+
+def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str]:
+    """For a node whose body lives in a DIFFERENT .art than the composition,
+    return (lib_bazel_label, lib_include_path) for its package — e.g.
+    ("//packages/v2v/lib:v2v_lib", "packages/v2v/lib/OsiV2v.hh"). ("","") when the
+    node is local (same .art) or unresolvable. The composition uses these to
+    include the node's header + skip regenerating its lib/impl."""
+    from textx import get_model
+    from pathlib import Path as _P
+    gm = get_model(node)
+    nfile = getattr(gm, "_tx_filename", None)
+    if not nfile:
+        return "", ""
+    nreal = str(_P(nfile).resolve())
+    if self_real is not None and nreal == self_real:
+        return "", ""
+    root = _ws_root_of(nreal)
+    if root is None:
+        return "", ""
+    pkg_dir = _P(nreal).parent.relative_to(root).as_posix()   # packages/<name>
+    pkg_name = getattr(gm, "name", "") or ""
+    pkg_short = pkg_name.split(".")[-1] if pkg_name else _P(nreal).parent.name
+    node_name = getattr(node, "name", "")
+    return ("//%s/lib:%s_lib" % (pkg_dir, pkg_short),
+            "%s/lib/%s.hh" % (pkg_dir, node_name))
+
+
+def _imported_package_impl_deps(model) -> list[str]:
+    """Bazel deps for the impl libs of PACKAGES this composition imports nodes
+    from (the ROS-package assembly: a composition links a package's prebuilt impl
+    rather than regenerating its handlers). For every prototype in every
+    composition whose resolved node lives in a DIFFERENT .art file than the
+    composition, map that file to its workspace-relative bazel package dir and
+    emit ``//<dir>/impl:<pkg_short>_impl``. Distinct, sorted, stable.
+
+    The node's source .art file IS its bazel package (packages/<name>/package.art
+    → //packages/<name>). Derived from the resolved cross-ref, so it works
+    regardless of import spelling; returns [] when no cross-package node is used
+    (the ordinary single-package FC)."""
+    from textx import get_model
+    from pathlib import Path as _P
+
+    def _ws_root(p: _P):
+        p = p.resolve()
+        d = p.parent
+        while d != d.parent:
+            if (d / "MODULE.bazel").exists() or (d / "WORKSPACE").exists() \
+                    or (d / "WORKSPACE.bazel").exists():
+                return d
+            d = d.parent
+        return None
+
+    self_file = getattr(model, "_tx_filename", None)
+    self_real = _P(self_file).resolve() if self_file else None
+    deps: dict[str, None] = {}
+    for el in model.elements:
+        if el.__class__.__name__ != "CompositionDecl":
+            continue
+        for proto in getattr(el, "elements", []):
+            node = getattr(proto, "type", None)
+            if node is None:
+                continue
+            gm = get_model(node)
+            nfile = getattr(gm, "_tx_filename", None)
+            if not nfile:
+                continue
+            nreal = _P(nfile).resolve()
+            if self_real is not None and nreal == self_real:
+                continue          # same .art → the composition's own node
+            root = _ws_root(nreal)
+            if root is None:
+                continue
+            pkg_dir = nreal.parent.relative_to(root).as_posix()   # packages/<name>
+            pkg_name = getattr(gm, "name", "") or ""
+            pkg_short = pkg_name.split(".")[-1] if pkg_name else nreal.parent.name
+            deps["//%s/impl:%s_impl" % (pkg_dir, pkg_short)] = None
+    return sorted(deps)
 
 
 def _proto_type_of(msg_ref) -> tuple[str, str, str]:
@@ -820,6 +919,38 @@ def _build_model_view(art_path: Path,
             if getattr(el, "statem", None) is not None:
                 has_statem = True
 
+    # ROS-package assembly: a composition may prototype a node whose body lives
+    # ENTIRELY in an imported package, with NO local NodeDecl (not even an extern
+    # stub) — the substitution above only covers a local extern stub. Add those
+    # resolved nodes so the composition's main.cc CONSTRUCTS + STARTS them; their
+    # handler bodies are NOT regenerated here (they link via the package impl dep
+    # emitted into BUILD.main). Scoped by `wanted` (the --composition node set).
+    _have = {nv.name for nv in nodes}
+    self_file = getattr(model, "_tx_filename", None)
+    self_real = str(Path(self_file).resolve()) if self_file else None
+    for _type, _rnode in sorted(resolved_by_type.items()):
+        rname = getattr(_rnode, "name", _type)
+        if rname in _have:
+            continue
+        if wanted is not None and _type not in wanted and rname not in wanted:
+            continue
+        _nv = _node_view(_rnode, proto_name=proto_by_type.get(_type))
+        # Is this node's body in ANOTHER .art (an imported package)? If so, mark it
+        # imported so its lib/impl are NOT regenerated here — main.cc links the
+        # package's prebuilt impl (dep emitted in BUILD.main) and includes its lib.
+        _lbl, _inc = _imported_node_lib(_rnode, self_real)
+        if _lbl:
+            _nv.imported = True
+            _nv.pkg_lib_label = _lbl
+            _nv.pkg_lib_include = _inc
+        nodes.append(_nv)
+        _have.add(rname)
+        if not daemon_class:
+            daemon_class = rname
+            state_enum = f"{rname}State"
+        if getattr(_rnode, "statem", None) is not None:
+            has_statem = True
+
     # Join the netgraph projection — per-node signal routing tables
     # come from compositions / clusters in the same .art. The
     # netgraph generator already walks ConnectDecls and produces a
@@ -945,6 +1076,7 @@ def generate_fc(
     cxx_namespace: Optional[str] = None,
     composition: Optional[str] = None,
     force: bool = False,
+    package_mode: bool = False,
 ) -> dict[str, list[str]]:
     """Generate the FC scaffold for a single .art file.
 
@@ -1055,11 +1187,17 @@ def generate_fc(
         # build fails "no such package 'platform/proto'").
         proto_label = f"{platform_repo}//platform/proto:platform_protos"
 
+    # Impl-lib deps for PACKAGES this composition imports nodes from (ROS-package
+    # assembly): the composition executable links each imported package's prebuilt
+    # impl lib, keyed OFF the .art import. Empty for an ordinary single-package FC.
+    imported_pkg_deps = _imported_package_impl_deps(parse_file(str(art_path)))
+
     ctx = {
         "model": mv,
         "source_file": str(art_path),
         "proto_label": proto_label,
         "platform_repo": platform_repo,
+        "imported_pkg_deps": imported_pkg_deps,
     }
 
     # Template-pair selection. `.statem.` templates derive from
@@ -1084,6 +1222,12 @@ def generate_fc(
     lib_dir = out_dir / "lib"
     impl_dir = out_dir / "impl"
     for nv in mv.nodes:
+        # ROS-package assembly: an IMPORTED node's lib + impl were generated in
+        # its own package and are linked via a bazel dep — do NOT regenerate them
+        # here (would duplicate the class decl + emit a conflicting empty handler
+        # stub). main.cc still constructs + starts it, including the package's lib.
+        if getattr(nv, "imported", False):
+            continue
         node_ctx = {**ctx, "node": nv}
         # Per-node template-pair selection by node kind: a runnable node
         # derives from GenRunnable (do_start/do_loop/do_stop), a statem node
@@ -1165,13 +1309,20 @@ def generate_fc(
     # One main.cc starts a thread per node. The whole-FC statem_suffix
     # selects the main template; the statem main starts statem nodes via
     # start_statem(timers) and plain nodes via start().
-    main_dir = out_dir / "main"
-    p = main_dir / "main.cc"
-    results[_write(p, env.get_template(f"main{statem_suffix}.cc.j2").render(**ctx),
-                    overwrite=True)].append(str(p))
-    p = main_dir / "BUILD.bazel"
-    results[_write(p, env.get_template("BUILD.main.bazel.j2").render(**ctx),
-                    overwrite=True)].append(str(p))
+    #
+    # PACKAGE MODE (--kind package): a package is a ROS-style unit — nodes +
+    # protocol + impl, built ONCE as a linkable lib, with NO executable of its
+    # own. The COMPOSITION that imports the package owns the main.cc (it assembles
+    # nodes from N packages into one process) and links the package's impl lib.
+    # So skip the main slice entirely for a package.
+    if not package_mode:
+        main_dir = out_dir / "main"
+        p = main_dir / "main.cc"
+        results[_write(p, env.get_template(f"main{statem_suffix}.cc.j2").render(**ctx),
+                        overwrite=True)].append(str(p))
+        p = main_dir / "BUILD.bazel"
+        results[_write(p, env.get_template("BUILD.main.bazel.j2").render(**ctx),
+                        overwrite=True)].append(str(p))
 
     # --- impl slice (write-once unless --force) ---------------------------
     # Per-node handler stubs were written in the node loop above; only
