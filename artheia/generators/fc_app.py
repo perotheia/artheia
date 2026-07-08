@@ -1172,7 +1172,13 @@ def generate_fc(
     # produces the layout `theia install` expects — no --composition needed, no
     # per-composition shell loop, no generated-output patching. (services FCs are
     # FLAT — one dir, many nodes — so they're excluded from the auto-iterate.)
-    if composition is None and _is_app_layout(out_dir):
+    # A PACKAGE is schema-only impl (lib + impl, no main, no executable): it is
+    # laid out FLAT regardless of --out, and never partitioned per-composition —
+    # even when the .art (or its merged sibling component.art) declares one. The
+    # composition is the USER'S assembly unit, emitted by `--kind fc`, not the
+    # package's. So package_mode short-circuits both the auto-iterate below and
+    # the `out_dir / composition` subdir further down.
+    if composition is None and not package_mode and _is_app_layout(out_dir):
         comps = _art_compositions(art_path)
         if comps:
             agg: dict[str, list[str]] = {
