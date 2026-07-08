@@ -400,29 +400,74 @@ def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     nreal = str(_P(nfile).resolve())
     if self_real is not None and nreal == self_real:
         return "", "", ""
-    root = _ws_root_of(nreal)
-    if root is None:
+    pkg_root = _ws_root_of(nreal)
+    if pkg_root is None:
         return "", "", ""
-    art_dir = _P(nreal).parent.relative_to(root).as_posix()   # e.g. system/v2v
+    art_dir = _P(nreal).parent.relative_to(pkg_root).as_posix()   # e.g. system/v2v
     pkg_name = getattr(gm, "name", "") or ""
     pkg_short = pkg_name.split(".")[-1] if pkg_name else _P(nreal).parent.name
     node_name = getattr(node, "name", "")
-    # `src/` convention: a package whose SOURCE .art lives under system/<name>/
-    # (FQN system.<name>) has its GENERATED lib/impl at the package-repo-root `src/`
-    # — NOT alongside the .art. This keeps hand-edited source (system/) separate
-    # from codegen (src/), and gives a stable external label //packages/<name>/src/
-    # lib:<name>_lib when the repo is cloned into a consuming workspace. The
-    # PRODUCER (gen-app --kind package --out src) and this CONSUMER must agree; both
-    # key on the .art being under system/. Legacy packages whose .art is elsewhere
-    # (e.g. packages/<name>/) keep the .art-dir-adjacent lib (backward compatible).
+    # The GENERATED lib/impl location WITHIN the package repo: a `system/<name>`
+    # source package emits to the repo-root `src/` (the src/ convention — keeps
+    # hand-edited source separate from codegen); a legacy `packages/<name>/…`
+    # source keeps the .art-dir-adjacent `<art_dir>/lib`.
     parts = _P(art_dir).parts
     if len(parts) >= 2 and parts[0] == "system":
-        lib_dir = "src/lib"        # <repo-root>/src/lib, relative to consuming ws
+        gen_sub = "src/lib"            # <package-root>/src/lib
     else:
-        lib_dir = "%s/lib" % art_dir
-    return ("//%s:%s_lib" % (lib_dir, pkg_short),
-            "%s/%s.hh" % (lib_dir, node_name),
+        gen_sub = "%s/lib" % art_dir
+    # The bazel REPO the label lives in, relative to the CONSUMING workspace root
+    # (where gen-app runs), NOT the package's own root. Two cases:
+    #   - IN-REPO tester: the package IS the workspace (pkg_root == consumer_root)
+    #     → repo empty → //src/lib:<name>_lib (a plain in-module label).
+    #   - EXTERNAL consumer (package cloned/submodule'd under packages/<name>): the
+    #     package carries its OWN MODULE.bazel, so it is a SEPARATE bazel module.
+    #     The consumer references it MODULE-QUALIFIED (@<mod>//…) — the package's own
+    #     generated //src/… labels then resolve within ITS module, nothing to
+    #     rewrite (mirrors @pero_theia). The consumer's MODULE.bazel needs
+    #     bazel_dep(name=<mod>) + local_path_override(path=packages/<name>).
+    repo = _pkg_label_repo(pkg_root, self_real)      # "" or "@v2v"
+    return ("%s//%s:%s_lib" % (repo, gen_sub, pkg_short),
+            "%s/%s.hh" % (gen_sub, node_name),        # include is module-LOCAL
             "ara::%s" % pkg_short)
+
+
+def _module_name_of(root) -> "str | None":
+    """The bazel ``module(name = "…")`` declared in ``<root>/MODULE.bazel``
+    (None if absent). Cheap text scan — the module name is a plain literal."""
+    import re
+    from pathlib import Path as _P
+    mf = _P(root) / "MODULE.bazel"
+    try:
+        txt = mf.read_text()
+    except OSError:
+        return None
+    m = re.search(r'module\(\s*[^)]*\bname\s*=\s*["\']([^"\']+)["\']', txt)
+    return m.group(1) if m else None
+
+
+def _pkg_label_repo(pkg_root, self_real: "str | None") -> str:
+    """The bazel REPO prefix (``""`` or ``"@<module>"``) an imported package's
+    generated targets live under, from the CONSUMING workspace's point of view.
+
+    ``pkg_root`` = the imported package's own repo root (``_ws_root_of`` of the
+    node's .art — a submodule carries its own MODULE.bazel so this stops at the
+    submodule dir). ``self_real`` = the composition .art being generated; its
+    workspace root is where gen-app runs. When they COINCIDE (in-repo tester) the
+    package's targets are in the SAME module → ``""`` (a plain //… label). When they
+    DIFFER (external submodule) the package is its OWN module → ``@<module-name>``,
+    read from the package's MODULE.bazel, so the label is @<mod>//src/lib:…."""
+    from pathlib import Path as _P
+    if self_real is None:
+        return ""
+    consumer_root = _ws_root_of(str(_P(self_real).resolve()))
+    if consumer_root is None:
+        return ""
+    pkg_root = _P(pkg_root).resolve()
+    if pkg_root == _P(consumer_root).resolve():
+        return ""                       # same module → plain //… label
+    mod = _module_name_of(pkg_root)
+    return "@%s" % mod if mod else ""   # separate module → @<mod>//…
 
 
 def _imported_package_proto_deps(model, proto_out) -> list[str]:
@@ -445,7 +490,7 @@ def _imported_package_proto_deps(model, proto_out) -> list[str]:
     if not entry_pkg:
         entry_pkg = getattr(model, "name", "") or ""
     proto_top = _P(proto_out).as_posix().strip("./").rstrip("/")
-    root = _ws_root_of(entry)
+    self_real = str(entry.resolve())
     deps: dict[str, None] = {}
     for imp in getattr(model, "imports", []) or []:
         imp_pkg = getattr(imp, "name", None) or (imp if isinstance(imp, str) else "")
@@ -453,14 +498,25 @@ def _imported_package_proto_deps(model, proto_out) -> list[str]:
         if not imp_pkg:
             continue
         pkg_dir = _import_dir(entry, entry_pkg, imp_pkg)
-        if pkg_dir is None or root is None:
+        if pkg_dir is None:
+            continue
+        # The proto lives in the IMPORTED package's OWN repo, under its
+        # <proto-out>/<FQN-path> (gen-app --kind package keys the proto subpath off
+        # the .art FQN). So compute the subpath relative to the PACKAGE root (the
+        # .art's own MODULE.bazel dir) and qualify by the package's bazel module
+        # when it's a separate module (submodule) — @<mod>//proto/<FQN>:<short>_proto
+        # — else a plain in-module label. Mirrors _imported_node_lib.
+        pkg_real = _P(pkg_dir).resolve()
+        pkg_root = _ws_root_of(str(pkg_real))
+        if pkg_root is None:
             continue
         try:
-            sub = _P(pkg_dir).resolve().relative_to(root).as_posix()
+            sub = pkg_real.relative_to(pkg_root).as_posix()
         except ValueError:
             continue
+        repo = _pkg_label_repo(pkg_root, self_real)   # "" or "@v2v"
         short = imp_pkg.split(".")[-1]
-        deps["//%s/%s:%s_proto" % (proto_top, sub, short)] = None
+        deps["%s//%s/%s:%s_proto" % (repo, proto_top, sub, short)] = None
     return sorted(deps)
 
 
@@ -515,9 +571,12 @@ def _imported_package_impl_deps(model) -> list[str]:
             # `src/` convention (mirror of _imported_node_lib): a package sourced
             # under system/<name>/ has its generated impl at the repo-root src/impl.
             parts = _P(art_dir).parts
-            impl_dir = "src/impl" if (len(parts) >= 2 and parts[0] == "system") \
+            gen_sub = "src/impl" if (len(parts) >= 2 and parts[0] == "system") \
                 else "%s/impl" % art_dir
-            deps["//%s:%s_impl" % (impl_dir, pkg_short)] = None
+            # Repo prefix: empty for the in-repo tester (//src/impl), @<module> for
+            # an external submodule (@v2v//src/impl) — mirror of _imported_node_lib.
+            repo = _pkg_label_repo(root, str(self_real) if self_real else None)
+            deps["%s//%s:%s_impl" % (repo, gen_sub, pkg_short)] = None
     return sorted(deps)
 
 
