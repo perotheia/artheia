@@ -1032,11 +1032,30 @@ def _build_model_view(art_path: Path,
     # VALUE — impl code writes `ActivationState`/`ACT_NONE`, not the nanopb
     # double-prefix. Identified structurally (an element with .values whose items
     # carry .name) to avoid importing the textX class.
+    #
+    # ONLY alias enums that survive to the combined .proto. proto_package.py prunes
+    # enums NOT used as a field TYPE (an enum carried as `uint32 flags` — a bitmask
+    # — is documentation only; its nanopb C++ type is never emitted). Aliasing a
+    # pruned enum would emit `using NodeFlag = system_<pkg>_NodeFlag` against a type
+    # nanopb never generated → a compile error. Mirror the pruner: keep an enum only
+    # when its bare name appears as a field type somewhere in the model.
+    _enum_typed: set[str] = set()
+    for el in model.elements:
+        if el.__class__.__name__ != "MessageDecl":
+            continue
+        for item in getattr(el, "fields", []) or []:
+            if item.__class__.__name__ == "MessageReserved":
+                continue
+            ftype = getattr(item, "type", None)
+            tname = getattr(ftype, "name", None) or (ftype if isinstance(ftype, str) else None)
+            if tname:
+                _enum_typed.add(tname)
     enums: list[tuple] = []
     for el in model.elements:
         vals = getattr(el, "values", None)
         if vals and getattr(el, "name", None) and all(hasattr(v, "name") for v in vals):
-            enums.append((el.name, [v.name for v in vals]))
+            if el.name in _enum_typed:
+                enums.append((el.name, [v.name for v in vals]))
 
     return _ModelView(
         art_package=art_package,
