@@ -195,11 +195,16 @@ int main(int argc, char** argv) {
         // this node's Tracer kind filter — same path as LogLevelPush.
         config_mux.register_cast<platform_runtime_TraceControlPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
+{%- if n.config %}
         // Config update: services/per casts ConfigUpdated when a watched
         // config changes — same framework path; GenServer base handle_cast
-        // applies it (decode + on_config_update hook).
+        // decodes + dispatches to this node's on_config_update hook (emitted in
+        // Daemon.hh only when the node binds `config <Msg>`). A node with NO
+        // `config {}` declaration does NOT register this — it neither reads nor
+        // observes etcd-backed config, so per never casts to it.
         config_mux.register_cast<platform_runtime_ConfigUpdated>(
             {{ n.snake }}_cfg, {{ n.snake }});
+{%- endif %}
         // Receiver ports (#387): register the node's declared inbound
         // types so a real peer — or a robot-test inject via services/com
         // — lands on the same handle_call / handle_cast path. clientServer
