@@ -403,12 +403,25 @@ def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     root = _ws_root_of(nreal)
     if root is None:
         return "", "", ""
-    pkg_dir = _P(nreal).parent.relative_to(root).as_posix()   # packages/<name>
+    art_dir = _P(nreal).parent.relative_to(root).as_posix()   # e.g. system/v2v
     pkg_name = getattr(gm, "name", "") or ""
     pkg_short = pkg_name.split(".")[-1] if pkg_name else _P(nreal).parent.name
     node_name = getattr(node, "name", "")
-    return ("//%s/lib:%s_lib" % (pkg_dir, pkg_short),
-            "%s/lib/%s.hh" % (pkg_dir, node_name),
+    # `src/` convention: a package whose SOURCE .art lives under system/<name>/
+    # (FQN system.<name>) has its GENERATED lib/impl at the package-repo-root `src/`
+    # — NOT alongside the .art. This keeps hand-edited source (system/) separate
+    # from codegen (src/), and gives a stable external label //packages/<name>/src/
+    # lib:<name>_lib when the repo is cloned into a consuming workspace. The
+    # PRODUCER (gen-app --kind package --out src) and this CONSUMER must agree; both
+    # key on the .art being under system/. Legacy packages whose .art is elsewhere
+    # (e.g. packages/<name>/) keep the .art-dir-adjacent lib (backward compatible).
+    parts = _P(art_dir).parts
+    if len(parts) >= 2 and parts[0] == "system":
+        lib_dir = "src/lib"        # <repo-root>/src/lib, relative to consuming ws
+    else:
+        lib_dir = "%s/lib" % art_dir
+    return ("//%s:%s_lib" % (lib_dir, pkg_short),
+            "%s/%s.hh" % (lib_dir, node_name),
             "ara::%s" % pkg_short)
 
 
@@ -496,10 +509,15 @@ def _imported_package_impl_deps(model) -> list[str]:
             root = _ws_root(nreal)
             if root is None:
                 continue
-            pkg_dir = nreal.parent.relative_to(root).as_posix()   # packages/<name>
+            art_dir = nreal.parent.relative_to(root).as_posix()   # e.g. system/v2v
             pkg_name = getattr(gm, "name", "") or ""
             pkg_short = pkg_name.split(".")[-1] if pkg_name else nreal.parent.name
-            deps["//%s/impl:%s_impl" % (pkg_dir, pkg_short)] = None
+            # `src/` convention (mirror of _imported_node_lib): a package sourced
+            # under system/<name>/ has its generated impl at the repo-root src/impl.
+            parts = _P(art_dir).parts
+            impl_dir = "src/impl" if (len(parts) >= 2 and parts[0] == "system") \
+                else "%s/impl" % art_dir
+            deps["//%s:%s_impl" % (impl_dir, pkg_short)] = None
     return sorted(deps)
 
 
@@ -1253,10 +1271,14 @@ def generate_fc(
     if package_mode and proto_out is not None:
         # A PACKAGE owns its OWN proto (not the framework aggregate), so a consuming
         # SWP links just this package's messages. The proto lands at
-        # <proto-out>/<pkg-subpath>/<short>.proto; the self-contained cc_library the
-        # proto BUILD emits is //<proto-out>/<pkg-subpath>:<short>_proto.
+        # <proto-out>/<pkg-subpath>/<short>.proto (generate_package_proto keys the
+        # subpath off the .art FQN, NOT --out), so the label MUST use the FQN
+        # path-form (mv.package_subpath = system/sanity), not bazel_pkg_prefix
+        # (which follows --out, e.g. `src`, and would give //proto/src:… — a
+        # non-existent package). The self-contained cc_library the proto BUILD
+        # emits is //<proto-out>/<pkg-subpath>:<short>_proto.
         _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
-        proto_label = f"//{_proto_top}/{mv.bazel_pkg_prefix}:{mv.fc_short}_proto"
+        proto_label = f"//{_proto_top}/{mv.package_subpath}:{mv.fc_short}_proto"
     elif proto_out is not None:
         # --proto-out points at THIS workspace's own proto tree — a local label.
         _proto_top = Path(proto_out).as_posix().strip("./").rstrip("/")
@@ -1442,7 +1464,13 @@ def generate_fc(
         # instead, so this is package-only.
         if package_mode:
             _leaf = mv.fc_short
-            _depth = len(Path(mv.bazel_pkg_prefix).parts)   # proto-out → package dir
+            # The include root must be the proto-out TOP (proto/), so the codec's
+            # `#include "system/sanity/sanity.pb.h"` (an FQN-path include) resolves.
+            # This BUILD sits at <proto-out>/<FQN-path>/, so climb the FQN depth
+            # (system/sanity → 2 → ../..), NOT the --out depth. Using
+            # bazel_pkg_prefix here gave `..` (root proto/system) → the FQN include
+            # missed by one segment and the build failed to find the .pb.h.
+            _depth = len(Path(mv.package_subpath).parts)   # FQN path → proto-out top
             _up = "/".join([".."] * _depth) if _depth else "."
             _pb_build = Path(proto_path).parent / "BUILD.bazel"
             _pb_build.write_text(

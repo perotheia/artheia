@@ -59,6 +59,15 @@ def _base_dir_for(defining_file: Path, workspace: "Path | None" = None) -> str:
     When the resolved top is the aggregator's own `system/` dir (a real dir whose
     <pkg>/cluster.art just bundles FCs that live elsewhere — system/services/…),
     fall back to the package's LAST segment (system.services → services).
+
+    EXCEPTION — the package-layout tester: a file whose package is
+    `system.<name>_tester` (a `theia init --kind package` tester component) is a
+    deployable app ALWAYS generated with `gen-app --kind fc --out apps`, so its
+    bazel base_dir is `apps`, NOT the FQN leaf (`<name>_tester`). This is scoped
+    to the `_tester` package convention so it does NOT capture other system/-
+    sourced clusters that deploy to their own dir (e.g. `system.services` →
+    `services`, whose FCs really live under system/services/).
+
     Workspace root = the dir with MODULE.bazel/WORKSPACE above the file."""
     real = defining_file.resolve()
     root = workspace
@@ -81,9 +90,29 @@ def _base_dir_for(defining_file: Path, workspace: "Path | None" = None) -> str:
     if top and top != "system":
         return top
     pkg = _extract_package(str(defining_file))
+    # system/-sourced package-tester (`system.<name>_tester`) → deploys from apps/
+    # (gen-app --kind fc --out apps), NOT its FQN leaf. Scoped to the tester
+    # convention so `system.services` etc. keep their own dir below.
+    if pkg.endswith("_tester") and _declares_composition(str(defining_file)):
+        return "apps"
     if pkg:
         return pkg.split(".")[-1]
     return top or real.parent.name
+
+
+def _declares_composition(art_file: str) -> bool:
+    """True if *art_file* has a top-level ``composition <Name> { … }`` decl — it
+    is a deployable app (as opposed to a node-only ``package`` .art). Cheap text
+    scan (no parse); tolerant of leading whitespace. An ``extern composition``
+    forward-decl doesn't count (it hosts nothing)."""
+    try:
+        for line in Path(art_file).read_text().splitlines():
+            s = line.strip()
+            if s.startswith("composition ") and not s.startswith("composition {"):
+                return True
+    except OSError:
+        pass
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +290,15 @@ def _cluster_members(art_file: str) -> "list[tuple[str, str, str, list]]":
         if type(el).__name__ != "ClusterDecl":
             continue
         members = _extract_members(model, el)
-        base_dir = ""   # inline members → caller's default (output-path base_dir)
+        # inline members → caller's default (output-path base_dir), UNLESS this
+        # file is a composition sourced under system/ (the package-tester layout),
+        # where _base_dir_for pins the deploy dir to `apps` (gen-app --kind fc
+        # --out apps) even though the .art lives at system/<name>_tester/. For the
+        # ordinary in-dir case _base_dir_for returns this file's own top-level dir
+        # (e.g. `apps` for apps/system/apps/component.art), which equals the
+        # caller's default — so setting it here is a no-op for legacy layouts.
+        base_dir = _base_dir_for(Path(art_file)) if _declares_composition(art_file) \
+            else ""
         # pkg_cluster: the .art PACKAGE cluster (art_node), distinct from base_dir.
         # Inline members live in THIS file → its package; resolved later otherwise.
         pkg_cluster = _pkg_cluster(art_file)

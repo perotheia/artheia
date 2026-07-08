@@ -517,7 +517,21 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
         # resolved base_dir, else the output module's dir. (pkg_cluster lines up
         # with the hand-authored manifest/{services,demo}/base.py targets —
         # //services/com/main:com, //apps/Demo3WayP1/main:apps.)
-        bdir = pkg_cluster or cluster_base_dir or default_base
+        #
+        # EXCEPTION — the package-tester layout: the app package is
+        # `system.<name>_tester`, so pkg_cluster would be `<name>_tester`, but the
+        # tester ALWAYS generates into apps/ (gen-app --kind fc --out apps). Its
+        # inline cluster carries cluster_base_dir="apps" (from _base_dir_for's
+        # `system.<name>_tester` rule) — trust THAT over pkg_cluster here, so the
+        # bazel dir is apps/, not a non-existent //<name>_tester/. Narrowly scoped
+        # to =="apps" so the services aggregator (cluster_base_dir resolves to a
+        # member dir like `com`, but must deploy under //services via pkg_cluster)
+        # is untouched. The binary NAME still comes from pkg_cluster via
+        # app_bazel_target's `cluster` arg.
+        if cluster_base_dir == "apps" and pkg_cluster != "apps":
+            bdir = "apps"
+        else:
+            bdir = pkg_cluster or cluster_base_dir or default_base
         fg = cluster_name.lower() if cluster_name else "app"
         for ident, comp, _nodes in members:
             # Canonical bazel target — handles the services-vs-apps split:
