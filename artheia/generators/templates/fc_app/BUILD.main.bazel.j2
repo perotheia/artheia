@@ -19,10 +19,11 @@ cc_binary(
     deps = [
         "//{{ model.bazel_pkg_prefix }}/lib:{{ model.fc_short }}_lib",
         "//{{ model.bazel_pkg_prefix }}/impl:{{ model.fc_short }}_impl",
-{%- for n in model.nodes if n.imported %}
-        # imported package (ROS-style): {{ n.name }}'s nodes are assembled into
-        # this composition; link its prebuilt lib + impl rather than regenerating.
-        "{{ n.pkg_lib_label }}",
+{%- for lbl in model.nodes | selectattr("imported") | map(attribute="pkg_lib_label") | unique %}
+        # imported package (ROS-style): its node(s) are assembled into this
+        # composition; link the prebuilt lib + impl rather than regenerating.
+        # One label per PACKAGE — several imported nodes may share a lib.
+        "{{ lbl }}",
 {%- endfor %}
 {%- for dep in imported_pkg_deps %}
         "{{ dep }}",
