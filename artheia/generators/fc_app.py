@@ -214,8 +214,8 @@ class _NodeView:
     # decl + emit a conflicting empty handler stub). `pkg_lib_label` is the
     # imported package's lib bazel label so main.cc includes its header.
     imported: bool = False
-    pkg_lib_label: str = ""       # e.g. //packages/v2v/lib:v2v_lib
-    pkg_lib_include: str = ""     # e.g. packages/v2v/lib/OsiV2v.hh
+    pkg_lib_label: str = ""       # e.g. //packages/<pkg>/lib:<pkg>_lib
+    pkg_lib_include: str = ""     # e.g. packages/<pkg>/lib/<Node>.hh
     # Fully-qualified C++ class name. Empty for a LOCAL node (main.cc references it
     # bare, resolved via the composition's own `namespace`); for an IMPORTED node
     # it's "ara::<pkg_short>::<Name>" — the package's namespace, NOT the
@@ -403,7 +403,7 @@ def _ws_root_of(p) -> "Path | None":
 def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     """For a node whose body lives in a DIFFERENT .art than the composition,
     return (lib_bazel_label, lib_include_path, cpp_namespace) for its package —
-    e.g. ("//packages/v2v/lib:v2v_lib", "packages/v2v/lib/OsiV2v.hh", "ara::v2v").
+    e.g. ("//packages/<pkg>/lib:<pkg>_lib", "packages/<pkg>/lib/<Node>.hh", "ara::<pkg>").
     ("","","") when the node is local (same .art) or unresolvable. The composition
     uses these to include the node's header, skip regenerating its lib/impl, and
     qualify the class with the package's namespace. The namespace follows the
@@ -420,7 +420,7 @@ def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     pkg_root = _ws_root_of(nreal)
     if pkg_root is None:
         return "", "", ""
-    art_dir = _P(nreal).parent.relative_to(pkg_root).as_posix()   # e.g. system/v2v
+    art_dir = _P(nreal).parent.relative_to(pkg_root).as_posix()   # e.g. system/<pkg>
     pkg_name = getattr(gm, "name", "") or ""
     pkg_short = pkg_name.split(".")[-1] if pkg_name else _P(nreal).parent.name
     node_name = getattr(node, "name", "")
@@ -443,7 +443,7 @@ def _imported_node_lib(node, self_real: "str | None") -> tuple[str, str, str]:
     #     generated //src/… labels then resolve within ITS module, nothing to
     #     rewrite (mirrors @pero_theia). The consumer's MODULE.bazel needs
     #     bazel_dep(name=<mod>) + local_path_override(path=packages/<name>).
-    repo = _pkg_label_repo(pkg_root, self_real)      # "" or "@v2v"
+    repo = _pkg_label_repo(pkg_root, self_real)      # "" or "@<pkg>"
     return ("%s//%s:%s_lib" % (repo, gen_sub, pkg_short),
             "%s/%s.hh" % (gen_sub, node_name),        # include is module-LOCAL
             "ara::%s" % pkg_short)
@@ -489,8 +489,8 @@ def _pkg_label_repo(pkg_root, self_real: "str | None") -> str:
 
 def _imported_package_proto_deps(model, proto_out) -> list[str]:
     """Proto-lib bazel deps for the PACKAGES this .art imports messages from — a
-    package/composition that references another package's message (e.g. meshtastic
-    decodes v2v's Beacon) must link that package's proto. Walks the `import` FQNs,
+    package/composition that references another package's message (a transport
+    decoding a consumer package's type) must link that package's proto. Walks the `import` FQNs,
     resolves each to its .art dir under the workspace, and emits
     //<proto-out>/<imported-subpath>:<short>_proto. Distinct, sorted."""
     from pathlib import Path as _P
@@ -531,7 +531,7 @@ def _imported_package_proto_deps(model, proto_out) -> list[str]:
             sub = pkg_real.relative_to(pkg_root).as_posix()
         except ValueError:
             continue
-        repo = _pkg_label_repo(pkg_root, self_real)   # "" or "@v2v"
+        repo = _pkg_label_repo(pkg_root, self_real)   # "" or "@<pkg>"
         short = imp_pkg.split(".")[-1]
         deps["%s//%s/%s:%s_proto" % (repo, proto_top, sub, short)] = None
     return sorted(deps)
@@ -582,7 +582,7 @@ def _imported_package_impl_deps(model) -> list[str]:
             root = _ws_root(nreal)
             if root is None:
                 continue
-            art_dir = nreal.parent.relative_to(root).as_posix()   # e.g. system/v2v
+            art_dir = nreal.parent.relative_to(root).as_posix()   # e.g. system/<pkg>
             pkg_name = getattr(gm, "name", "") or ""
             pkg_short = pkg_name.split(".")[-1] if pkg_name else nreal.parent.name
             # `src/` convention (mirror of _imported_node_lib): a package sourced
@@ -591,7 +591,7 @@ def _imported_package_impl_deps(model) -> list[str]:
             gen_sub = "src/impl" if (len(parts) >= 2 and parts[0] == "system") \
                 else "%s/impl" % art_dir
             # Repo prefix: empty for the in-repo tester (//src/impl), @<module> for
-            # an external submodule (@v2v//src/impl) — mirror of _imported_node_lib.
+            # an external submodule (@<pkg>//src/impl) — mirror of _imported_node_lib.
             repo = _pkg_label_repo(root, str(self_real) if self_real else None)
             deps["%s//%s:%s_impl" % (repo, gen_sub, pkg_short)] = None
     return sorted(deps)
@@ -1401,7 +1401,7 @@ def generate_fc(
         # SWP links just this package's messages. The proto lands at
         # <proto-out>/<pkg-subpath>/<short>.proto (generate_package_proto keys the
         # subpath off the .art FQN, NOT --out), so the label MUST use the FQN
-        # path-form (mv.package_subpath = system/sanity), not bazel_pkg_prefix
+        # path-form (mv.package_subpath = system/<pkg>), not bazel_pkg_prefix
         # (which follows --out, e.g. `src`, and would give //proto/src:… — a
         # non-existent package). The self-contained cc_library the proto BUILD
         # emits is //<proto-out>/<pkg-subpath>:<short>_proto.
@@ -1423,7 +1423,7 @@ def generate_fc(
     _parsed = parse_file(str(art_path))
     imported_pkg_deps = _imported_package_impl_deps(_parsed)
     # Proto libs of imported packages — a package/composition that imports another
-    # package's messages (e.g. meshtastic decodes v2v's Beacon) must link that
+    # package's messages (a transport decoding a consumer package's type) must link that
     # package's proto too. Derived from the .art imports; the proto lives at
     # <proto-out>/<imported-pkg-subpath>:<short>_proto.
     #
@@ -1606,9 +1606,9 @@ def generate_fc(
         if package_mode:
             _leaf = mv.fc_short
             # The include root must be the proto-out TOP (proto/), so the codec's
-            # `#include "system/sanity/sanity.pb.h"` (an FQN-path include) resolves.
+            # `#include "system/<pkg>/<pkg>.pb.h"` (an FQN-path include) resolves.
             # This BUILD sits at <proto-out>/<FQN-path>/, so climb the FQN depth
-            # (system/sanity → 2 → ../..), NOT the --out depth. Using
+            # (system/<pkg> → 2 → ../..), NOT the --out depth. Using
             # bazel_pkg_prefix here gave `..` (root proto/system) → the FQN include
             # missed by one segment and the build failed to find the .pb.h.
             _depth = len(Path(mv.package_subpath).parts)   # FQN path → proto-out top

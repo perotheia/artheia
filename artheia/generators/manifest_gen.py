@@ -269,8 +269,8 @@ def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
                     const[proto.name] = ro
                 # ALIAS for IMPORTED package nodes: the node's compiled kNodeName
                 # is the snake'd node TYPE (the package lib was generated without a
-                # composition, so no prototype name existed — e.g. OsiV2v →
-                # "osi_v2v"), and the hand-written impl reads params via
+                # composition, so no prototype name existed — the snake'd TYPE is
+                # the compiled default), and the hand-written impl reads params via
                 # get_config().node(kNodeName). The prototype key above only
                 # matches main.cc's lookups (which use the prototype name). Emit
                 # the SAME dict under the snake'd type too so BOTH lookup domains
