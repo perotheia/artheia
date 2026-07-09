@@ -13,7 +13,8 @@ compositions + nodes) it emits TWO sibling files:
     one ``ApplicationLayer`` bundles every process with its host_machine open.
     The emitted module is INLINE + LITERAL — the process / service rows ARE the
     table, no helpers, no pre-defined generators — mirroring the hand-authored
-    examples in ``manifest/demo/base.py`` / ``manifest/services/base.py``.
+    examples in ``manifest/services/base.py`` / a workspace's
+    ``manifest/<name>/manifest.py``.
 
   * ``executor.py`` — a hand-editable supervisor-tree sidecar. WRITE-ONCE: only
     written if absent or ``--force`` is passed (mirrors ``gen-app``'s impl/
@@ -190,7 +191,8 @@ EXECUTION-axis process; provided interfaces map to SERVICE-axis instances.
 
 ``machine`` is intentionally LEFT OPEN on every process: this is a BASE
 manifest — a deploy variant binds each process to a machine (see
-``manifest/demo/single.py`` for the override idiom). ``validate()`` of THIS
+a rig variant like ``manifest/<name>/rig.py`` for the override idiom).
+``validate()`` of THIS
 base therefore reports ``machine`` Undefined; that is expected — the variant
 makes it consistent.
 
