@@ -29,12 +29,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from textx import metamodel_from_file
-
-
-_GRAMMAR = (Path(__file__).resolve().parent.parent /
-            "grammar" / "artheia.tx")
-
 
 @dataclass
 class _NodeRef:
@@ -166,8 +160,12 @@ def generate_routing(art_path: str | Path,
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    mm = metamodel_from_file(str(_GRAMMAR))
-    model = mm.model_from_file(str(art_path))
+    # The canonical loader (same as gen-app/gen-manifest/parse): merges the
+    # package.art/component.art sibling pair, follows imports, and resolves
+    # inheritance — a raw metamodel_from_file() can't see sibling .art files,
+    # which is exactly the "Unknown object" failure #378 tracked.
+    from artheia.model import parse_file
+    model = parse_file(art_path)
 
     target = None
     for el in model.elements:
