@@ -88,11 +88,12 @@ int main(int argc, char** argv) {
 {% endif %}
 {% for n in model.nodes %}
     {{ n.name }} {{ n.snake }};
-    // Per-node logger: tagged [#{{ n.snake }}] (kNodeName, matches `tdb ps`),
+    // Per-node logger: tagged [#{{ n.snake }}] (the PROTOTYPE name — the runtime
+    // node identity, matching executor.json/--tipc/config keys + `tdb ps`),
     // sink chosen by $THEIA_LOGGER. Installed BEFORE start so init/do_* log
     // through it; the FIRST node's logger also backs process_logger().
     {
-        auto {{ n.snake }}_log = MakeContextLogger({{ n.name }}::kNodeName);
+        auto {{ n.snake }}_log = MakeContextLogger("{{ n.snake }}");
         {{ n.snake }}_log->set_level(boot_level);
 {%- if loop.first %}
         ::theia::runtime::set_process_logger({{ n.snake }}_log);
@@ -106,7 +107,7 @@ int main(int argc, char** argv) {
     // on the node thread right after start) see this node's own instance — a clone
     // keying per-instance config in init() would otherwise race and read 0.
     uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
-    ::theia::runtime::resolve_node_tipc({{ n.name }}::kNodeName,
+    ::theia::runtime::resolve_node_tipc("{{ n.snake }}",
         {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
         {{ n.snake }}_type, {{ n.snake }}_inst);
     {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
@@ -134,7 +135,7 @@ int main(int argc, char** argv) {
     // Per-node CPU affinity + scheduler from $THEIA_NODE_CFG (supervisor sets it
     // from the rig's NodeToCPUMapping). No-op when unset; soft-fails on EPERM.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
-        {{ n.name }}::kNodeName, std::getenv("THEIA_NODE_CFG"));
+        "{{ n.snake }}", std::getenv("THEIA_NODE_CFG"));
 {% if n.reporting %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,
@@ -165,7 +166,7 @@ int main(int argc, char** argv) {
         // its demux binding (joined-group frames + PgMembership pushes route into
         // handle_cast) + pass its bound addr as the watcher address (where the
         // supervisor casts PgMembership when this node pg_watch'es a group).
-        {{ n.snake }}.pg_attach({{ n.name }}::kNodeName, {{ n.snake }}_cfg,
+        {{ n.snake }}.pg_attach("{{ n.snake }}", {{ n.snake }}_cfg,
                                 {{ n.snake }}_type, {{ n.snake }}_inst);
     } else {
         {{ n.snake }}.log().warn("config service bind failed; live log-level "
@@ -176,7 +177,7 @@ int main(int argc, char** argv) {
     // per node, own timer thread (1s default = the supervisor's check cadence).
     {
         auto {{ n.snake }}_hb = std::make_unique<
-            ::theia::runtime::HeartbeatPublisher>({{ n.name }}::kNodeName);
+            ::theia::runtime::HeartbeatPublisher>("{{ n.snake }}");
         if ({{ n.snake }}_hb->open()) {
             {{ n.snake }}_hb->start(/*period_ms=*/1000);
             heartbeats.push_back(std::move({{ n.snake }}_hb));

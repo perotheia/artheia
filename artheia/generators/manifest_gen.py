@@ -267,6 +267,23 @@ def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
                 ro = [p.name for p in params if getattr(p, "is_const", False)]
                 if ro:
                     const[proto.name] = ro
+                # ALIAS for IMPORTED package nodes: the node's compiled kNodeName
+                # is the snake'd node TYPE (the package lib was generated without a
+                # composition, so no prototype name existed — e.g. OsiV2v →
+                # "osi_v2v"), and the hand-written impl reads params via
+                # get_config().node(kNodeName). The prototype key above only
+                # matches main.cc's lookups (which use the prototype name). Emit
+                # the SAME dict under the snake'd type too so BOTH lookup domains
+                # resolve — without this, an imported node's params silently
+                # defaulted (invisible while staged values == code defaults; bites
+                # on the first deploy/config override). Same _to_snake as gen-app
+                # (one algorithm, or the alias key wouldn't match the binary).
+                from .fc_app import _to_snake
+                type_snake = _to_snake(getattr(node_type, "name", "") or "")
+                if type_snake and type_snake != proto.name:
+                    nodes.setdefault(type_snake, nodes[proto.name])
+                    if ro:
+                        const.setdefault(type_snake, ro)
             model_pkg = getattr(model, "name", None) or pkg
             out: dict = {"package": model_pkg, "nodes": nodes}
             if const:
