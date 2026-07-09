@@ -39,20 +39,33 @@
    outbound (encode). A receiver/server needs RemoteCodec<T> to DECODE;
    a sender/client needs it to ENCODE — both specializations live here.
    Not gated on `reporting`: a non-reporting send-only node still needs
-   its outbound codec. #}
+   its outbound codec.
+
+   Each declaration is wrapped in a per-TYPE preprocessor guard: when TWO
+   packages touch the SAME message (a producer package and a consumer package
+   both declare its codec in their own codecs header), a composition main that
+   includes both node headers lands both declarations in ONE TU — an unguarded
+   template specialization is then a hard redefinition error. The guard makes
+   the duplicate harmless (identical specializations; first inclusion wins). #}
 {% set _codecs = [] -%}
+{%- macro codec(t) -%}
+#ifndef THEIA_CODEC_{{ t }}
+#define THEIA_CODEC_{{ t }}
+THEIA_DECLARE_REMOTE_CODEC({{ t }})
+#endif
+{%- endmacro -%}
 {%- for n in model.nodes -%}
 {%- for op in n.unique_handler_ops() -%}
 {%- if op.req_proto and op.req_proto not in _codecs %}{{ _codecs.append(op.req_proto) or "" }}
-THEIA_DECLARE_REMOTE_CODEC({{ op.req_proto }})
+{{ codec(op.req_proto) }}
 {%- endif -%}
 {%- if op.rep_proto and op.rep_proto not in _codecs %}{{ _codecs.append(op.rep_proto) or "" }}
-THEIA_DECLARE_REMOTE_CODEC({{ op.rep_proto }})
+{{ codec(op.rep_proto) }}
 {%- endif -%}
 {%- endfor -%}
 {%- for d in n.unique_receiver_data() + n.unique_outbound_data() + ([n.statem_data] if n.statem_data else []) -%}
 {%- if d.proto_type and not d.runtime_owned and d.proto_type not in _codecs %}{{ _codecs.append(d.proto_type) or "" }}
-THEIA_DECLARE_REMOTE_CODEC({{ d.proto_type }})
+{{ codec(d.proto_type) }}
 {%- endif -%}
 {%- endfor -%}
 {%- endfor %}
