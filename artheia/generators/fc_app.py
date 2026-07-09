@@ -72,6 +72,14 @@ class _IfaceOp:
     # message is imported from another package — see _proto_type_of().
     req_proto: str = ""
     rep_proto: Optional[str] = None
+    # The .pb.h include coords (subpath + leaf) for the req/rep DEFINING package,
+    # so Codecs.hh can #include the header for an op type IMPORTED from another
+    # package (e.g. vucm's ctl op takes per's GetConfigReq → needs per.pb.h). Empty
+    # for a same-FC type (already covered by the FC's own <fc>.pb.h include).
+    req_subpath: str = ""
+    req_leaf: str = ""
+    rep_subpath: str = ""
+    rep_leaf: str = ""
 
 
 @dataclass
@@ -281,15 +289,24 @@ class _NodeView:
             elif p.kind == "client":
                 for op in p.ops:
                     # A client encodes the request AND decodes the reply,
-                    # so it needs a RemoteCodec for both.
+                    # so it needs a RemoteCodec for both. Carry the proto
+                    # subpath+leaf so Codecs.hh #includes the defining
+                    # package's .pb.h — a client op on an IMPORTED iface
+                    # (vucm's to_per → per's PerClientIf) references per's
+                    # GetConfigReq etc.; without the include the codec decl
+                    # names an undeclared struct (the vucm build break).
                     if op.req_msg and op.req_msg not in seen:
                         seen.add(op.req_msg)
                         out.append(_DataEl(name=op.name, msg=op.req_msg,
-                                           proto_type=op.req_proto))
+                                           proto_type=op.req_proto,
+                                           proto_subpath=op.req_subpath,
+                                           proto_leaf=op.req_leaf))
                     if op.rep_msg and op.rep_msg not in seen:
                         seen.add(op.rep_msg)
                         out.append(_DataEl(name=op.name, msg=op.rep_msg,
-                                           proto_type=op.rep_proto or ""))
+                                           proto_type=op.rep_proto or "",
+                                           proto_subpath=op.rep_subpath,
+                                           proto_leaf=op.rep_leaf))
         return out
 
     def unique_sender_data(self) -> list[_DataEl]:
@@ -628,10 +645,12 @@ def _cs_ops(iface) -> list[_IfaceOp]:
         # codegen treats the first `in` as the request message.
         req = ""
         req_proto = ""
+        req_subpath = ""
+        req_leaf = ""
         for p in op.params:
             if getattr(p, "direction", "") == "in":
                 req = _local_msg(p.type)
-                req_proto, _, _ = _proto_type_of(p.type)
+                req_proto, req_subpath, req_leaf = _proto_type_of(p.type)
                 break
         # Paramless operation (e.g. `operation Get() returns GetReply`):
         # the request IS a message named after the operation (`message
@@ -642,9 +661,15 @@ def _cs_ops(iface) -> list[_IfaceOp]:
             req = op.name
             req_proto = _op_request_proto(iface, op.name)
         rep = _local_msg(op.returns) if op.returns else None
-        rep_proto = _proto_type_of(op.returns)[0] if op.returns else None
+        rep_proto = None
+        rep_subpath = ""
+        rep_leaf = ""
+        if op.returns:
+            rep_proto, rep_subpath, rep_leaf = _proto_type_of(op.returns)
         out.append(_IfaceOp(name=op.name, req_msg=req, rep_msg=rep,
-                            req_proto=req_proto, rep_proto=rep_proto))
+                            req_proto=req_proto, rep_proto=rep_proto,
+                            req_subpath=req_subpath, req_leaf=req_leaf,
+                            rep_subpath=rep_subpath, rep_leaf=rep_leaf))
     return out
 
 
@@ -1124,7 +1149,20 @@ def _build_model_view(art_path: Path,
             if item.__class__.__name__ == "MessageReserved":
                 continue
             ftype = getattr(item, "type", None)
-            tname = getattr(ftype, "name", None) or (ftype if isinstance(ftype, str) else None)
+            # A field's `type` is a FieldType wrapper: a scalar carries `.kind`
+            # ("uint32"), a message/enum reference carries `.ref` (the resolved
+            # MessageDecl/EnumDecl) — its `.name` is the type name. (`.name` on the
+            # FieldType itself is always None, so the old read missed EVERY
+            # enum-typed field → the enum alias got pruned even when USED, e.g.
+            # ucm's `ActivationState state` → ACT_NONE undeclared in the impl.)
+            tname = None
+            if isinstance(ftype, str):
+                tname = ftype
+            elif ftype is not None:
+                ref = getattr(ftype, "ref", None)
+                tname = (getattr(ref, "name", None)
+                         or getattr(ftype, "name", None)
+                         or getattr(ftype, "kind", None))
             if tname:
                 _enum_typed.add(tname)
     enums: list[tuple] = []
@@ -1357,8 +1395,21 @@ def generate_fc(
     # package's messages (e.g. meshtastic decodes v2v's Beacon) must link that
     # package's proto too. Derived from the .art imports; the proto lives at
     # <proto-out>/<imported-pkg-subpath>:<short>_proto.
+    #
+    # SKIP for a FRAMEWORK FC (proto-out = platform/proto): there the per-FC protos
+    # are FILEGROUPS folded into the single //platform/proto:platform_protos
+    # cc_library the lib already deps on — so an imported FC's messages (sm imports
+    # nm/phm) are ALREADY linked via that aggregate. Emitting //platform/proto/
+    # system/services/nm:nm_proto would (a) be redundant and (b) point at a
+    # filegroup, not a cc_library → "misplaced here … does not have CcInfo". Only
+    # a self-contained-proto layout (a PACKAGE, or a consuming ws whose imports are
+    # packages) has real per-package proto cc_libraries to link.
+    _proto_is_framework_aggregate = (
+        proto_out is not None
+        and Path(proto_out).as_posix().strip("./").rstrip("/") == "platform/proto")
     imported_proto_deps = (
-        _imported_package_proto_deps(_parsed, proto_out) if proto_out else [])
+        _imported_package_proto_deps(_parsed, proto_out)
+        if (proto_out and not _proto_is_framework_aggregate) else [])
 
     ctx = {
         "model": mv,
