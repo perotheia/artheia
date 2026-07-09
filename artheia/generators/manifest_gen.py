@@ -518,16 +518,16 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
         # with the hand-authored manifest/{services,demo}/base.py targets —
         # //services/com/main:com, //apps/Demo3WayP1/main:apps.)
         #
-        # EXCEPTION — the package-tester layout: the app package is
-        # `system.<name>_tester`, so pkg_cluster would be `<name>_tester`, but the
-        # tester ALWAYS generates into apps/ (gen-app --kind fc --out apps). Its
-        # inline cluster carries cluster_base_dir="apps" (from _base_dir_for's
-        # `system.<name>_tester` rule) — trust THAT over pkg_cluster here, so the
-        # bazel dir is apps/, not a non-existent //<name>_tester/. Narrowly scoped
-        # to =="apps" so the services aggregator (cluster_base_dir resolves to a
-        # member dir like `com`, but must deploy under //services via pkg_cluster)
-        # is untouched. The binary NAME still comes from pkg_cluster via
-        # app_bazel_target's `cluster` arg.
+        # EXCEPTION — the apps/ layout: a system/-sourced app deploys under apps/
+        # (gen-app --out apps → //apps/<Comp>/main), so _base_dir_for gives its
+        # inline cluster a base_dir of `apps`: the package-tester (system.<X>_tester)
+        # AND a `theia init --kind ws --name <X>` app (system.<X>). pkg_cluster there
+        # is the FQN leaf (`<X>_tester` / `<X>`), which is NOT where the C++ lives —
+        # so trust cluster_base_dir (`apps`) over pkg_cluster, giving //apps/…, not a
+        # non-existent //<X>/… . Scoped to =="apps" so the services aggregator
+        # (cluster_base_dir resolves to a member dir like `com`, must deploy under
+        # //services via pkg_cluster) is untouched. The binary NAME still comes from
+        # pkg_cluster via app_bazel_target's `cluster` arg.
         if cluster_base_dir == "apps" and pkg_cluster != "apps":
             bdir = "apps"
         else:

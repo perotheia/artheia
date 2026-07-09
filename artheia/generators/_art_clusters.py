@@ -95,6 +95,19 @@ def _base_dir_for(defining_file: Path, workspace: "Path | None" = None) -> str:
     # convention so `system.services` etc. keep their own dir below.
     if pkg.endswith("_tester") and _declares_composition(str(defining_file)):
         return "apps"
+    # WORKSPACE APP (`theia init --kind ws --name <X>`): a plain `system.<X>` app
+    # package (source at system/<X>/) declaring a composition deploys under apps/
+    # (gen-app --kind fc --out apps → //apps/<Comp>/main, the same shape as the demo
+    # //apps/Demo3WayP1/main and the package tester). So its bazel base_dir is
+    # `apps`, NOT the FQN leaf `<X>`. Scoped to a SINGLE-segment `system.<X>` app
+    # (excludes framework clusters system.services / system.supervisor /
+    # system.platform, which own real dirs, and the multi-segment
+    # system.services.<fc> FCs) so only user workspace apps map here.
+    _parts = pkg.split(".") if pkg else []
+    _framework = {"services", "supervisor", "platform", "apps"}
+    if (len(_parts) == 2 and _parts[0] == "system" and _parts[1] not in _framework
+            and _declares_composition(str(defining_file))):
+        return "apps"
     if pkg:
         return pkg.split(".")[-1]
     return top or real.parent.name
