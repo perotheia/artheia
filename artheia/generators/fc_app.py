@@ -1248,6 +1248,21 @@ def _art_compositions(art_path: Path) -> "list[str]":
     return comps
 
 
+def _declares_empty_cluster(art_path: Path) -> bool:
+    """True if the .art DECLARES a cluster but it has NO members — the emptied
+    `theia init` app scaffold (`cluster Applications { }`). Distinguishes that
+    (a mistake for an app: nothing to deploy) from an .art with NO cluster at all
+    (a bare node package / not-yet-clustered FC), which is a legitimate flat emit.
+    Reuses _cluster_members: it raises ValueError when no cluster is declared."""
+    from ._art_clusters import _cluster_members
+    try:
+        clusters = _cluster_members(str(art_path))
+    except ValueError:
+        return False   # no cluster declared → not the empty-app case.
+    # A cluster IS declared; empty iff none of its clusters have any members.
+    return not any(members for _cn, _bd, _pc, members in clusters)
+
+
 # ---- public entry ----------------------------------------------------------
 
 def generate_fc(
@@ -1327,6 +1342,22 @@ def generate_fc(
                 for k in agg:
                     agg[k].extend(sub.get(k, []))
             return agg
+        # An app-layout --out with a cluster DECLARED but EMPTY (no members) — the
+        # `theia init` scaffold whose composition the user removed. The old
+        # behaviour fell through to a FLAT emit (apps/{lib,main,impl}), but that tree
+        # has no composition to deploy, its bazel dir (//apps/main) matches no
+        # manifest label, and it COLLIDES with apps/<Comp>/ once a real composition
+        # is added. Refuse with a clear message. (A .art with NO cluster at all — a
+        # bare node package or a not-yet-clustered services FC — still flat-emits
+        # below; only the empty-cluster app case is a mistake.)
+        if _declares_empty_cluster(art_path):
+            raise ValueError(
+                f"{art_path}: the `cluster Applications` is EMPTY — nothing to "
+                f"generate for an app (--out '{out_dir}'). Add a member: "
+                f"`composition <Name> {{ prototype <Node> <id> }}` + `cluster "
+                f"Applications {{ composition <Name> app }}`, then re-run. (A flat "
+                f"apps/{{lib,main}} emit would deploy nothing and clash with "
+                f"apps/<Composition>/ once you add one.)")
 
     # Ergonomics: with --composition, --out is the PARENT and the app dir
     # is the composition name appended verbatim, so the user names the
