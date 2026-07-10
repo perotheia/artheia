@@ -953,6 +953,13 @@ def _is_test_sender_node(el) -> bool:
     """
     if getattr(el, "extern", False):
         return False
+    # A statem node is NEVER a probe handle — an FSM with only sender
+    # ports (e.g. a mode arbiter broadcasting its state) is a real node;
+    # probes are stateless caster identities. Without this, a sender-only
+    # FSM in a PACKAGE (no composition in package.art) was silently
+    # dropped from the lib.
+    if getattr(el, "statem", None) is not None:
+        return False
     if getattr(el, "kind", "atomic") != "atomic":
         return False   # runnables / others are real workers
     ports = getattr(el, "ports", None) or []
