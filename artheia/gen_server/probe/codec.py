@@ -33,6 +33,19 @@ class Codec:
     # sub-package live under the same `system`/`platform` namespace root.
     _SHARED_OUT: "Path | None" = None
 
+    # Process-shared content ledger: <proto path relative to its root> →
+    # sha256 of the .proto SOURCE that was compiled+imported at that module
+    # path. A second Codec (second ArtheiaContext) asking to compile the SAME
+    # proto path with DIFFERENT content is a hard error: protoc would
+    # overwrite the shared _pb2 file, but sys.modules (and protobuf's
+    # descriptor pool, which registers by file path) keep the FIRST version —
+    # encode would then use stale descriptors and emit wrong tags, which the
+    # peer's nanopb decode silently drops. One process cannot hold two
+    # versions of one proto; failing loudly here turns a lost-cast heisenbug
+    # into an immediate, actionable error (seen in the wild: two robot tests
+    # building contexts against protos regenerated in between).
+    _COMPILED: "dict[str, str]" = {}
+
     def __init__(self, proto_root: str | Path):
         self.proto_root = Path(proto_root)
         if Codec._SHARED_OUT is None:
@@ -86,15 +99,45 @@ class Codec:
         # sys.path with package __init__.py's (protoc lays the tree out, we add
         # the inits).
         deps = self._collect_proto_imports(proto_abs)
-        targets = [str(proto_rel)] + [str(d) for d in deps]
-        rc = protoc.main([
-            "",
-            f"-I{self.proto_root}",
-            f"--python_out={self._out}",
-            *targets,
-        ])
-        if rc != 0:
-            raise RuntimeError(f"protoc failed (rc={rc}) on {proto_rel}")
+        all_rel = [proto_rel] + list(deps)
+
+        # Content guard (see _COMPILED): compile each proto path at most once
+        # per process; a re-request with IDENTICAL content reuses the already-
+        # imported module tree, a re-request with DIFFERENT content fails loud.
+        import hashlib
+        targets = []
+        for rel in all_rel:
+            src = self.proto_root / rel
+            digest = hashlib.sha256(src.read_bytes()).hexdigest() if src.exists() else ""
+            prev = Codec._COMPILED.get(str(rel))
+            if prev is None:
+                Codec._COMPILED[str(rel)] = digest
+                targets.append(str(rel))
+            elif prev != digest:
+                raise RuntimeError(
+                    f"proto {rel} (root {self.proto_root}) differs from the "
+                    f"version already compiled+imported in this process by an "
+                    f"earlier ArtheiaContext/Codec. One process cannot hold two "
+                    f"versions of one proto (sys.modules + the protobuf "
+                    f"descriptor pool keep the first) — encoding with the stale "
+                    f"one would emit wire bytes the peer silently drops. Use a "
+                    f"fresh process for the regenerated proto tree, or one "
+                    f"context per proto snapshot."
+                )
+            # prev == digest → already compiled; skip recompilation.
+        if targets:
+            rc = protoc.main([
+                "",
+                f"-I{self.proto_root}",
+                f"--python_out={self._out}",
+                *targets,
+            ])
+            if rc != 0:
+                # Roll back the ledger for the paths we claimed but failed to
+                # compile, so a later (correct) attempt isn't spuriously blocked.
+                for t in targets:
+                    Codec._COMPILED.pop(t, None)
+                raise RuntimeError(f"protoc failed (rc={rc}) on {proto_rel}")
 
         # Make the emitted tree importable as packages (the generated code uses
         # absolute `from <pkg> import <leaf>_pb2`). Add __init__.py per dir and
