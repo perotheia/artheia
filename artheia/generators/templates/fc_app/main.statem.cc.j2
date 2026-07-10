@@ -8,7 +8,11 @@
 // a plain message-handling node — brings up both.
 
 {% for n in model.nodes %}
+{%- if n.imported %}
+#include "{{ n.pkg_lib_include }}"
+{%- else %}
 #include "lib/{{ n.name }}.hh"
+{%- endif %}
 {%- endfor %}
 
 #include "lib/Log.hh"    // per-node MakeContextLogger(tag) — tagged + $THEIA_LOGGER sink
@@ -87,7 +91,9 @@ int main(int argc, char** argv) {
     std::vector<std::unique_ptr<::theia::runtime::HeartbeatPublisher>> heartbeats;
 {% endif %}
 {% for n in model.nodes %}
-    {{ n.name }} {{ n.snake }};
+{%- set cls = n.qual_name if n.imported else n.name %}
+{%- set qns = (n.qual_name.rsplit('::', 1)[0] ~ '::') if n.imported else '' %}
+    {{ cls }} {{ n.snake }};
     // Per-node logger: tagged [#{{ n.snake }}] (the PROTOTYPE name — the runtime
     // node identity, matching executor.json/--tipc/config keys + `tdb ps`),
     // sink chosen by $THEIA_LOGGER. Installed BEFORE start so init/do_* log
@@ -108,9 +114,11 @@ int main(int argc, char** argv) {
     // keying per-instance config in init() would otherwise race and read 0.
     uint32_t {{ n.snake }}_type, {{ n.snake }}_inst;
     ::theia::runtime::resolve_node_tipc("{{ n.snake }}",
-        {{ n.name }}::kTipcType, {{ n.name }}::kTipcInstance,
+        {{ cls }}::kTipcType, {{ cls }}::kTipcInstance,
         {{ n.snake }}_type, {{ n.snake }}_inst);
+{%- if not n.runnable and not n.prebuilt %}
     {{ n.snake }}.set_tipc_instance({{ n.snake }}_inst);
+{%- endif %}
 {%- if n.statem is not none %}
     {{ n.snake }}.start_statem(timers);
 {%- else %}
@@ -136,7 +144,7 @@ int main(int argc, char** argv) {
     // from the rig's NodeToCPUMapping). No-op when unset; soft-fails on EPERM.
     ::theia::runtime::apply_node_affinity({{ n.snake }}.native_handle(),
         "{{ n.snake }}", std::getenv("THEIA_NODE_CFG"));
-{% if n.reporting %}
+{% if n.reporting and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,
             {{ n.snake }}_inst)) {
@@ -156,11 +164,11 @@ int main(int argc, char** argv) {
         // — lands on the same handle_call / handle_cast path. clientServer
         // ops → register_call; senderReceiver `in` data → register_cast.
 {%- for op in n.unique_handler_ops() %}
-        config_mux.register_call<{{ op.req_msg }}, {{ op.rep_msg }}>(
+        config_mux.register_call<{{ qns }}{{ op.req_msg }}, {{ qns }}{{ op.rep_msg }}>(
             {{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
 {%- for d in n.unique_receiver_data() %}
-        config_mux.register_cast<{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+        config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
         // PG (manual pub/sub, OTP shape): attach this statem node's PgClient to
         // its demux binding (joined-group frames + PgMembership pushes route into
