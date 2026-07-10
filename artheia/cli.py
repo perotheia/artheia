@@ -2207,12 +2207,25 @@ def serialize_manifest_cmd(
                 if override_file.is_file():
                     try:
                         override = json.loads(override_file.read_text())
-                        # nodes section: merge each node's fields individually.
+                        # Alias twins (gen-manifest "aliases": prototype →
+                        # snake'd node type, for IMPORTED package nodes whose
+                        # compiled kNodeName differs from the prototype). An
+                        # override keyed by EITHER name must land in BOTH
+                        # sections — the composition main reads the prototype
+                        # key, the imported lib reads the type key; merging
+                        # only one silently desyncs the pair.
+                        twin: dict = {}
+                        for a, b in (params_data.get("aliases") or {}).items():
+                            twin[a] = b
+                            twin[b] = a
+                        # nodes section: merge each node's fields individually
+                        # (into the key and, when aliased, its twin).
                         for node_name, node_vals in override.get("nodes", {}).items():
-                            params_data.setdefault("nodes", {})[node_name] = {
-                                **params_data.get("nodes", {}).get(node_name, {}),
-                                **node_vals,
-                            }
+                            for key in {node_name, twin.get(node_name, node_name)}:
+                                params_data.setdefault("nodes", {})[key] = {
+                                    **params_data.get("nodes", {}).get(key, {}),
+                                    **node_vals,
+                                }
                         # top-level keys other than nodes (e.g. package) override directly.
                         for k, v in override.items():
                             if k != "nodes":

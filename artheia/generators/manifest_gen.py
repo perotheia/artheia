@@ -260,9 +260,17 @@ def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
                 continue
             nodes: dict = {}
             const: dict = {}
+            aliases: dict = {}
+            from .fc_app import _to_snake
             for proto in proto_decls:
                 node_type = proto.type
                 params = getattr(node_type, "params", None) or []
+                # Record the prototype↔snake'd-type pair EVEN for a paramless
+                # node — serialize-manifest's override MIRROR must work for a
+                # section a user creates from scratch in deploy/config too.
+                type_snake = _to_snake(getattr(node_type, "name", "") or "")
+                if type_snake and type_snake != proto.name:
+                    aliases[proto.name] = type_snake
                 if not params:
                     continue
                 nodes[proto.name] = {p.name: _coerce_default(p) for p in params}
@@ -280,8 +288,9 @@ def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
                 # defaulted (invisible while staged values == code defaults; bites
                 # on the first deploy/config override). Same _to_snake as gen-app
                 # (one algorithm, or the alias key wouldn't match the binary).
-                from .fc_app import _to_snake
-                type_snake = _to_snake(getattr(node_type, "name", "") or "")
+                # The pair is also in `aliases` (recorded above) so
+                # serialize-manifest can MIRROR a deploy/config override across
+                # it — keyed by either name, landing in BOTH sections.
                 if type_snake and type_snake != proto.name:
                     nodes.setdefault(type_snake, nodes[proto.name])
                     if ro:
@@ -290,6 +299,8 @@ def _params_for_comp(models: list, comp: str, pkg: str) -> dict:
             out: dict = {"package": model_pkg, "nodes": nodes}
             if const:
                 out["const"] = const
+            if aliases:
+                out["aliases"] = aliases
             return out
     return {"package": pkg, "nodes": {}}
 
