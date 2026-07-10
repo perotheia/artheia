@@ -21,6 +21,9 @@
 #include "MachineInstance.hh"  // resolve_node_tipc(--tipc arg) — per-node addr
 #include "ParamsConfig.hh"  // init_config(fc) / get_config() — static params JSON
 #include "tombstone/tombstone.h"  // install_handlers — crash → tombstone file
+{%- if model.nodes | selectattr("requires_rds") | list %}
+#include "ara/rds/stream.h"   // RDS zero-copy data plane (requires_rds nodes)
+{%- endif %}
 {% if model.nodes | selectattr("reporting") | list %}
 #include "TipcMux.hh"    // config-service receiver for reporting nodes (#386)
 #include "HeartbeatPublisher.hh"  // periodic liveness beat to the supervisor
@@ -74,6 +77,13 @@ int main(int argc, char** argv) {
     // Static params (#params): load this FC's deployment-config JSON once,
     // before any node is constructed (ctor/init() reads via get_config()).
     ::theia::runtime::init_config("{{ model.fc_short }}");
+{%- if model.nodes | selectattr("requires_rds") | list %}
+
+    // RDS (Raw Data Stream): register this process with the iceoryx broker
+    // (RouDi) ONCE, before any requires_rds node opens a stream. The node's
+    // StreamWriter/Reader handles (one per `rds_stream`) connect in its init().
+    ::ara::rds::Runtime::Init("{{ model.fc_short }}");
+{%- endif %}
 
     ::theia::runtime::TimerService timers;
     // Publish the process TimerService. start_statem(timers) drives the FSM's
