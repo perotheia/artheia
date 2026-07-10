@@ -150,11 +150,18 @@ def generate_migrations(from_schema_path: str, to_schema_path: str,
         node = _node_key(to_schema, ct)
         nodes.append(node)
         p = out / f"{node}_v1_to_v2.json"
+        # WRITE-ONCE: a transform is a REVIEWED artifact (the scaffold's
+        # heuristic rules carry _review notes the author resolves). A re-run
+        # (e.g. `theia release-swp` re-checking the digest gate) must never
+        # clobber the reviewed rules — delete the file to re-scaffold.
+        if p.exists():
+            written[ct] = str(p)
+            continue
         p.write_text(json.dumps(t, indent=2) + "\n")
         written[ct] = str(p)
 
     if emit_build and nodes:
-        _rewrite_build(out, sorted(set(nodes)))
+        _rewrite_build(out, sorted(set(nodes)), to_schema, list(transforms))
     return written
 
 
@@ -181,7 +188,9 @@ def _render_block(nodes: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _rewrite_build(out: Path, nodes: list[str]) -> None:
+def _rewrite_build(out: Path, nodes: list[str],
+                   to_schema: dict | None = None,
+                   config_types: list | None = None) -> None:
     build = out / "BUILD.bazel"
     if build.exists():
         text = build.read_text()
@@ -197,13 +206,34 @@ def _rewrite_build(out: Path, nodes: list[str]) -> None:
         build.write_text(text.rstrip() + "\n\n" + _render_block(sorted(set(nodes))))
         return
     block_text = _render_block(sorted(set(nodes)))
-    # no BUILD yet — write a minimal one (the load + cc_library are required;
-    # the caller usually already has a hand-written BUILD, so this is fallback).
+    # no BUILD yet — scaffold one. The preamble (hand-owned after this first
+    # write) defines the per-package :pb_hdr/:pb_c defaults the macro's managed
+    # entries lean on; derived from the FIRST diff'd config's art_package (a
+    # multi-package migrations dir edits the preamble by hand).
+    pkg = ""
+    if to_schema and config_types:
+        pkg = (to_schema.get("configs", {})
+                        .get(config_types[0], {})
+                        .get("art_package", "")) or ""
+    leaf = pkg.split(".")[-1] if pkg else "apps"
+    proto_pkg = "//proto/" + pkg.replace(".", "/") if pkg else "//proto/system/apps"
     build.write_text(
-        '# AUTO-SCAFFOLDED by `artheia gen-migration`. The load + demo_pb_hdr\n'
-        "# cc_library are required; edit them by hand. Plugin entries below are\n"
-        "# managed (regenerated on each gen-migration run).\n"
+        "# Scaffolded ONCE by `artheia gen-migration` — preamble is HAND-OWNED\n"
+        "# (edit :pb_hdr/:pb_c if your proto tree differs); the block between\n"
+        "# the markers is MANAGED (gen-migration merges plugin entries).\n"
+        "# Each plugin is a self-contained .so per dlopen's at MigrateBulk time\n"
+        "# (see @pero_theia//rules:migration.bzl).\n"
         'load("@rules_cc//cc:defs.bzl", "cc_library")\n'
-        'load(":plugin.bzl", "migration_plugin")\n\n'
+        'load("@pero_theia//rules:migration.bzl", "migration_plugin")\n\n'
         'package(default_visibility = ["//visibility:public"])\n\n'
+        f'# {leaf}.pb.h include path WITHOUT a runtime shared-lib dependency.\n'
+        'cc_library(\n'
+        '    name = "pb_hdr",\n'
+        f'    hdrs = ["{proto_pkg}:{leaf}_pb_h"],\n'
+        '    strip_include_prefix = "/proto",\n'
+        ')\n\n'
+        'alias(\n'
+        '    name = "pb_c",\n'
+        f'    actual = "{proto_pkg}:{leaf}_pb_c",\n'
+        ')\n\n'
         + block_text)
