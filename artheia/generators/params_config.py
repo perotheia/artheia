@@ -22,8 +22,18 @@ Output shape (one file per FC, staged at /ROOT/<machine>/config/<fc>.json):
       }
     }
 
-Keyed by PROTOTYPE name (per_client), not node-type (PerClient), because the
-runtime looks the section up by kNodeName, which is the prototype/instance name.
+Keyed by PROTOTYPE name (per_client) AND — when it differs — by the snake'd
+node-TYPE name (the ALIAS TWIN, same dict). An in-repo FC's kNodeName is the
+prototype name, but an IMPORTED package node's compiled kNodeName is the
+snake'd TYPE (the package lib was generated without a composition, so no
+prototype existed — e.g. prototype `road_sem` of type RoadSemantics reads
+`road_semantics`). Emitting both keys keeps the two lookup domains in sync —
+the SAME parity manifest_gen.py's PROCESS_PARAMS carries; gen-params emitting
+prototype-only was the second half of the params-section-key seam (a file
+seeded from here could never override an imported node's params). An
+`"aliases"` block records the pairs so override tooling mirrors edits across
+the twins.
+
 A node-type with no params contributes no section. The runtime reader
 (get_config().node(kNodeName)) returns an empty view for an absent section, so a
 node always gets its .art defaults via the typed getters' fallbacks.
@@ -46,20 +56,28 @@ def _compositions(model):
 
 def build_params(model) -> dict:
     """Walk every composition's prototypes, emit {prototype_name: {param: val}}
-    for each node-type that declares a params block. Prototypes of a param-less
-    node-type are omitted (no section)."""
+    for each node-type that declares a params block — plus the snake'd-type
+    ALIAS TWIN section for imported nodes (kNodeName != prototype name).
+    Prototypes of a param-less node-type are omitted (no section); their alias
+    PAIR is still recorded so override tooling can mirror a section a user
+    creates from scratch."""
     from artheia.model import flatten_composition
+    from .fc_app import _to_snake   # SAME algorithm as gen-app's kNodeName
 
     nodes: dict[str, dict] = {}
     # node -> [param names declared `const` (read-only)]. Kept SEPARATE from the
     # flat value map so the runtime reader (typed getters) stays unchanged; a
     # writer / config UI consults this to reject mutating a const param.
     const: dict[str, list] = {}
+    aliases: dict[str, str] = {}
     for comp in _compositions(model):
         proto_decls, _connects = flatten_composition(comp)
         for proto in proto_decls:
             node_type = proto.type
             params = getattr(node_type, "params", None) or []
+            type_snake = _to_snake(getattr(node_type, "name", "") or "")
+            if type_snake and type_snake != proto.name:
+                aliases[proto.name] = type_snake
             if not params:
                 continue
             nodes[proto.name] = {
@@ -68,9 +86,16 @@ def build_params(model) -> dict:
             ro = [p.name for p in params if getattr(p, "is_const", False)]
             if ro:
                 const[proto.name] = ro
+            # ALIAS TWIN for imported package nodes (see module docstring).
+            if type_snake and type_snake != proto.name:
+                nodes.setdefault(type_snake, nodes[proto.name])
+                if ro:
+                    const.setdefault(type_snake, ro)
     out = {"package": model.name or "", "nodes": nodes}
     if const:
         out["const"] = const
+    if aliases:
+        out["aliases"] = aliases
     return out
 
 

@@ -2232,7 +2232,27 @@ def serialize_manifest_cmd(
                                 params_data[k] = v
                     except Exception:
                         pass
-                _dump(cfg_dir / f"{proc.name}.json", params_data)
+                # LOUD on clobber: this file is a BUILD ARTIFACT, re-derived
+                # from the .art (+ deploy/config override) on EVERY
+                # manifest/install. A hand edit made directly to the staged
+                # copy is silently reverted here — which reads as "my param
+                # didn't take" (it took, then this overwrote it). Warn when we
+                # are about to replace content that differs from what we
+                # write, and name the supported override channel.
+                cfg_path = cfg_dir / f"{proc.name}.json"
+                try:
+                    old = json.loads(cfg_path.read_text())
+                except Exception:
+                    old = None
+                if old is not None and old != params_data:
+                    click.echo(
+                        f"  NOTE: {cfg_path} regenerated from the .art — its "
+                        f"previous (possibly hand-edited) content is replaced. "
+                        f"Persistent per-rig knobs belong in "
+                        f"{override_dir / (proc.name + '.json')} "
+                        f"(deep-merged, alias-mirrored, survives every restage).",
+                        err=True)
+                _dump(cfg_path, params_data)
             # config-defaults.json — merged across all processes on this machine.
             # seed.py reads a single per-machine file so we merge all FCs' configs.
             if process_config_defaults:
