@@ -35,7 +35,7 @@ import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from jinja2 import Environment, BaseLoader, DictLoader
+    from jinja2 import Environment, DictLoader
 except ImportError:
     sys.exit("ERROR: jinja2 is required.  Run: pip install jinja2")
 

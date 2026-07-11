@@ -31,7 +31,6 @@ from artheia.manifest.algebra import (  # noqa: F401
     EmptySet,
     Explicit,
     Identifiable,
-    Insert,
     Issue,
     Layer,
     MonoidSet,
@@ -62,14 +61,8 @@ from artheia.manifest.deployment import (  # noqa: F401
     ServiceTarget,
 )
 from artheia.manifest.supervisor import (  # noqa: F401
-    ChildSpec,
-    ChildType,
-    NodeInfo,
     RestartStrategy,
-    RestartType,
-    Supervisor,
     SupervisorNode,
-    SupervisorSpec,
 )
 
 __all__ = [
@@ -81,7 +74,6 @@ __all__ = [
     "EmptySet",
     "Explicit",
     "Identifiable",
-    "Insert",
     "Issue",
     "Layer",
     "MonoidSet",
@@ -110,12 +102,6 @@ __all__ = [
     "ServiceLayer",
     "ServiceTarget",
     # supervisor
-    "ChildSpec",
-    "ChildType",
-    "NodeInfo",
     "RestartStrategy",
-    "RestartType",
-    "Supervisor",
     "SupervisorNode",
-    "SupervisorSpec",
 ]

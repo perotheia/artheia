@@ -42,8 +42,7 @@ historical spellings are preserved as aliases for back-compat —
 from __future__ import annotations
 
 import dataclasses
-import importlib
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from collections.abc import Callable
 from copy import copy
 from dataclasses import asdict, is_dataclass
@@ -56,7 +55,6 @@ from typing import (
     TypeVar,
     Union,
     no_type_check,
-    runtime_checkable,
 )
 
 A = TypeVar("A")
@@ -76,17 +74,6 @@ class LayerMergeError(Exception):
 
 class IsDataclass(Protocol):
     __dataclass_fields__: dict[str, Any]
-
-
-@runtime_checkable
-class IsProtobuf(Protocol):
-    @abstractmethod
-    def SerializeToString(self) -> bytes:
-        raise NotImplementedError()  # pragma: no cover
-
-    @abstractmethod
-    def IsInitialized(self) -> bool:
-        raise NotImplementedError()  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
@@ -118,17 +105,6 @@ class ConfigField(Generic[Ctx, A]):
             # A concrete base beats an upper fallback; otherwise the fallback.
             return self if isinstance(self, Explicit) else over
         # `over` is a bare Undefined -> inherit the lower value.
-        return self
-
-    def map(self, f: Callable[[A], A]) -> "ConfigField[Ctx, A]":
-        """Functor map — applies ``f`` to the carried value, if any."""
-        if isinstance(self, Explicit):
-            return Explicit(f(self.value))
-        if isinstance(self, Default):
-            return Default(f(self.default))
-        if isinstance(self, Defer):
-            g = self._f
-            return Defer(lambda ctx: f(g(ctx)))
         return self
 
     def simplify(self, context_path: str) -> A:
@@ -328,11 +304,6 @@ class Remove(SetTransform, Generic[T]):
             }
         return {m for m in current if m != self.value}
 
-
-# --- historical set-edit aliases -------------------------------------------
-SetEdit = SetTransform
-Insert = Append
-Delete = Remove
 
 SetTransformTypes = Union[Append["Identifiable"], Remove["Identifiable"]]
 SimpleSetTransformTypes = Union[Append[T], Remove[T]]
@@ -789,44 +760,3 @@ def _validate_set(members: Iterable[Any], path: str, issues: list[Issue]) -> Non
 # Misc helpers carried over.
 # ---------------------------------------------------------------------------
 
-def hash_with_protos(proto: IsDataclass, proto_fields: list[str]) -> int:
-    """Hash that survives protobuf re-serialisation by hashing the bytes of the
-    named protobuf-typed fields rather than the message objects."""
-    fields = asdict(proto)  # type: ignore[call-overload]
-    hash_values = [getattr(proto, f) for f in fields if f not in proto_fields]
-    proto_values: list[Optional[bytes]] = []
-    for f in proto_fields:
-        v = getattr(proto, f)
-        proto_values.append(None if v is None else v.SerializeToString())
-    return hash((*hash_values, *proto_values))
-
-
-def import_config(module_name: str, symbol: str) -> object:
-    """Late-binding config import for ``Defer``-style indirection."""
-    return getattr(importlib.import_module(module_name), symbol)
-
-
-def type_tree_str(t: IsDataclass, context: str = "root", indent: int = 0) -> str:
-    """Pretty-print a layer/dataclass tree for debugging."""
-    pad = "  " * indent
-    out = f"{pad}{context}: {type(t).__name__}\n"
-    for name in asdict(t).keys():  # type: ignore[call-overload]
-        out += _handle_field(getattr(t, name), name, indent + 1)
-    return out
-
-
-def _handle_field(value: Any, name: str, indent: int = 0) -> str:
-    pad = "  " * indent
-    if isinstance(value, (Undefined, Defer)):
-        return f"{pad}{name}: {value}\n"
-    if isinstance(value, Layer) or is_dataclass(value):
-        return type_tree_str(value, name, indent)
-    if isinstance(value, (set, frozenset)):
-        out = f"{pad}{name}: set[{len(value)}]\n"
-        for i, el in enumerate(value):
-            if isinstance(el, Layer) or is_dataclass(el):
-                out += type_tree_str(el, f"{name}({i})", indent + 1)
-            else:
-                out += _handle_field(el, f"[{i}]", indent + 1)
-        return out
-    return f"{pad}{name}: {type(value).__name__}\n"

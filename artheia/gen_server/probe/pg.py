@@ -10,10 +10,6 @@ MULTICAST model where the SUPERVISOR is the namespace authority:
                         then BINDS a SOCK_RDM recv socket at {group_type,
                         instance}; a broadcaster's one name-sequence datagram is
                         delivered to it (and every other member) by the kernel.
-  - broadcast(group_name, art_pkg, proto_type, **fields)
-                      — resolve the group_type (CALL with join=false), encode the
-                        message, and SOCK_RDM-sendto the name-sequence
-                        {group_type, 0..~0} → multicast to all members.
   - leave(group_name) — CALL PgLeaveReq; the supervisor frees the instance.
   - keepalive         — beat HeartbeatReport to the supervisor on a timer so its
                         watchdog keeps the probe's membership (joining ⇒
@@ -38,8 +34,7 @@ import time
 from typing import Callable, Optional
 
 from . import wire
-from .transport import (TipcDgramServer, tipc_multicast_send,
-                        tipc_unicast_send)
+from .transport import TipcDgramServer
 
 # The supervisor's SupervisorControlIf receiver (PgClient::kSupTipc*).
 SUP_TIPC_TYPE = 0x80020001
@@ -52,7 +47,9 @@ class PgProbe:
     """Wraps a started NodeProbe to give it PG membership over TIPC multicast.
 
     The NodeProbe owns the supervisor CALL channel (call_addr) + the codec;
-    PgProbe adds the per-group recv socket + the broadcast send + a keepalive.
+    PgProbe adds the per-group recv socket + a keepalive. (A speculative
+    producer-side surface — broadcast/watch/members — was removed in the
+    2026-07 dead-code sweep; the probe is a RECEIVER. git history has it.)
     """
 
     def __init__(self, probe, node_name: str = "probe"):
@@ -61,15 +58,8 @@ class PgProbe:
         self._pid = os.getpid()
         # joined groups: group_name -> {"type", "instance", "server"}
         self._groups: dict[str, dict] = {}
-        # broadcaster's resolved group_type cache: group_name -> type
-        self._resolved: dict[str, int] = {}
-        # OTP pg:monitor — watched groups: group_name -> {type,instance,server,members}
-        self._watch: dict[str, dict] = {}
-        self._watch_seq: int = 1
         # per-group received-cast handlers: group_name -> callable(fields)
         self._handlers: dict[str, Callable[[dict], None]] = {}
-        # per-group inbox of decoded casts (for await_broadcast)
-        self._inboxes: dict[str, list] = {}
         self._lock = threading.Lock()
         self._seq = 0
         self._ka_stop: Optional[threading.Event] = None
@@ -90,16 +80,14 @@ class PgProbe:
              on_cast: Optional[Callable[[dict], None]] = None) -> dict:
         """Join the group for `group_name`. The supervisor allocates {group_type,
         instance}; bind a SOCK_RDM recv socket there and dispatch received casts
-        to on_cast (and into an inbox for await_broadcast). Returns the reply."""
+        to on_cast. Returns the reply."""
         rep = self._sup_join_call(group_name, join=True)
         if int(rep.get("status", 1)) != 0:
             return rep
         gtype = int(rep.get("group_type", 0))
         ginst = int(rep.get("instance", 0))
-        self._resolved[group_name] = gtype
         if on_cast:
             self._handlers[group_name] = on_cast
-        self._inboxes.setdefault(group_name, [])
 
         def _frame(hdr: wire.Header, payload: bytes) -> None:
             self._on_group_frame(group_name, hdr, payload)
@@ -127,156 +115,22 @@ class PgProbe:
         except Exception:
             pass   # best-effort; supervisor may be down
 
-    # ---- broadcast --------------------------------------------------------
-    def resolve(self, group_name: str) -> int:
-        """Learn (allocate, if new) the group's TIPC type WITHOUT taking an
-        instance — for a pure broadcaster. Cached."""
-        gt = self._resolved.get(group_name)
-        if gt:
-            return gt
-        rep = self._sup_join_call(group_name, join=False)
-        gt = int(rep.get("group_type", 0))
-        if gt:
-            self._resolved[group_name] = gt
-        return gt
-
-    def broadcast(self, group_name: str, art_package: str, proto_type: str,
-                  **fields) -> None:
-        """Multicast `proto_type` to the WHOLE group `group_name`: encode, then
-        one name-sequence datagram → every bound member's handle_cast. The
-        group_name MUST be the wire type name the members register_cast on; the
-        cast's service_id keys on proto_type so members demux it identically."""
-        gtype = self.resolve(group_name)
-        if not gtype:
-            return
-        payload = self._probe.ctx.codec.encode(art_package, proto_type, **fields)
-        hdr = wire.Header(
-            msg_type=wire.MSG_GEN_CAST,
-            proto_len=len(payload),
-            service_id=wire.service_id(proto_type),
-            correlation_id=0,
-            timestamp_ns=time.time_ns(),
-        )
-        tipc_multicast_send(gtype, wire.frame(hdr, payload))
-
-    # ---- OTP pg:monitor — the PRODUCER side (per-member broadcast) ---------
-    def watch(self, group_name: str) -> list:
-        """PgWatch the group (OTP pg:monitor): the supervisor returns the current
-        member list AND pushes a fresh PgMembership to us on every join/leave.
-        Binds a recv socket at a probe-unique watcher addr for the pushes; caches
-        the member list. Returns the initial [(type,instance), …]."""
-        # A probe-unique watcher addr (distinct from any node bind): reuse the
-        # supervisor group-type space is wrong — use a high synthetic type +
-        # pid-instance so the supervisor's RDM push reaches only us.
-        if group_name not in self._watch:
-            wt = 0x80050000 | (os.getpid() & 0xFFFF)
-            wi = self._watch_seq
-            self._watch_seq += 1
-            srv = TipcDgramServer(wt, wi,
-                                  lambda h, p, g=group_name: self._on_membership_push(g, h, p))
-            srv.start()
-            self._watch[group_name] = {"type": wt, "instance": wi,
-                                       "server": srv, "members": []}
-        w = self._watch[group_name]
-        rep = self._probe.call_addr(
-            SUP_TIPC_TYPE, SUP_TIPC_INSTANCE, _SUP_PKG,
-            "system_supervisor_PgWatchReq", "system_supervisor_PgMembership",
-            2.0,
-            node_name=self._node_name, group_name=group_name,
-            watcher_type=w["type"], watcher_instance=w["instance"], watch=True)
-        w["members"] = self._members_from_reply(rep)
-        self._resolved[group_name] = int(rep.get("group_type", 0)) or \
-            self._resolved.get(group_name, 0)
-        return list(w["members"])
-
-    def members(self, group_name: str) -> list:
-        w = self._watch.get(group_name)
-        return list(w["members"]) if w else []
-
-    def broadcast_members(self, group_name: str, art_package: str,
-                          proto_type: str, **fields) -> int:
-        """OTP `[Pid ! Msg || Pid <- pg:get_members]` — cast `proto_type` to EACH
-        watched member's {type,instance}. Must watch() first. Returns the member
-        count sent to."""
-        w = self._watch.get(group_name)
-        if not w:
-            return 0
-        payload = self._probe.ctx.codec.encode(art_package, proto_type, **fields)
-        hdr = wire.Header(
-            msg_type=wire.MSG_GEN_CAST,
-            proto_len=len(payload),
-            service_id=wire.service_id(proto_type),
-            correlation_id=0,
-            timestamp_ns=time.time_ns(),
-        )
-        frame = wire.frame(hdr, payload)
-        members = list(w["members"])
-        for (t, i) in members:
-            tipc_unicast_send(t, i, frame)
-        return len(members)
-
-    @staticmethod
-    def _members_from_reply(rep: dict) -> list:
-        """Extract [(tipc_type, tipc_instance), …] from a decoded PgMembership."""
-        out = []
-        for m in rep.get("members", []) or []:
-            if isinstance(m, dict):
-                out.append((int(m.get("tipc_type", 0)),
-                            int(m.get("tipc_instance", 0))))
-            else:
-                out.append((int(getattr(m, "tipc_type", 0)),
-                            int(getattr(m, "tipc_instance", 0))))
-        return out
-
-    def _on_membership_push(self, group_name: str, hdr, payload: bytes) -> None:
-        """A PgMembership push from the supervisor — refresh the cached members."""
-        try:
-            rep = self._probe.ctx.codec.decode(
-                _SUP_PKG, "system_supervisor_PgMembership", payload)
-        except Exception:
-            return
-        w = self._watch.get(group_name)
-        if w is not None:
-            w["members"] = self._members_from_reply(rep)
-
     # ---- received-frame dispatch ------------------------------------------
     def _on_group_frame(self, group_name: str, hdr: wire.Header,
                         payload: bytes) -> None:
         # Decode via the group_name = the wire proto type. The codec needs the
         # defining package; the caller registered it at join() via the handler's
-        # closure, so decode against the supervisor pkg is wrong here — instead
-        # decode is deferred to the handler when it knows the type. We decode
-        # eagerly when we can resolve the type from the known-msgs registry.
+        # closure. We decode eagerly when we can resolve the type from the
+        # known-msgs registry; else hand the handler the raw payload.
         m = self._probe._known_msgs.get(hdr.service_id)
         if m is not None:
             fields = self._probe.ctx.codec.decode(
                 m.art_package, m.proto_type, payload)
         else:
             fields = {"_raw": payload, "_service_id": hdr.service_id}
-        with self._lock:
-            self._inboxes.setdefault(group_name, []).append(fields)
         h = self._handlers.get(group_name)
         if h:
             h(fields)
-
-    def arm_decode(self, group_name: str, art_package: str) -> None:
-        """Make group `group_name`'s wire type decodable on receipt — register it
-        in the probe's known-msgs by service_id (group_name IS the proto type)."""
-        self._probe.arm_known(art_package, group_name)
-
-    def await_broadcast(self, group_name: str, want: int = 1,
-                        timeout: float = 5.0) -> list:
-        """Block until >= `want` casts have arrived on `group_name` (or timeout).
-        Returns the decoded casts. Use to assert a multicast landed on N members."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self._lock:
-                got = list(self._inboxes.get(group_name, []))
-            if len(got) >= want:
-                return got
-            time.sleep(0.05)
-        with self._lock:
-            return list(self._inboxes.get(group_name, []))
 
     # ---- keepalive (so the watchdog keeps our membership) -----------------
     def start_keepalive(self, period_s: float = 1.0) -> None:
@@ -314,7 +168,3 @@ class PgProbe:
         self.stop_keepalive()
         for name in list(self._groups.keys()):
             self.leave(name)
-        for w in self._watch.values():           # stop watch recv servers
-            try: w["server"].stop()
-            except Exception: pass
-        self._watch.clear()
