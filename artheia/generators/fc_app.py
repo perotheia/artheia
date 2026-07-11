@@ -1522,10 +1522,13 @@ def generate_fc(
         # State struct (write-once). APP-OWNED — the node's persistent
         # fields are behaviour, not derivable from the .art, so the user
         # owns this file and regen never clobbers it. lib/<Node>.hh
-        # #includes it. (statem nodes carry their data in the FSM holder,
-        # so no per-node state header for them. prebuilt nodes have no user
-        # state — the child binary is third-party; everything is generated.)
-        if not nv.statem and not nv.prebuilt:
+        # #includes it — ATOMIC gen_server nodes only. (statem nodes carry
+        # their data in the FSM holder; prebuilt nodes have no user state —
+        # the child binary is third-party; RUNNABLE nodes have none either:
+        # GenRunnable's do_loop owns its locals and the generated Daemon
+        # header never includes a state file — every runnable _state.hh ever
+        # emitted sat dead on disk, so the scaffold is atomic-only now.)
+        if not nv.statem and not nv.prebuilt and not nv.runnable:
             p = impl_dir / f"{nv.name}_state.hh"
             results[_write(p, env.get_template("state.hh.j2").render(**node_ctx),
                             overwrite=force)].append(str(p))

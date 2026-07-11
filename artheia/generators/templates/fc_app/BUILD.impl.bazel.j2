@@ -15,9 +15,11 @@ package(default_visibility = ["//visibility:public"])
 cc_library(
     name = "{{ model.fc_short }}_state",
     hdrs = [
-{#- statem nodes carry their data in the FSM holder, and prebuilt nodes have no
-    user state (the child binary is third-party) — neither emits a _state.hh. #}
-{%- for n in model.nodes if not n.statem and not n.prebuilt and not n.imported %}
+{#- statem nodes carry their data in the FSM holder, prebuilt nodes have no
+    user state (the child binary is third-party), and runnable nodes keep
+    their working set as do_loop locals (GenRunnable; the Daemon header never
+    includes a state file) — none of them emits a _state.hh. #}
+{%- for n in model.nodes if not n.statem and not n.prebuilt and not n.runnable and not n.imported %}
         "{{ n.name }}_state.hh",
 {%- endfor %}
     ],
