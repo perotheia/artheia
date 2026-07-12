@@ -970,7 +970,8 @@ def _is_test_sender_node(el) -> bool:
 
 def _build_model_view(art_path: Path,
                        cxx_namespace_override: Optional[str] = None,
-                       composition: Optional[str] = None) -> _ModelView:
+                       composition: Optional[str] = None,
+                       package_mode: bool = False) -> _ModelView:
     model = parse_file(str(art_path))
     art_package = model.name or "artheia"
     parts = art_package.split(".")
@@ -1060,8 +1061,25 @@ def _build_model_view(art_path: Path,
             # FC never builds. This is a NARROW shape check (sender-only +
             # uncomposed) so it never drops a real co-resident worker like com's
             # TraceForwarder (a runnable with no ports, not in the composition).
+            #
+            # PACKAGE MODE has NO composition, so `_composed` is empty and EVERY
+            # sender-only atomic looks "uncomposed" — silently dropping a real
+            # broadcast-only PROVIDER (a locator that only casts
+            # LocationEstimateStream). The uncomposed test never applies in a
+            # package: emit the node (a package provider is legitimate) and WARN
+            # so a genuinely-stray tester still gets noticed (silence was the
+            # bug — docs/tasks: artheia-package-atomic-skip).
             if _is_test_sender_node(el) and el.name not in _composed:
-                continue
+                if package_mode:
+                    import sys as _sys
+                    print(
+                        f"artheia gen-app --kind package: node '{el.name}' is a "
+                        f"sender-only atomic (broadcasts, serves nothing) — "
+                        f"emitting it as a provider. If it is a probe-only "
+                        f"tester, exclude it from the package or give it a "
+                        f"server ctl port.", file=_sys.stderr)
+                else:
+                    continue
             # An `extern node` stub carries no body (tipc/ports live in an
             # imported package). Substitute the real node the composition
             # prototype resolves to, so its tipc + identity are available.
@@ -1376,7 +1394,7 @@ def generate_fc(
         out_dir = out_dir / composition
 
     mv = _build_model_view(art_path, cxx_namespace_override=cxx_namespace,
-                           composition=composition)
+                           composition=composition, package_mode=package_mode)
     # Derive the Bazel package prefix from --out, so generated cross-slice
     # labels (main → lib, impl → lib) point at the actual output tree, not
     # the hardcoded `services/<fc>/` it used to assume. Strip any leading
