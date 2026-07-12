@@ -247,6 +247,26 @@ class _NodeView:
                 out.append(op)
         return out
 
+    @property
+    def needs_mux(self) -> bool:
+        """Does this (non-runnable) node need a config_mux binding?
+
+        The mux binding does TWO orthogonal jobs and they must not be
+        conflated: (a) the config-service edge (LogLevelPush /
+        TraceControlPush / ConfigUpdated) — reporting-only; (b) the pg
+        + receiver DEMUX — pg_attach routes joined-group frames into
+        handle_cast, and register_cast wires each inbound type. (b) is
+        needed by ANY node that serves an op, receives data, or
+        pg-consumes — REGARDLESS of reporting. Gating the whole block on
+        `reporting` alone silently drops pg/receiver frames for a
+        reporting=false consumer (the carla_sidecar CarlaAct bug, 2026-
+        07-12: DriveCmd never reached handle_cast). So bind the mux when
+        the node reports OR has a server op OR has a receiver port.
+        """
+        return bool(self.reporting
+                    or self.unique_handler_ops()
+                    or self.unique_receiver_data())
+
     def unique_receiver_data(self) -> list[_DataEl]:
         """Receiver-port data elements, deduplicated by message type.
 

@@ -189,17 +189,22 @@ int main(int argc, char** argv) {
         {{ n.snake }}.log().info("node disabled (params.enabled=false) — not "
             "started; its TIPC address is free for a test/probe to bind");
     } else {
-{% if n.reporting and not n.runnable %}
+{% if n.needs_mux and not n.runnable %}
     if (auto* {{ n.snake }}_cfg = config_mux.bind_node(
             {{ n.snake }}, {{ n.snake }}_type,
             {{ n.snake }}_inst)) {
+{%- if n.reporting %}
+        // Config-service edge — REPORTING-ONLY (a non-reporting node
+        // gets no supervisor control pushes). Kept distinct from the
+        // pg/receiver demux below, which every consumer needs.
         config_mux.register_cast<platform_runtime_LogLevelPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
         // Trace control (#403): supervisor pushes TraceControlPush to flip
         // this node's Tracer kind filter — same path as LogLevelPush.
         config_mux.register_cast<platform_runtime_TraceControlPush>(
             {{ n.snake }}_cfg, {{ n.snake }});
-{%- if n.config %}
+{%- endif %}
+{%- if n.reporting and n.config %}
         // Config update: services/per casts ConfigUpdated when a watched
         // config changes — same framework path; GenServer base handle_cast
         // decodes + dispatches to this node's on_config_update hook (emitted in
@@ -231,8 +236,8 @@ int main(int argc, char** argv) {
         {{ n.snake }}.pg_attach("{{ n.snake }}", {{ n.snake }}_cfg,
                                 {{ n.snake }}_type, {{ n.snake }}_inst);
     } else {
-        {{ n.snake }}.log().warn("config service bind failed; live log-level "
-                                 "push + signal inject disabled");
+        {{ n.snake }}.log().warn("mux bind failed; pg/receiver frames + "
+                                 "live control pushes will not be delivered");
     }
 {% endif %}
 {% if n.reporting and n.runnable %}

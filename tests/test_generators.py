@@ -715,3 +715,28 @@ def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
     # the lib header includes exactly this path
     hdr = (out / "lib" / "MonNode.hh").read_text()
     assert 'impl/MonNode_state.hh' in hdr
+
+
+def test_needs_mux_gates_on_receiver_not_reporting():
+    """A reporting=false node that RECEIVES (pg group or receiver port)
+    must still get the mux binding — the demux (pg_attach + register_cast)
+    is orthogonal to the config-service reporting edge. Regression for the
+    carla_sidecar CarlaAct bug: DriveCmd silently dropped at dispatch."""
+    from artheia.generators.fc_app import _NodeView, _Port, _DataEl
+
+    recv = _Port(name="cmd_in", kind="receiver", iface="DriveCmdFeed",
+                 data=[_DataEl(name="cmd", msg="pkg_DriveCmd")])
+    consumer = _NodeView(name="Act", snake="act", upper="ACT",
+                         tipc_type="0x1", tipc_instance="0",
+                         reporting=False, runnable=False, ports=[recv])
+    assert consumer.needs_mux, "reporting=false receiver must bind the mux"
+
+    rds_only = _NodeView(name="Cam", snake="cam", upper="CAM",
+                         tipc_type="0x2", tipc_instance="0",
+                         reporting=False, runnable=False, ports=[])
+    assert not rds_only.needs_mux, "reporting=false port-less needs no mux"
+
+    reporter = _NodeView(name="Rep", snake="rep", upper="REP",
+                         tipc_type="0x3", tipc_instance="0",
+                         reporting=True, runnable=False, ports=[])
+    assert reporter.needs_mux, "reporting node still binds the mux"
