@@ -354,6 +354,13 @@ class _ModelView:
     proto_package: str            # flattened underscore form (system_services_sm)
     package_subpath: str          # path-form: system/services/sm
     fc_short: str                 # leaf segment: sm
+    # Per-PROCESS identity: the composition name (one main.cc == one process ==
+    # one composition), lowercased. Unique across the compositions of a
+    # multi-process app, so it's what iceoryx Runtime::Init() registers with
+    # RouDi — two RDS-using processes of the SAME cluster must NOT share this
+    # name or the second dies SAME_NAME. Falls back to fc_short for the flat
+    # (single-composition / bare-.art) emit, preserving legacy one-process apps.
+    comp_name: str
     cxx_namespace: str            # one-segment underscore form (matches .pb.h)
                                   # e.g. system_services_sm
     daemon_class: str             # SmDaemon
@@ -1222,6 +1229,11 @@ def _build_model_view(art_path: Path,
         proto_package=proto_pkg,
         package_subpath="/".join(parts),
         fc_short=fc_short,
+        # Per-process RDS/RouDi identity — the composition name (unique per
+        # process) when generating one composition of a multi-process app;
+        # fc_short for the flat emit (composition is None). Lowercased to match
+        # the iceoryx runtime-name convention.
+        comp_name=(composition or fc_short).lower(),
         cxx_namespace=cxx_ns,
         daemon_class=daemon_class,
         state_enum=state_enum,

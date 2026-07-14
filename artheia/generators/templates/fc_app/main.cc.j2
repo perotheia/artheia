@@ -92,7 +92,10 @@ int main(int argc, char** argv) {
     // RDS (Raw Data Stream): register this process with the iceoryx broker
     // (RouDi) ONCE, before any requires_rds node opens a stream. The node's
     // StreamWriter/Reader handles (one per `rds_stream`) connect in its init().
-    ::ara::rds::Runtime::Init("{{ model.fc_short }}");
+    // The runtime name is the COMPOSITION name (one process == one composition):
+    // it must be UNIQUE per process, else a 2nd RDS process of the same cluster
+    // dies SAME_NAME at RouDi. (Falls back to the FC short name for a flat emit.)
+    ::ara::rds::Runtime::Init("{{ model.comp_name }}");
 {%- endif %}
 
     ::theia::runtime::TimerService timers;
