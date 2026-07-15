@@ -41,11 +41,10 @@ def _iter_nodes(model):
 
 
 def _coerce_default(param):
-    v = param.default.value
-    # A QUOTED string literal is a StrLit rule object (grammar) — its `.s` holds
-    # the content. Keep it a string so `string = "true"` stays "true", not a bool.
-    if v.__class__.__name__ == "StrLit":
-        return v.s
+    # unwrap_literal strips the grammar wrappers (a quoted string → its str, so
+    # `string = "true"` stays "true"); then coerce by the param's declared type.
+    from artheia.model import unwrap_literal
+    v = unwrap_literal(param.default)
     if isinstance(v, str) and v in ("true", "false"):
         return v == "true"
     if param.type in ("int32", "int64", "uint32", "uint64"):

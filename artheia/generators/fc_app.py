@@ -761,11 +761,14 @@ def _prebuilt_args_from_ast(node) -> list[str]:
     runnable execvp's the tokens directly. Empty list when there's no `args`
     param (the binary is launched with no arguments).
     """
+    from artheia.model import unwrap_literal
     for p in getattr(node, "params", None) or []:
         if getattr(p, "name", "") != "args":
             continue
-        lit = getattr(p, "default", None)
-        val = getattr(lit, "value", lit)
+        # unwrap_literal strips the ParamLiteral→StrLit wrappers so a quoted
+        # `args = "-c /etc/…"` yields the STRING, not the StrLit repr (which
+        # str()'d to "<textx:artheia.StrLit instance …>" and corrupted argv).
+        val = unwrap_literal(getattr(p, "default", None))
         return str(val).split() if val is not None else []
     return []
 

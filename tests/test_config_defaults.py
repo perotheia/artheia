@@ -89,3 +89,49 @@ def test_config_defaults_artifact():
     # only declared-default fields appear in values; 'plain' is absent.
     assert knob["values"] == {"step": 5, "max_value": 100, "wrap": True,
                               "label": "hi"}
+
+
+# ---- prebuilt-node args + shared unwrap_literal (regression) ---------------
+# A `node prebuilt` carries its argv tail in one `args : string = "..."` param.
+# _prebuilt_args_from_ast must yield the STRING tokens, not the StrLit repr
+# (grammar wraps a quoted string in StrLit; the string is StrLit.s). Regression
+# for the codegen bug where str(ParamLiteral.value) stringified the StrLit
+# object → kDefaultArgs = "<textx:artheia.StrLit instance …>" and corrupted argv.
+
+_PREBUILT_ART = textwrap.dedent("""
+    package test.prebuilt
+
+    node prebuilt Roudi {
+        tipc type=0x8001aa01 instance=0
+        path = "/usr/bin/iox-roudi"
+        params {
+            args : string = "-c /etc/iceoryx/roudi_config.toml"
+        }
+    }
+""")
+
+
+def _roudi_node():
+    m = parse_string(_PREBUILT_ART)
+    for obj in textx.get_children_of_type("NodeDecl", m):
+        if obj.name == "Roudi":
+            return obj
+    raise AssertionError("Roudi node not found")
+
+
+def test_prebuilt_args_render_the_string_not_strlit_repr():
+    from artheia.generators.fc_app import _prebuilt_args_from_ast
+    args = _prebuilt_args_from_ast(_roudi_node())
+    # Whitespace-split argv tokens — the STRING content, never a StrLit repr.
+    assert args == ["-c", "/etc/iceoryx/roudi_config.toml"]
+    assert not any("StrLit" in a for a in args)
+
+
+def test_unwrap_literal_strips_grammar_wrappers():
+    from artheia.model import unwrap_literal
+    node = _roudi_node()
+    args_param = next(p for p in node.params if p.name == "args")
+    # A quoted string → its content (not the StrLit object / its repr).
+    assert unwrap_literal(args_param.default) == "-c /etc/iceoryx/roudi_config.toml"
+    # None-safe.
+    assert unwrap_literal(None) is None

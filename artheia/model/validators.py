@@ -260,14 +260,14 @@ _INT_BITS  = {"int32": 32, "int64": 64}
 
 
 def _coerce_param_literal(literal):
-    v = literal.value
-    # A quoted string literal is wrapped in the StrLit rule (grammar) — its `.s`
-    # is the string content. This is what keeps `string = "true"` a STRING: the
-    # value text alone ("true") is indistinguishable from the bare-keyword bool,
-    # so we key on the RULE, not the text. Return the raw string verbatim.
-    if v.__class__.__name__ == "StrLit":
-        return v.s
-    # A BARE true/false token (BoolLit) → Python bool. NUMBER stays as-is.
+    # unwrap_literal strips the grammar wrappers: a QUOTED string → its str (so
+    # `string = "true"` stays "true", never a bool); a bare true/false token
+    # stays the str 'true'/'false'; a number stays as-is. THEN coerce a bare
+    # bool token to Python bool. Keeping the wrappers in one shared helper stops
+    # this StrLit-vs-bool ambiguity from being re-derived (and mis-derived) per
+    # call site (see _prebuilt_args_from_ast, which stringified the StrLit repr).
+    from artheia.model import unwrap_literal
+    v = unwrap_literal(literal)
     if isinstance(v, str) and v in ("true", "false"):
         return v == "true"
     return v
