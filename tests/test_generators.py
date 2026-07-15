@@ -740,3 +740,56 @@ def test_needs_mux_gates_on_receiver_not_reporting():
                          tipc_type="0x3", tipc_instance="0",
                          reporting=True, runnable=False, ports=[])
     assert reporter.needs_mux, "reporting node still binds the mux"
+
+
+# ---- [conflate] receiver port → register_cast(..., conflate=true) ----------
+# A `receiver … conflate` port marks its message type keep-latest; gen-app must
+# emit register_cast<Msg>(..., /*conflate=*/true) so a stale queued cast is
+# overwritten in place (docs/tasks genserver-conflating-mailbox).
+import textwrap as _textwrap
+
+_CONFLATE_ART = _textwrap.dedent("""
+    package test.conflateport
+
+    message Corridor { uint32 seq = 1 }
+    interface senderReceiver CorridorStream {
+        data Corridor corridor
+    }
+
+    node atomic Planner {
+        tipc type=0x8001cc01 instance=0
+        reporting = false
+        ports {
+            receiver corridor_in requires CorridorStream conflate
+        }
+    }
+""")
+
+_NOCONFLATE_ART = _CONFLATE_ART.replace(" conflate\n", "\n")
+
+
+def _gen_main(art_text):
+    import tempfile
+    import os
+    from artheia.generators.fc_app import generate_fc
+    d = tempfile.mkdtemp()
+    src = os.path.join(d, "m.art")
+    with open(src, "w") as f:
+        f.write(art_text)
+    out = os.path.join(d, "gen")
+    generate_fc(src, out)
+    with open(os.path.join(out, "main", "main.cc")) as f:
+        return f.read()
+
+
+def test_conflate_port_emits_conflate_true():
+    main_cc = _gen_main(_CONFLATE_ART)
+    assert "register_cast<Corridor>" in main_cc
+    # the conflate flag is passed
+    assert "/*conflate=*/true" in main_cc
+
+
+def test_noconflate_port_omits_conflate_flag():
+    main_cc = _gen_main(_NOCONFLATE_ART)
+    assert "register_cast<Corridor>" in main_cc
+    assert "/*conflate=*/true" not in main_cc

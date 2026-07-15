@@ -381,6 +381,13 @@ SenderPort:
 ReceiverPort:
     'receiver' name=ID 'requires' iface=[SenderReceiverInterface|FQN]
     (reliability=Reliability)?
+    // `conflate`: keep-latest mailbox for this port's message type. A periodic
+    // STATE-LIKE feed (corridor/pose/frame — only the newest matters) into a
+    // consumer slower than the producer would otherwise queue every stale cast;
+    // gen-app emits register_cast<Msg>(..., conflate=true) so an unhandled cast
+    // is overwritten in place. Only for senderReceiver `in` data casts (never
+    // clientServer calls). See docs/tasks genserver-conflating-mailbox.
+    (conflate?='conflate')?
 ;
 
 Reliability:

@@ -178,7 +178,11 @@ int main(int argc, char** argv) {
             {{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
 {%- for d in n.unique_receiver_data() %}
+{%- if d.conflate %}
+        config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }}, /*conflate=*/true);
+{%- else %}
         config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+{%- endif %}
 {%- endfor %}
         // PG (manual pub/sub, OTP shape): attach this statem node's PgClient to
         // its demux binding (joined-group frames + PgMembership pushes route into

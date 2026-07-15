@@ -95,6 +95,10 @@ class _DataEl:
     proto_subpath: str = ""
     # Leaf .proto module name (the FC short name of the defining package).
     proto_leaf: str = ""
+    # Keep-latest: this data type arrived on a `receiver … conflate` port, so
+    # gen-app emits register_cast<Msg>(..., conflate=true) — a stale queued cast
+    # is overwritten in place (docs/tasks genserver-conflating-mailbox).
+    conflate: bool = False
     # True when the defining package is platform.runtime — its codec is already
     # THEIA_DECLARE_REMOTE_CODEC'd in the runtime headers, so Codecs.hh must skip
     # re-declaring it (would be an ODR clash). The .pb.h include is still needed.
@@ -715,8 +719,14 @@ def _port_view(p) -> _Port:
         return _Port(name=p.name, kind="sender", iface=p.iface.name,
                      data=_sr_data(p.iface))
     if kind == "ReceiverPort":
+        data = _sr_data(p.iface)
+        # A `receiver … conflate` port marks EVERY message type it requires as
+        # keep-latest (the port's whole senderReceiver interface is the feed).
+        if getattr(p, "conflate", False):
+            for d in data:
+                d.conflate = True
         return _Port(name=p.name, kind="receiver", iface=p.iface.name,
-                     data=_sr_data(p.iface))
+                     data=data)
     if kind == "ServerPort":
         return _Port(name=p.name, kind="server", iface=p.iface.name,
                      ops=_cs_ops(p.iface))

@@ -226,7 +226,13 @@ int main(int argc, char** argv) {
             {{ n.snake }}_cfg, {{ n.snake }});
 {%- endfor %}
 {%- for d in n.unique_receiver_data() %}
+{%- if d.conflate %}
+        // `conflate` port → keep-latest mailbox: a stale queued {{ d.msg }} cast
+        // is overwritten in place (slow-consumer feed, only the newest matters).
+        config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }}, /*conflate=*/true);
+{%- else %}
         config_mux.register_cast<{{ qns }}{{ d.msg }}>({{ n.snake }}_cfg, {{ n.snake }});
+{%- endif %}
 {%- endfor %}
         // ---- process groups (pg): MANUAL pub/sub control (OTP pg shape) ----
         // The node OWNS its membership: pg_join<T>() to CONSUME a group,
