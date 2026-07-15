@@ -51,6 +51,10 @@ def _coerce_field_default(kind: str, default):
     if default is None:
         return None
     v = getattr(default, "value", None)
+    # A QUOTED string literal is a StrLit rule object — its `.s` is the content.
+    # Keep string-typed fields defaulting to "true"/"false"/"123" as strings.
+    if v.__class__.__name__ == "StrLit":
+        return v.s
     if isinstance(v, str) and v in ("true", "false"):
         return v == "true"
     if kind in ("int32", "int64", "uint32", "uint64", "sint32", "sint64"):

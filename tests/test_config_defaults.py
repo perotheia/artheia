@@ -50,10 +50,13 @@ def _knobs_msg(m):
 def test_grammar_parses_field_defaults():
     msg = _knobs_msg(_model())
     by = {f.name: f for f in msg.fields}
-    # textX coerces NUMBER -> int; STRING/BoolLit stay strings.
+    # NUMBER -> int; a bare BoolLit stays the token string 'true'/'false'; a
+    # QUOTED string is wrapped in the StrLit rule (so `string = "true"` keeps its
+    # string type — the coercer keys on the rule, not the stringified value).
     assert by["step"].default.value == 5
-    assert by["label"].default.value == "hi"
-    assert by["wrap"].default.value == "true"
+    assert by["label"].default.value.__class__.__name__ == "StrLit"
+    assert by["label"].default.value.s == "hi"
+    assert by["wrap"].default.value == "true"       # bare bool token
     assert by["plain"].default is None   # no default declared
 
 

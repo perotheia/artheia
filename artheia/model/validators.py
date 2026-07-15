@@ -261,6 +261,13 @@ _INT_BITS  = {"int32": 32, "int64": 64}
 
 def _coerce_param_literal(literal):
     v = literal.value
+    # A quoted string literal is wrapped in the StrLit rule (grammar) — its `.s`
+    # is the string content. This is what keeps `string = "true"` a STRING: the
+    # value text alone ("true") is indistinguishable from the bare-keyword bool,
+    # so we key on the RULE, not the text. Return the raw string verbatim.
+    if v.__class__.__name__ == "StrLit":
+        return v.s
+    # A BARE true/false token (BoolLit) → Python bool. NUMBER stays as-is.
     if isinstance(v, str) and v in ("true", "false"):
         return v == "true"
     return v
@@ -326,6 +333,31 @@ def _validate_params(model):
                         f"node {node.name}: parameter '{p.name}' default {val!r} "
                         f"is out of range for {p.type}"
                     )
+
+
+# ---- RDS opt-in --------------------------------------------------------------
+
+def _validate_rds(model):
+    """WARN when a node declares an `rds { stream … }` block but forgot the
+    `requires_rds` opt-in. Without it, gen-app's main.cc omits Runtime::Init —
+    so the node's StreamWriter/Reader hits iceoryx with no registered runtime and
+    the PROCESS aborts (POSH__RUNTIME_NO_NAME_PROVIDED, exit -6), which trips the
+    supervisor's restart intensity and takes the whole tree down. A nasty silent
+    footgun (docs/backlog): the .art looks complete, the failure is at runtime.
+    Non-fatal — a warning, since a stream block with no reader/writer use is
+    harmless until a handler actually opens it."""
+    import sys as _sys
+    for node in _iter(model, "NodeDecl"):
+        streams = getattr(node, "rds_streams", None) or []
+        if streams and not getattr(node, "requires_rds", False):
+            names = ", ".join(getattr(s, "name", "?") for s in streams)
+            print(
+                f"artheia: WARNING — node '{node.name}' declares an rds block "
+                f"(stream(s): {names}) but NOT `requires_rds`. gen-app will omit "
+                f"ara::rds::Runtime::Init in its main → the process aborts at "
+                f"runtime when a stream is opened (iceoryx "
+                f"POSH__RUNTIME_NO_NAME_PROVIDED). Add `requires_rds` to the node.",
+                file=_sys.stderr)
 
 
 # ---- gateway routes --------------------------------------------------------
@@ -428,6 +460,7 @@ def _on_model(model, metamodel):
     _validate_composition_refs(model)
     _validate_connections(model)
     _validate_params(model)
+    _validate_rds(model)
     _validate_gateway_routes(model)
 
 

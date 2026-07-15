@@ -762,7 +762,9 @@ def _summarize(el, *, resolved: dict | None = None) -> str:
         ret = f" returns {el.returns.name}" if el.returns else ""
         return f"operation {el.name}({params}){ret}"
     if kind == "NodeParam":
-        return f"param {el.name}:{el.type} = {el.default.value}"
+        _dv = el.default.value
+        _dv = _dv.s if _dv.__class__.__name__ == "StrLit" else _dv
+        return f"param {el.name}:{el.type} = {_dv}"
     return f"{kind} {getattr(el, 'name', '?')}"
 
 

@@ -506,10 +506,22 @@ ParamType:
     | 'bool'   | 'string'
 ;
 
+// A param default. Split by TYPE so the quote distinction survives: a QUOTED
+// string ("true"/"false"/"123") stays a string, distinct from a bare bool/number
+// token — the stringified `.value` alone can't tell them apart. StrLit wraps the
+// STRING branch in its own rule; the coercer keys on the rule class, not on
+// re-parsing the value text. StrLit is tried FIRST so a quoted "true" matches it,
+// not the bare-keyword BoolLit.
 ParamLiteral:
-      value=BoolLit
-    | value=STRING
+      value=StrLit
+    | value=BoolLit
     | value=NUMBER
+;
+
+// A quoted string literal — a distinct rule so `type(default.value).__name__ ==
+// 'StrLit'` marks "this was quoted" no matter what characters it held.
+StrLit:
+    s=STRING
 ;
 
 BoolLit:
