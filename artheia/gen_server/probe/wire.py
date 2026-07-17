@@ -20,8 +20,10 @@ _HDR = struct.Struct("<BBHQHHIH2s")
 HEADER_SIZE = _HDR.size  # 24
 assert HEADER_SIZE == 24, f"header must be 24 bytes, got {HEADER_SIZE}"
 
-# TipcClient::send_frame caps payload at 256 bytes today (NodeRef.cc).
-MAX_PAYLOAD = 256
+# Mirrors kMaxCastPayload in platform/runtime/include/TheiaMsgHeader.hh — the
+# cap TipcClient::send_frame enforces on an outbound frame. Keep in step with
+# that constant; it is the wire contract, not a probe-local choice.
+MAX_PAYLOAD = 4 * 1024
 
 
 def service_id(proto_type_name: str) -> int:
