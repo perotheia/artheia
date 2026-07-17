@@ -48,6 +48,19 @@ class Codec:
 
     def __init__(self, proto_root: str | Path):
         self.proto_root = Path(proto_root)
+        # FRAMEWORK FALLBACK ROOT: a workspace proto may embed platform
+        # common types (platform.msgs.geometry.Vec2 → `import
+        # "platform/msgs/geometry/geometry.proto"`), which live under
+        # $THEIA_ROOT/platform/proto — not the workspace root. Resolve
+        # imports across both roots (workspace first) so the probe keeps
+        # working on such packages (env.sh exports THEIA_ROOT; without it
+        # behavior is unchanged).
+        self._roots = [self.proto_root]
+        _tr = os.environ.get("THEIA_ROOT")
+        if _tr:
+            _fp = Path(_tr) / "platform" / "proto"
+            if _fp.is_dir():
+                self._roots.append(_fp)
         if Codec._SHARED_OUT is None:
             Codec._SHARED_OUT = Path(tempfile.mkdtemp(prefix="artheia_probe_pb2_"))
         self._out = Codec._SHARED_OUT
@@ -107,7 +120,7 @@ class Codec:
         import hashlib
         targets = []
         for rel in all_rel:
-            src = self.proto_root / rel
+            src = self._resolve_rel(rel)
             digest = hashlib.sha256(src.read_bytes()).hexdigest() if src.exists() else ""
             prev = Codec._COMPILED.get(str(rel))
             if prev is None:
@@ -128,7 +141,7 @@ class Codec:
         if targets:
             rc = protoc.main([
                 "",
-                f"-I{self.proto_root}",
+                *[f"-I{r}" for r in self._roots],
                 f"--python_out={self._out}",
                 *targets,
             ])
@@ -152,9 +165,19 @@ class Codec:
         self._modules[flat_pkg] = module
         return module
 
+    def _resolve_rel(self, rel) -> "Path":
+        """First include root containing `rel` (workspace first, then the
+        framework fallback); the workspace path if none — the caller's
+        exists() check then reports it missing against the primary root."""
+        for r in self._roots:
+            p = Path(r) / rel
+            if p.exists():
+                return p
+        return self.proto_root / rel
+
     def _collect_proto_imports(self, proto_abs: "Path") -> "list":
-        """Return the import paths (relative to proto_root) a .proto declares,
-        recursively, so they get compiled alongside it."""
+        """Return the import paths (relative to an include root) a .proto
+        declares, recursively, so they get compiled alongside it."""
         from pathlib import Path as _P
         seen: set = set()
         out: list = []
@@ -172,7 +195,7 @@ class Codec:
                         continue
                     seen.add(rel)
                     out.append(_P(rel))
-                    dep_abs = self.proto_root / rel
+                    dep_abs = self._resolve_rel(rel)
                     if dep_abs.exists():
                         walk(dep_abs)
 
