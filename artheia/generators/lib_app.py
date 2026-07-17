@@ -406,6 +406,15 @@ def generate_lib(
     results[_write(p,
                    env.get_template("Log.hh.j2").render(**ctx),
                    overwrite=True)].append(str(p))
+    # RDS stream specs (FC-wide) — only when a node declared `requires_rds`.
+    # Same gate and template as fc/package mode: a standalone app with an RDS
+    # node needs the make_*_writer/reader helpers too, or it must hand-copy the
+    # workspace-generated header.
+    if any(n.requires_rds for n in mv.nodes):
+        p = lib_dir / "RdsStreams.hh"
+        results[_write(p,
+                       env.get_template("RdsStreams.hh.j2").render(**ctx),
+                       overwrite=True)].append(str(p))
 
     # Vendor the Theia runtime into <out>/runtime/. Headers + .cc files
     # both come along so the app's CMake build links a self-contained
