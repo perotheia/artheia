@@ -108,6 +108,25 @@ def _copy_runtime(dst: Path) -> list[str]:
             shutil.copy2(f, t)
             wrote.append(str(t))
 
+    # ara/rds headers → <dst>/runtime/include/ara/rds/. RdsStreams.hh (emitted
+    # for a requires_rds node) #includes "ara/rds/stream.h"; vendoring it here
+    # puts it on the same PUBLIC include root the CMake already exposes
+    # (runtime/include), so no CMake change is needed. These headers are
+    # header-only + self-contained (they include only each other + <memory>);
+    # iceoryx is abstracted behind ITransport ("applications never see iceoryx")
+    # so it is a LINK-time dep the app supplies (its RouDi/iceoryx libs),
+    # NOT a compile-time one for the header. A lib with no RDS node still gets
+    # them (harmless, unincluded) — cheaper than gating the copy.
+    rds_inc = _WORKSPACE_ROOT / "services" / "rds" / "include" / "ara" / "rds"
+    if rds_inc.is_dir():
+        rds_target = dst / "include" / "ara" / "rds"
+        rds_target.mkdir(parents=True, exist_ok=True)
+        for f in rds_inc.iterdir():
+            if f.is_file() and f.suffix in (".h", ".hh"):
+                t = rds_target / f.name
+                shutil.copy2(f, t)
+                wrote.append(str(t))
+
     return wrote
 
 
@@ -415,6 +434,16 @@ def generate_lib(
         results[_write(p,
                        env.get_template("RdsStreams.hh.j2").render(**ctx),
                        overwrite=True)].append(str(p))
+
+    # main.example.cc — a COPY-FROM reference showing the correct per-node mux
+    # wiring (bind_node + register_cast + pg_attach, two-pass boot). --kind lib
+    # emits no main slice (the app owns its main), and omitting any wiring fails
+    # SILENTLY, so ship a worked example the app author copies from. NOT built
+    # (the CMakeLists doesn't list it); regenerated every run.
+    p = out_dir / "main.example.cc"
+    results[_write(p,
+                   env.get_template("main.example.cc.j2").render(**ctx),
+                   overwrite=True)].append(str(p))
 
     # Vendor the Theia runtime into <out>/runtime/. Headers + .cc files
     # both come along so the app's CMake build links a self-contained
