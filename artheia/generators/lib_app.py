@@ -177,7 +177,10 @@ _CMAKELISTS_TEMPLATE = """\
 # `add_subdirectory(platform)` and links against the {fc_short}_lib
 # target below.
 cmake_minimum_required(VERSION 3.16)
-project({fc_short}_platform CXX)
+# C AND CXX: the generated nanopb messages under generated/ are C sources
+# (.pb.c). A CXX-only project cannot determine a link language for the
+# protos target and the configure step fails outright.
+project({fc_short}_platform C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
