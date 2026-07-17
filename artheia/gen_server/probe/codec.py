@@ -89,18 +89,30 @@ class Codec:
             package_subdir(art_package) / f"{leaf}.proto",        # (1) dotted
             _Path(flat_pkg) / f"{leaf}.proto",                    # (2) flat dir
         ]
+        # Resolve the package proto across ALL include roots (workspace first,
+        # then the $THEIA_ROOT framework fallback) — same list the import
+        # collection + protoc -I use. Without this a CONSUMING-workspace app
+        # proto (its tree lives under the workspace root, while proto_root may be
+        # the framework's platform/proto — e.g. a probe/seed tool built against
+        # THEIA_ROOT) is never found even though its root is in _roots.
         proto_rel = None
         for cand in candidates:
-            if (self.proto_root / cand).exists():
-                proto_rel = cand
+            for r in self._roots:
+                if (Path(r) / cand).exists():
+                    proto_rel = cand
+                    break
+            if proto_rel is not None:
                 break
         if proto_rel is None:
             raise FileNotFoundError(
                 f"no .proto for package {art_package!r} at any of "
-                + ", ".join(str(self.proto_root / c) for c in candidates)
+                + ", ".join(str(Path(r) / c)
+                            for c in candidates for r in self._roots)
             )
         subdir = proto_rel.parent
-        proto_abs = self.proto_root / proto_rel
+        # Read the proto from whichever root actually holds it (workspace or the
+        # framework fallback), not blindly from proto_root.
+        proto_abs = self._resolve_rel(proto_rel)
 
         from grpc_tools import protoc  # compiler only; no gRPC runtime imported
 
