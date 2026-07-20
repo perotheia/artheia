@@ -91,6 +91,16 @@ class ProcessLayer(Identifiable):
     machine: ConfigField = field(default_factory=lambda: Default(None))  # target machine name
     machines: object = field(default_factory=empty_set)         # set of machine names (fan-out)
     depends_on: object = field(default_factory=empty_set)            # process names
+    # Static DATA resources baked into this FC's deb (LUTs, tables — NOT code, NOT
+    # config). A DEPLOYMENT concern (declared here in the manifest, never in .art),
+    # python-package style. Each descriptor is a ("<src>", "<dest>") pair: src = the
+    # workspace path to the file, dest = the relative path under the FC's share dir.
+    # `theia dist` stages each to /opt/theia/share/<fc>/data/<dest> in the FC's deb,
+    # and the FC reads it at runtime via theia::runtime::share_dir(<fc>). A SCALAR
+    # tuple (Default(()) → right-biased replace, not set-union, so a rig delta
+    # overrides the whole set) — and a TUPLE (not a list/dict) so the frozen
+    # ProcessTarget stays HASHABLE when it lands in the processes frozenset.
+    resources: ConfigField = field(default_factory=lambda: Default(()))  # tuple[(src,dest)]
 
     @property
     def _resolver(self):
@@ -111,6 +121,7 @@ class ProcessTarget:
     machine: str
     machines: frozenset
     depends_on: frozenset
+    resources: object            # list[{src,dest}] — data files baked into the FC deb
 
 
 @identifiable_dataclass

@@ -1942,6 +1942,12 @@ def serialize_manifest_cmd(
             "mem_limit_bytes": p.mem_limit_bytes,
             "machine": on_machine if on_machine is not None else p.machine,
             "depends_on": sorted(p.depends_on),
+            # Static data resources baked into this FC's deb (LUTs, tables).
+            # p.resources is a tuple of (src, dest) pairs (hashable in the target);
+            # emit as [{src,dest}] for the dist deb-staging step. Empty for a
+            # code-only FC. `theia dist` stages each to /opt/theia/share/<fc>/data/.
+            "resources": [{"src": s, "dest": d}
+                          for (s, d) in (getattr(p, "resources", ()) or ())],
         }
 
     def _svc_dict(s) -> dict:
