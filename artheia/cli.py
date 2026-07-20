@@ -1781,6 +1781,18 @@ def _load_deployment(target: str, attr: str | None):
     "this CLI value is the robust source `theia manifest <target>` passes (the "
     "target dir name), surviving the layer fold that can clobber a model name.",
 )
+@click.option(
+    "--tipc-netid",
+    "tipc_netid",
+    type=int,
+    default=None,
+    help="The rig's TIPC netid (cluster id) — the per-rig ISOLATION knob so two "
+    "clusters on a shared L2 / shared host netns can't cross-talk. A DECLARED "
+    "deploy fact: emitted to machines.json + each machine.json, and theia-run.sh "
+    "reads it from config/machines.json (the deploy env THEIA_TIPC_NETID still "
+    "overrides). Omit → no netid in the manifest (the TIPC default / a colony -e "
+    "override still applies). One value applies cluster-wide.",
+)
 def serialize_manifest_cmd(
     target: str,
     attr: str | None,
@@ -1788,6 +1800,7 @@ def serialize_manifest_cmd(
     arch_override: str | None,
     os_override: str | None,
     rig_name: str | None,
+    tipc_netid: int | None,
 ) -> None:
     """Import a DeploymentLayer module, validate it, and write per-machine JSON."""
     import json
@@ -1959,6 +1972,10 @@ def serialize_manifest_cmd(
             # Unset falls back to the machine name, so a lone "central" is its own
             # master with no authoring change.
             "role": getattr(m, "role", None) or m.name,
+            # The rig's TIPC netid (cluster isolation), if declared (--tipc-netid).
+            # theia-run.sh applies it before the first bind; the deploy env
+            # THEIA_TIPC_NETID overrides. Absent (None) → key omitted, TIPC default.
+            **({"tipc_netid": tipc_netid} if tipc_netid is not None else {}),
         }
 
     def _app_dict(a, on_machine=None) -> dict:
@@ -2092,6 +2109,11 @@ def serialize_manifest_cmd(
     machine_index_map = {m.name: machine_index[m.name] for m in machines}
     machines_doc = {"machines": role_names, "rig": rig, "apps": swps,
                     "role_map": role_map, "machine_index": machine_index_map}
+    # The rig's TIPC netid (cluster isolation), rig-WIDE — theia-run.sh reads it
+    # from here (config/machines.json) and applies it before the first TIPC bind.
+    # Declared via --tipc-netid; omitted when unset (TIPC default / colony -e).
+    if tipc_netid is not None:
+        machines_doc["tipc_netid"] = tipc_netid
     # Convenience: the primary SWP at top level (single-SWP rigs, the common case)
     # so consumers don't have to index `apps`.
     if len(swps) == 1:

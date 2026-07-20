@@ -503,26 +503,10 @@ def test_manifest_empty_application_emits_set_not_dict(tmp_path):
     assert app.processes == frozenset()
 
 
-def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch):
-    """serialize-manifest must slice an application's process list to EACH
-    machine — not copy the whole set onto the host board and leave the other
-    board empty. Regression for the L4-B split (central+compute): the `services`
-    AA spans both boards, but application.json gave central all 16 processes
-    (incl. compute's ucm/shwa) and compute an EMPTY applications list, because
-    _app_dict copied a.processes verbatim and m_apps filtered only on
-    host_machine. Each board's application.json must list exactly the processes
-    bound there."""
-    import sys
-
-    from artheia.cli import serialize_manifest_cmd
-    # serialize_manifest_cmd is a click Command; .callback is the raw function.
-    _serialize = serialize_manifest_cmd.callback
-
-    # A tiny two-machine rig: one `services` app whose processes split across
-    # central (a, b) + compute (c) — the shape of split_rig (host_machine on
-    # central, but c runs on compute).
-    mod = tmp_path / "_split_fixture.py"
-    mod.write_text(
+def _write_split_fixture(tmp_path):
+    """A tiny two-machine rig (central: a,b; compute: c) — shared by the
+    serialize-manifest slice + tipc_netid tests. Writes _split_fixture.py."""
+    (tmp_path / "_split_fixture.py").write_text(
         "from artheia.manifest.algebra import Explicit\n"
         "from artheia.manifest.deployment import (\n"
         "    DeploymentLayer, ExecutionLayer, ProcessLayer,\n"
@@ -553,10 +537,31 @@ def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch
         "    }),\n"
         ")\n"
     )
+
+
+def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch):
+    """serialize-manifest must slice an application's process list to EACH
+    machine — not copy the whole set onto the host board and leave the other
+    board empty. Regression for the L4-B split (central+compute): the `services`
+    AA spans both boards, but application.json gave central all 16 processes
+    (incl. compute's ucm/shwa) and compute an EMPTY applications list, because
+    _app_dict copied a.processes verbatim and m_apps filtered only on
+    host_machine. Each board's application.json must list exactly the processes
+    bound there."""
+    import sys
+
+    from artheia.cli import serialize_manifest_cmd
+    # serialize_manifest_cmd is a click Command; .callback is the raw function.
+    _serialize = serialize_manifest_cmd.callback
+
+    # A tiny two-machine rig: one `services` app whose processes split across
+    # central (a, b) + compute (c) — the shape of split_rig (host_machine on
+    # central, but c runs on compute).
+    _write_split_fixture(tmp_path)
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_split_fixture", None)
     out = tmp_path / "out"
-    _serialize("_split_fixture", "RIG", str(out), None, None, None)
+    _serialize("_split_fixture", "RIG", str(out), None, None, None, None)
 
     central = json.loads((out / "central" / "application.json").read_text())
     compute = json.loads((out / "compute" / "application.json").read_text())
@@ -567,6 +572,36 @@ def test_serialize_manifest_slices_application_per_machine(tmp_path, monkeypatch
     # compute: the app is PRESENT (not empty) with only its process — c.
     assert [x["name"] for x in compute["applications"]] == ["services"]
     assert compute["applications"][0]["processes"] == ["c"]
+
+
+def test_serialize_manifest_tipc_netid(tmp_path, monkeypatch):
+    """--tipc-netid <n> declares the rig's TIPC cluster-isolation netid in the
+    manifest: machines.json (rig-wide, where theia-run.sh reads it) AND each
+    machine.json. Omitting it leaves the key OUT (not null/0) — TIPC default."""
+    import sys
+
+    from artheia.cli import serialize_manifest_cmd
+    _serialize = serialize_manifest_cmd.callback
+    _write_split_fixture(tmp_path)  # central + compute
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("_split_fixture", None)
+
+    # WITH --tipc-netid 4747
+    out = tmp_path / "out_net"
+    _serialize("_split_fixture", "RIG", str(out), None, None, None, 4747)
+    mdoc = json.loads((out / "machines.json").read_text())
+    assert mdoc.get("tipc_netid") == 4747, "netid rig-wide in machines.json"
+    for m in ("central", "compute"):
+        md = json.loads((out / m / "machine.json").read_text())
+        assert md.get("tipc_netid") == 4747, f"netid in {m}/machine.json"
+
+    # WITHOUT it → key omitted everywhere (not present, not 0/null)
+    sys.modules.pop("_split_fixture", None)
+    out2 = tmp_path / "out_nonet"
+    _serialize("_split_fixture", "RIG", str(out2), None, None, None, None)
+    assert "tipc_netid" not in json.loads((out2 / "machines.json").read_text())
+    assert "tipc_netid" not in json.loads(
+        (out2 / "central" / "machine.json").read_text())
 
 
 def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
@@ -615,7 +650,7 @@ def test_serialize_manifest_emits_run_on_start_false(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path))
     sys.modules.pop("_ros_fixture", None)
     out = tmp_path / "out"
-    _serialize("_ros_fixture", "RIG", str(out), None, None, None)
+    _serialize("_ros_fixture", "RIG", str(out), None, None, None, None)
 
     execu = json.loads((out / "central" / "executor.json").read_text())
 
@@ -668,7 +703,7 @@ def test_serialize_manifest_per_machine_arch_os(tmp_path, monkeypatch):
     sys.modules.pop("_mixed_fixture", None)
     out = tmp_path / "out"
     # central=aarch64/bookworm, compute=aarch64/focal (sorted name order: central, compute)
-    _serialize("_mixed_fixture", "RIG", str(out), "aarch64,aarch64", "bookworm,focal", None)
+    _serialize("_mixed_fixture", "RIG", str(out), "aarch64,aarch64", "bookworm,focal", None, None)
 
     cen = json.loads((out / "central" / "machine.json").read_text())
     com = json.loads((out / "compute" / "machine.json").read_text())
