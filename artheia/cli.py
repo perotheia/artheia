@@ -1482,32 +1482,47 @@ def gen_fc(art_file: str, out_dir: str, proto_out: str | None, force: bool,
 @main.command(
     "gen-fc-lib",
     help="Generate a NO-MAIN C++ node library from an .art — the linkable form of "
-    "gen-fc (a sub-generator: same node emission, no executable). A ROS-style "
-    "PACKAGE: lib + impl + proto built ONCE as a Bazel cc_library; a COMPOSITION "
-    "that imports the package owns the main and links this lib (= the old "
-    "`gen-app --kind package`). Bazel-only — an external CMake build drives Bazel "
-    "from outside rather than us emitting a vendored CMake tree.")
+    "gen-fc (a sub-generator: same node emission, no executable). Bazel-only. Two "
+    "layouts:\n\n"
+    "  default: a ROS-style PACKAGE — lib + impl + proto built ONCE as a Bazel "
+    "cc_library; a COMPOSITION in a workspace imports it, owns the main, links "
+    "this lib against the WORKSPACE runtime (= the old `gen-app --kind package`).\n\n"
+    "  --vendored: a SELF-CONTAINED slice — lib + impl + a VENDORED copy of "
+    "platform/runtime/ + generated protos + a BUILD.bazel so it compiles as a "
+    "standalone Bazel artifact with NO @pero_theia workspace dep + a main.cc."
+    "example showing full runtime init (= the old `gen-app --kind lib`, now Bazel "
+    "not CMake).")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
 @click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir for the lib/impl slices (typically src/).")
+              help="Output dir for the lib/impl slices (typically src/; with "
+              "--vendored also runtime/ + generated/ + BUILD.bazel).")
 @click.option("--proto-out", "proto_out", default=None,
               type=click.Path(file_okay=False),
-              help="Where the generated .proto lands (+ its self-contained BUILD).")
+              help="Where the generated .proto lands. --vendored defaults it to "
+              "<out>/generated/ (self-contained).")
+@click.option("--vendored", is_flag=True, default=False,
+              help="Emit the self-contained vendored-runtime layout (standalone "
+              "Bazel artifact) instead of the workspace-linked package cc_library.")
 @click.option("--force", is_flag=True, default=False,
               help="Overwrite the write-once impl slices.")
 @click.option("--ns", "cxx_namespace", default=None,
               help="C++ namespace (e.g. `ara::<pkg>`). Default: the .art package "
               "as one underscore-flat identifier.")
 def gen_fc_lib(art_file: str, out_dir: str, proto_out: str | None,
-               force: bool, cxx_namespace: str | None) -> None:
-    from .generators.fc_app import generate_fc
-    try:
-        results = generate_fc(art_file, out_dir, proto_out=proto_out,
-                              cxx_namespace=cxx_namespace, composition=None,
-                              force=force, package_mode=True)
-    except ValueError as e:
-        click.secho(f"error: {e}", fg="red", err=True)
-        sys.exit(2)
+               vendored: bool, force: bool, cxx_namespace: str | None) -> None:
+    if vendored:
+        from .generators.lib_app import generate_lib
+        results = generate_lib(art_file, out_dir, proto_out=proto_out,
+                               cxx_namespace=cxx_namespace, force=force)
+    else:
+        from .generators.fc_app import generate_fc
+        try:
+            results = generate_fc(art_file, out_dir, proto_out=proto_out,
+                                  cxx_namespace=cxx_namespace, composition=None,
+                                  force=force, package_mode=True)
+        except ValueError as e:
+            click.secho(f"error: {e}", fg="red", err=True)
+            sys.exit(2)
     _echo_gen_results(results)
 
 
