@@ -1315,120 +1315,31 @@ def gen_autosar_system(
 
 @main.command(
     "gen-app",
-    help="Generate a C++ application scaffold. Three modes:\n\n"
-    "  --kind fc (default): single-file Adaptive Functional Cluster. "
-    "Targets a single services/system/<fc>/package.art (the spec layer). "
-    "Emits the lib / main / impl slices into a separate impl-layer dir "
-    "(convention: services/<fc>/, KEPT DISTINCT from the spec dir to "
-    "avoid mixing .art with generated code) plus the .proto under "
-    "platform/proto/. Bazel build.\n\n"
-    "  --kind lib: standalone application's platform/ slice. Targets a "
-    "single vendor/<app>/system/<app>/component.art. Emits lib + impl "
-    "+ a VENDORED copy of platform/runtime/ + generated/<proto> + a "
-    "top-level CMakeLists.txt so the app builds standalone on its target "
-    "(e.g. RPi4) with plain CMake — no Bazel, no workspace deps. "
-    "NO main/ — the app owns its own main and runnable lifecycle.\n\n"
-    "(The legacy --kind psp arm was retired; vendor signal-routing apps "
-    "now use --kind lib.)",
+    context_settings={"ignore_unknown_options": True},
+    help="DEPRECATED — split into the gen-fc family. Use `gen-fc` (was --kind fc), "
+    "`gen-fc-lib` (was --kind package), or `gen-fc-lib --vendored` (was --kind "
+    "lib). This shim hard-errors and points to the replacement.",
 )
-@click.option("--kind", type=click.Choice(["fc", "lib", "package"]), default="fc",
-              help="Generator mode (default: fc). "
-              "fc — Adaptive FC daemon (lib + impl + main, Bazel). "
-              "lib — standalone app's platform/ slice (lib + impl + "
-              "vendored runtime + CMake, NO main — the app owns its own "
-              "main and runnable lifecycle). "
-              "package — a ROS-style node PACKAGE (lib + impl + proto, NO main): "
-              "nodes + protocol built ONCE as a linkable cc_library; a COMPOSITION "
-              "that imports the package assembles its nodes into an executable and "
-              "links this lib.")
-# --- shared --
-@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir. For fc mode: services/<fc>/ (the impl "
-              "layer — keep DISTINCT from the .art spec at "
-              "services/system/<fc>/).")
-# --- fc-mode flags --
-@click.argument("art_file", required=False,
-                type=click.Path(exists=True, dir_okay=False))
-@click.option("--proto-out", "proto_out", default=None,
-              type=click.Path(file_okay=False),
-              help="(fc mode) Where the generated .proto lands "
-              "(typically platform/proto/). The .proto goes under "
-              "<proto-out>/<art-pkg-as-path>/<leaf>.proto. After this "
-              "step, run nanopb_generator on the .proto to emit .pb.{c,h}.")
-@click.option("--force", is_flag=True, default=False,
-              help="(fc mode) Overwrite write-once slices (impl + "
-              "executor.py).")
-@click.option("--ns", "cxx_namespace", default=None,
-              help="(fc mode) C++ namespace for the generated daemon, "
-              "accepts nested colon-colon segments. Examples: "
-              "`--ns ara::sm` for AUTOSAR Adaptive FC conformity, "
-              "`--ns vendor::myapp` for vendor scaffolding. Default: "
-              "the .art package as one underscore-flat identifier "
-              "(e.g. `system_services_sm`).")
-@click.option("--composition", "composition", default=None,
-              help="(fc mode) Emit ONE app for a SINGLE composition — only "
-              "that composition's prototyped node-types get lib/impl/main/"
-              "proto. With --composition, --out is the PARENT dir and the "
-              "composition name is appended as the app dir (Demo3WayP3 → "
-              "<out>/Demo3WayP3), so you name the where (--out) and the "
-              "what (--composition) once. Run once per composition for a "
-              "per-process layout. Cross-process peers in other "
-              "compositions are reached by TipcAddr, not constructed in "
-              "this app's main. Default (unset): --out is the app dir and "
-              "every node in the .art is emitted (legacy). Ignored by "
-              "--kind lib.")
-def gen_app(kind: str,
-            out_dir: str,
-            art_file: str | None,
-            proto_out: str | None,
-            force: bool,
-            cxx_namespace: str | None,
-            composition: str | None) -> None:
-    if kind == "lib":
-        if not art_file:
-            click.secho(
-                "error: --kind lib requires an .art file as positional arg",
-                fg="red", err=True)
-            sys.exit(2)
-        from .generators.lib_app import generate_lib
-        results = generate_lib(art_file, out_dir,
-                               proto_out=proto_out,
-                               cxx_namespace=cxx_namespace,
-                               force=force)
-    else:  # fc | package (package = fc-shaped, minus the main slice)
-        if not art_file:
-            click.secho(
-                f"error: --kind {kind} requires an .art file as positional arg",
-                fg="red", err=True)
-            sys.exit(2)
-        from .generators.fc_app import generate_fc
-        try:
-            results = generate_fc(art_file, out_dir,
-                                  proto_out=proto_out,
-                                  cxx_namespace=cxx_namespace,
-                                  composition=composition,
-                                  force=force,
-                                  package_mode=(kind == "package"))
-        except ValueError as e:
-            # Unknown / empty --composition. generate_fc raises a clear
-            # message naming the available compositions.
-            click.secho(f"error: {e}", fg="red", err=True)
-            sys.exit(2)
-    for path in results.get("wrote", []):
-        click.echo(f"  wrote:      {path}")
-    for path in results.get("overwrote", []):
-        click.echo(f"  overwrote:  {path}")
-    for path in results.get("skipped-exists", []):
-        click.echo(f"  skipped:    {path}  (exists; --force to overwrite)")
-
-    # Cross-FC TIPC address sanity (fc mode only). The FC we just (re)generated
-    # may have introduced an address that collides with ANOTHER FC's node — the
-    # single-file parse validator can't see that. Re-run the system-wide
-    # netgraph check over the canonical aggregators and WARN if it clashes
-    # (gen-app is a dev tool; the hard gate is `theia manifest`'s
-    # check-addresses). Best-effort: skipped when the aggregators aren't found.
-    if kind == "fc":
-        _warn_cross_fc_address_collision(art_file)
+@click.option("--kind", default="fc")
+@click.argument("rest", nargs=-1, type=click.UNPROCESSED)
+def gen_app(kind: str, rest: tuple) -> None:
+    """Removed. gen-app was overloaded (--kind fc|lib|package); it is now the
+    named gen-fc family. Hard-errors with the exact replacement command."""
+    repl = {
+        "fc": "gen-fc <component.art> --out <dir> [--proto-out <dir>] "
+              "[--composition <name>] [--ns <ns>] [--force]",
+        "package": "gen-fc-lib <package.art> --out <dir> [--proto-out <dir>] "
+                   "[--ns <ns>] [--force]",
+        "lib": "gen-fc-lib --vendored <package.art> --out <dir> [--proto-out <dir>] "
+               "[--ns <ns>] [--force]",
+    }.get(kind, "gen-fc / gen-fc-lib")
+    click.secho(
+        "error: `gen-app` was removed — it split into the gen-fc family.\n"
+        f"  --kind {kind} → artheia {repl}\n"
+        "  (gen-fc = FC/composition app with main; gen-fc-lib = no-main node lib; "
+        "--vendored = self-contained standalone artifact.)",
+        fg="red", err=True)
+    sys.exit(2)
 
 
 # Shared result printer for the gen-fc family (gen-fc / gen-fc-lib), so the new

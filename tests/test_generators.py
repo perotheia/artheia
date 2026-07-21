@@ -712,7 +712,7 @@ def test_serialize_manifest_per_machine_arch_os(tmp_path, monkeypatch):
 
 
 def test_gen_lib_emits_state_header_for_plain_node(tmp_path):
-    """`gen-app --kind lib` must emit impl/<Node>_state.hh for a plain atomic
+    """`gen-fc-lib --vendored` must emit impl/<Node>_state.hh for a plain atomic
     node — the shared Daemon.hh.j2 lib header `#include`s it, so a missing
     _state.hh makes the standalone CMake lib fail to compile. Regression: lib
     mode emitted _handlers.cc but not _state.hh (fc mode always did both)."""

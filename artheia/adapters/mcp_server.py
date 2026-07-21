@@ -2,7 +2,7 @@
 
 Mirrors the shape of ``rf_theia/adapters/mcp_server.py`` (FastMCP over
 stdio), retargeted at the artheia generator surface so Claude Code can drive
-``gen-app`` / ``gen-manifest`` / ``gen-proto`` / ``parse`` / … directly as an
+``gen-fc`` / ``gen-manifest`` / ``gen-proto`` / ``parse`` / … directly as an
 API instead of shelling out.
 
 Run with::
@@ -29,7 +29,7 @@ Tools exposed:
   - ``describe``         — full ``--help`` for one command
   - ``parse``            — resolve/validate an .art tree (the smoke test)
   - ``check_addresses``  — assert TIPC (type,instance) uniqueness
-  - ``gen_app``          — C++ FC/app scaffold (lib/main/impl + proto)
+  - ``gen_fc``/``gen_fc_lib`` — C++ FC app / node lib (lib/main/impl + proto)
   - ``gen_manifest``     — Functional-Cluster manifest module
   - ``gen_proto``        — .proto per message
   - ``gen_schema``       — combined config-schema JSON
@@ -58,7 +58,7 @@ mcp = FastMCP(
     "artheia",
     instructions=(
         "Artheia DSL + generator CLI as an API. Resolve/validate .art system "
-        "trees and run the gen-* code generators (gen-app, gen-manifest, "
+        "trees and run the gen-* code generators (gen-fc, gen-manifest, "
         "gen-proto, gen-schema, gen-netgraph, …) directly. Paths are resolved "
         "against the workspace root (the dir Claude Code runs in). Use "
         "list_generators to discover commands and describe for one command's "
@@ -143,7 +143,7 @@ def describe(command: str) -> str:
     """Show the full ``--help`` (usage, arguments, options) for one command.
 
     Args:
-        command: A name from ``list_generators`` (e.g. ``gen-app`` or a
+        command: A name from ``list_generators`` (e.g. ``gen-fc`` or a
                  nested ``executor/emit``).
     """
     argv = command.split("/") + ["--help"]
@@ -181,31 +181,60 @@ def check_addresses(art_file: str) -> str:
 
 
 @mcp.tool()
-def gen_app(
+def gen_fc(
     art_file: str,
     out: str,
-    kind: str = "fc",
     composition: str = "",
     proto_out: str = "",
     force: bool = False,
 ) -> str:
-    """Generate a C++ application scaffold (lib/ main/ impl/ + the .proto).
+    """Generate a C++ FC / composition app (lib/ main/ impl/ + the .proto).
 
-    The write-once ``impl/<Node>_handlers.cc`` and ``impl/<Node>_state.hh``
-    are NOT overwritten unless ``force`` is set (which clobbers both).
+    The head of the gen-fc family. The write-once ``impl/<Node>_handlers.cc`` and
+    ``impl/<Node>_state.hh`` are NOT overwritten unless ``force`` is set.
 
     Args:
         art_file:    The component/package .art for the FC (or app).
-        out:         Output dir (fc mode: the impl-layer dir, e.g. ``apps``).
-        kind:        ``fc`` (default, Bazel daemon) or ``lib`` (standalone
-                     app slice + vendored runtime + CMake, no main).
+        out:         Output dir (the impl-layer dir, e.g. ``apps``).
         composition: Restrict generation to one composition by name.
-        proto_out:   Where the generated .proto lands (default per-mode).
+        proto_out:   Where the generated .proto lands.
         force:       Overwrite the write-once impl slices.
     """
-    argv = ["gen-app", "--kind", kind, "--out", out]
+    argv = ["gen-fc", "--out", out]
     if composition:
         argv += ["--composition", composition]
+    if proto_out:
+        argv += ["--proto-out", proto_out]
+    if force:
+        argv += ["--force"]
+    argv.append(art_file)
+    return _run(argv)
+
+
+@mcp.tool()
+def gen_fc_lib(
+    art_file: str,
+    out: str,
+    proto_out: str = "",
+    vendored: bool = False,
+    force: bool = False,
+) -> str:
+    """Generate a NO-MAIN C++ node library (the linkable form of gen-fc).
+
+    Default: a Bazel node cc_library (the old ``--kind package``). ``vendored``:
+    a self-contained slice with a vendored runtime that builds standalone (the
+    old ``--kind lib``, now Bazel).
+
+    Args:
+        art_file:  The package .art for the node lib.
+        out:       Output dir for the lib/impl slices (e.g. ``src``).
+        proto_out: Where the generated .proto lands.
+        vendored:  Emit the self-contained vendored-runtime layout.
+        force:     Overwrite the write-once impl slices.
+    """
+    argv = ["gen-fc-lib", "--out", out]
+    if vendored:
+        argv += ["--vendored"]
     if proto_out:
         argv += ["--proto-out", proto_out]
     if force:
@@ -274,7 +303,7 @@ def gen(command: str, args: list[str] | None = None) -> str:
     gen-etcd, gen-config-defaults, import-dbc, audit-manifest, …).
 
     Args:
-        command: A command name from ``list_generators`` (``gen-app``); a
+        command: A command name from ``list_generators`` (``gen-fc``); a
                  nested ``group/sub`` is split on ``/`` (``executor/emit``).
         args:    Arguments/options exactly as on the CLI, already tokenized
                  (e.g. ``["system/system.art", "--out", "build/schema.json"]``).
