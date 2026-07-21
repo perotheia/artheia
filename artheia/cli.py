@@ -1431,6 +1431,86 @@ def gen_app(kind: str,
         _warn_cross_fc_address_collision(art_file)
 
 
+# Shared result printer for the gen-fc family (gen-fc / gen-fc-lib), so the new
+# verbs render identically to the (deprecated) gen-app.
+def _echo_gen_results(results: dict) -> None:
+    for path in results.get("wrote", []):
+        click.echo(f"  wrote:      {path}")
+    for path in results.get("overwrote", []):
+        click.echo(f"  overwrote:  {path}")
+    for path in results.get("skipped-exists", []):
+        click.echo(f"  skipped:    {path}  (exists; --force to overwrite)")
+
+
+@main.command(
+    "gen-fc",
+    help="Generate a C++ Adaptive Functional Cluster / composition app from an "
+    ".art (lib + impl + main, Bazel). Per-COMPOSITION / per-FC codegen — the "
+    "head of the gen-fc family (gen-fc-lib is the no-main variant; gen-param + "
+    "gen-config-defaults are its per-FC config sub-generators). Emits lib/impl/"
+    "main into <out> and the .proto under <proto-out>. This is the code "
+    "generator; scaffold the repo first with `theia init`.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Output dir for the lib/main/impl slices.")
+@click.option("--proto-out", "proto_out", default=None,
+              type=click.Path(file_okay=False),
+              help="Where the generated .proto lands (typically platform/proto/). "
+              "None skips proto emission.")
+@click.option("--force", is_flag=True, default=False,
+              help="Overwrite the write-once impl slices.")
+@click.option("--ns", "cxx_namespace", default=None,
+              help="C++ namespace (e.g. `ara::sm`). Default: the .art package as "
+              "one underscore-flat identifier.")
+@click.option("--composition", "composition", default=None,
+              help="Emit ONE app for a SINGLE composition (per-process layout). "
+              "Default: auto-iterate every composition the .art declares.")
+def gen_fc(art_file: str, out_dir: str, proto_out: str | None, force: bool,
+           cxx_namespace: str | None, composition: str | None) -> None:
+    from .generators.fc_app import generate_fc
+    try:
+        results = generate_fc(art_file, out_dir, proto_out=proto_out,
+                              cxx_namespace=cxx_namespace, composition=composition,
+                              force=force, package_mode=False)
+    except ValueError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+    _echo_gen_results(results)
+    _warn_cross_fc_address_collision(art_file)
+
+
+@main.command(
+    "gen-fc-lib",
+    help="Generate a NO-MAIN C++ node library from an .art — the linkable form of "
+    "gen-fc (a sub-generator: same node emission, no executable). A ROS-style "
+    "PACKAGE: lib + impl + proto built ONCE as a Bazel cc_library; a COMPOSITION "
+    "that imports the package owns the main and links this lib (= the old "
+    "`gen-app --kind package`). Bazel-only — an external CMake build drives Bazel "
+    "from outside rather than us emitting a vendored CMake tree.")
+@click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
+              help="Output dir for the lib/impl slices (typically src/).")
+@click.option("--proto-out", "proto_out", default=None,
+              type=click.Path(file_okay=False),
+              help="Where the generated .proto lands (+ its self-contained BUILD).")
+@click.option("--force", is_flag=True, default=False,
+              help="Overwrite the write-once impl slices.")
+@click.option("--ns", "cxx_namespace", default=None,
+              help="C++ namespace (e.g. `ara::<pkg>`). Default: the .art package "
+              "as one underscore-flat identifier.")
+def gen_fc_lib(art_file: str, out_dir: str, proto_out: str | None,
+               force: bool, cxx_namespace: str | None) -> None:
+    from .generators.fc_app import generate_fc
+    try:
+        results = generate_fc(art_file, out_dir, proto_out=proto_out,
+                              cxx_namespace=cxx_namespace, composition=None,
+                              force=force, package_mode=True)
+    except ValueError as e:
+        click.secho(f"error: {e}", fg="red", err=True)
+        sys.exit(2)
+    _echo_gen_results(results)
+
+
 def _warn_cross_fc_address_collision(art_file: str | None) -> None:
     """Best-effort cross-FC TIPC collision warning after gen-app. Walks up from
     the .art to find the workspace root (the dir holding system/services/
