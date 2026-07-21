@@ -1359,15 +1359,17 @@ def _echo_gen_results(results: dict) -> None:
     ".art (lib + impl + main, Bazel). Per-COMPOSITION / per-FC codegen — the "
     "head of the gen-fc family (gen-fc-lib is the no-main variant; gen-param + "
     "gen-config-defaults are its per-FC config sub-generators). Emits lib/impl/"
-    "main into <out> and the .proto under <proto-out>. This is the code "
-    "generator; scaffold the repo first with `theia init`.")
+    "main into <out> and the .proto under <proto-out>. In a `theia init` "
+    "workspace `--out apps --proto-out proto` are the defaults, so the bare "
+    "`artheia gen-fc system/<app>/component.art` just works.")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir for the lib/main/impl slices.")
-@click.option("--proto-out", "proto_out", default=None,
+@click.option("--out", "out_dir", default="apps", type=click.Path(file_okay=False),
+              help="Output dir for the lib/main/impl slices (default: apps — the "
+              "workspace convention).")
+@click.option("--proto-out", "proto_out", default="proto",
               type=click.Path(file_okay=False),
-              help="Where the generated .proto lands (typically platform/proto/). "
-              "None skips proto emission.")
+              help="Where the generated .proto lands (default: proto — the "
+              "workspace tree). Pass '' / --proto-out= to skip proto emission.")
 @click.option("--force", is_flag=True, default=False,
               help="Overwrite the write-once impl slices.")
 @click.option("--ns", "cxx_namespace", default=None,
@@ -1379,6 +1381,7 @@ def _echo_gen_results(results: dict) -> None:
 def gen_fc(art_file: str, out_dir: str, proto_out: str | None, force: bool,
            cxx_namespace: str | None, composition: str | None) -> None:
     from .generators.fc_app import generate_fc
+    proto_out = proto_out or None   # explicit --proto-out= skips proto emission
     try:
         results = generate_fc(art_file, out_dir, proto_out=proto_out,
                               cxx_namespace=cxx_namespace, composition=composition,
@@ -1404,13 +1407,13 @@ def gen_fc(art_file: str, out_dir: str, proto_out: str | None, force: bool,
     "example showing full runtime init (= the old `gen-app --kind lib`, now Bazel "
     "not CMake).")
 @click.argument("art_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--out", "out_dir", required=True, type=click.Path(file_okay=False),
-              help="Output dir for the lib/impl slices (typically src/; with "
-              "--vendored also runtime/ + generated/ + BUILD.bazel).")
+@click.option("--out", "out_dir", default=None, type=click.Path(file_okay=False),
+              help="Output dir for the lib/impl slices. Default: src for a package, "
+              ". (the repo root) with --vendored.")
 @click.option("--proto-out", "proto_out", default=None,
               type=click.Path(file_okay=False),
-              help="Where the generated .proto lands. --vendored defaults it to "
-              "<out>/generated/ (self-contained).")
+              help="Where the generated .proto lands (default: proto for a package; "
+              "--vendored defaults it to <out>/generated/ self-contained).")
 @click.option("--vendored", is_flag=True, default=False,
               help="Emit the self-contained vendored-runtime layout (standalone "
               "Bazel artifact) instead of the workspace-linked package cc_library.")
@@ -1419,16 +1422,21 @@ def gen_fc(art_file: str, out_dir: str, proto_out: str | None, force: bool,
 @click.option("--ns", "cxx_namespace", default=None,
               help="C++ namespace (e.g. `ara::<pkg>`). Default: the .art package "
               "as one underscore-flat identifier.")
-def gen_fc_lib(art_file: str, out_dir: str, proto_out: str | None,
+def gen_fc_lib(art_file: str, out_dir: str | None, proto_out: str | None,
                vendored: bool, force: bool, cxx_namespace: str | None) -> None:
     if vendored:
         from .generators.lib_app import generate_lib
-        results = generate_lib(art_file, out_dir, proto_out=proto_out,
+        # A vendored lib is a whole repo — default --out to the repo root.
+        results = generate_lib(art_file, out_dir or ".",
+                               proto_out=(proto_out or None),
                                cxx_namespace=cxx_namespace, force=force)
     else:
         from .generators.fc_app import generate_fc
+        # A package's proto defaults to the workspace `proto/` tree (its
+        # self-contained proto BUILD needs it); explicit --proto-out= skips.
+        pkg_proto = "proto" if proto_out is None else (proto_out or None)
         try:
-            results = generate_fc(art_file, out_dir, proto_out=proto_out,
+            results = generate_fc(art_file, out_dir or "src", proto_out=pkg_proto,
                                   cxx_namespace=cxx_namespace, composition=None,
                                   force=force, package_mode=True)
         except ValueError as e:
