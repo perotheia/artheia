@@ -204,6 +204,10 @@ package(default_visibility = ["//visibility:public"])
 # Logger/Clock). Its RPC wire header is the runtime's own TheiaMsgHeader — no
 # gateway dep. The generated/ include root carries the runtime control proto's
 # nanopb header (runtime.pb.h) which a few runtime units #include.
+# nanopb is a HOST dep, exactly like the framework runtime: pb.h from the system
+# include path (`.bazelrc: build:linux --copt=-I/usr/include/nanopb`, stamped by
+# `theia init`) + the static lib as a linkopt — NOT an @nanopb bazel module (which
+# doesn't cleanly expose a cc_library). See platform/runtime/BUILD.bazel.
 cc_library(
     name = "platform_runtime",
     srcs = glob(["runtime/src/*.cc"]) + glob(["generated/platform_runtime/*.pb.c"]),
@@ -214,7 +218,7 @@ cc_library(
     ]),
     includes = ["runtime/include", "generated"],
     copts = ["-fPIC", "-std=c++17"],
-    deps = ["@nanopb"],
+    linkopts = ["-lpthread", "-l:libprotobuf-nanopb.a"],
 )
 
 # ── Generated app + imported protos — generated/**/*.pb.c ────────────────
@@ -229,7 +233,7 @@ cc_library(
     hdrs = glob(["generated/**/*.pb.h"]),
     includes = ["generated"],
     copts = ["-fPIC"],
-    deps = [":platform_runtime", "@nanopb"],
+    deps = [":platform_runtime"],
 )
 
 # ── Lib slice — the generated node headers (header-only) ─────────────────
