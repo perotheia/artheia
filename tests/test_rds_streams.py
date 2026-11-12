@@ -82,3 +82,64 @@ def test_from_on_a_writer_is_rejected():
             rds { stream s { role=writer from=other chunk_size=64 } }
         }
         """)
+
+
+# ---- per-PROTOTYPE writers (two prototypes of one writer node) -----------------
+
+_TWO = """
+package system.twocam
+node atomic Cam {
+    tipc type=0xD0B10101 instance=0
+    requires_rds
+    rds { stream frames { role=writer chunk_size=1024 history=2 } }
+}
+node atomic Viewer {
+    tipc type=0xD0B10102 instance=0
+    requires_rds
+    rds {
+        stream frames { role=reader from=cam_left.frames  chunk_size=1024 history=2 }
+        stream other  { role=reader from=cam_right.frames chunk_size=1024 history=2 }
+    }
+}
+composition TwoCams {
+    prototype Cam cam_left
+    prototype Cam cam_right
+    prototype Viewer viewer
+}
+"""
+
+
+def _gen_two(tmp_path):
+    from click.testing import CliRunner
+    from artheia.cli import main
+    art = tmp_path / "system" / "twocam" / "package.art"
+    art.parent.mkdir(parents=True)
+    art.write_text(_TWO)
+    res = CliRunner().invoke(main, [
+        "gen-fc", str(art), "--composition", "TwoCams", "--out", str(tmp_path / "out"),
+        "--proto-out", str(tmp_path / "proto"), "--ns", "ara::twocam"])
+    assert res.exit_code == 0, res.output
+    return tmp_path / "out" / "TwoCams"
+
+
+def test_main_constructs_and_names_every_prototype(tmp_path):
+    main_cc = (_gen_two(tmp_path) / "main" / "main.cc").read_text()
+    assert "Cam cam_left;" in main_cc and "Cam cam_right;" in main_cc
+    assert 'cam_left.set_node_name("cam_left");' in main_cc
+    assert 'cam_right.set_node_name("cam_right");' in main_cc
+
+
+def test_writer_member_keys_on_the_runtime_name(tmp_path):
+    hh = (_gen_two(tmp_path) / "lib" / "Cam.hh").read_text()
+    assert 'owner_instance(rds_node_name_, "frames")' in hh
+    assert "make_frames_writer() const" in hh
+
+
+def test_reader_members_open_each_writer_prototype(tmp_path):
+    hh = (_gen_two(tmp_path) / "lib" / "Viewer.hh").read_text()
+    assert '"/Cam_left/frames"' in hh and '"/Cam_right/frames"' in hh
+
+
+def test_flat_accessors_are_emitted_once_per_stream_name(tmp_path):
+    rs = (_gen_two(tmp_path) / "lib" / "RdsStreams.hh").read_text()
+    assert rs.count("inline ::ara::rds::StreamSpec frames_spec()") == 1

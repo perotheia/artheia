@@ -16,8 +16,15 @@
 namespace {{ model.cxx_namespace }} {
 namespace rds_streams {
 
+// PREFER the node members (<node>.make_<s>_writer() / _reader(), <s>_spec()):
+// they key a written stream on the node's RUNTIME prototype name, so two
+// prototypes of one writer get two streams. These flat functions are keyed at
+// generation time and kept for existing callers; one per stream NAME (the first
+// node that declares it).
+{% set _seen = namespace(names=[]) -%}
 {% for n in model.nodes if n.requires_rds -%}
-{% for s in n.rds_streams %}
+{% for s in n.rds_streams if s.name not in _seen.names %}
+{%- set _seen.names = _seen.names + [s.name] %}
 // {{ n.name }}.{{ s.name }} — role={{ s.role }}, instance "{{ s.instance }}",
 // chunk_size={{ s.chunk_size }} history={{ s.history }}.
 {%- if s.from %}

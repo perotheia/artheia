@@ -126,10 +126,15 @@ int main(int argc, char** argv) {
     // beat, so non-reporting nodes simply never appear here.
     std::vector<std::unique_ptr<::theia::runtime::HeartbeatPublisher>> heartbeats;
 {% endif %}
-{% for n in model.nodes %}
+{% for n in model.instances %}
 {%- set cls = n.qual_name if n.imported else n.name %}
 {%- set qns = (n.qual_name.rsplit('::', 1)[0] ~ '::') if n.imported else '' %}
     {{ cls }} {{ n.snake }};
+{%- if n.requires_rds %}
+    // RDS: the node's runtime identity = this PROTOTYPE name; the streams it
+    // writes are keyed on it (two prototypes of one writer -> two streams).
+    {{ n.snake }}.set_node_name("{{ n.snake }}");
+{%- endif %}
     // RUNTIME NODE IDENTITY = the PROTOTYPE name ("{{ n.snake }}") — the name the
     // manifest/supervisor domain uses everywhere (executor.json art_nodes, the
     // --tipc arg keys, config/<proc>.json `nodes` sections, `tdb ps` rows). For a
@@ -276,7 +281,7 @@ int main(int argc, char** argv) {
     // and get the reply pumped — init() runs on a fully-live stack, OTP-style.
     config_mux.start();
 {% endif %}
-{% for n in model.nodes %}
+{% for n in model.instances %}
 {%- set cls = n.qual_name if n.imported else n.name %}
     // PASS 2 — start the node thread (runs init()/1) now that the mux pumps,
     // then apply post-start settings (affinity) + the liveness heartbeat.
@@ -320,7 +325,7 @@ int main(int argc, char** argv) {
 {% if model.nodes | selectattr("reporting") | rejectattr("runnable") | list %}
     config_mux.stop();
 {% endif %}
-{% for n in model.nodes %}
+{% for n in model.instances %}
     {{ n.snake }}.stop("signal");
 {% endfor %}
     return 0;

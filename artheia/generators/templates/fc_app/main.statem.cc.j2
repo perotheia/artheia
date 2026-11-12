@@ -100,10 +100,15 @@ int main(int argc, char** argv) {
     // own start() below.
     std::vector<std::unique_ptr<::theia::runtime::HeartbeatPublisher>> heartbeats;
 {% endif %}
-{% for n in model.nodes %}
+{% for n in model.instances %}
 {%- set cls = n.qual_name if n.imported else n.name %}
 {%- set qns = (n.qual_name.rsplit('::', 1)[0] ~ '::') if n.imported else '' %}
     {{ cls }} {{ n.snake }};
+{%- if n.requires_rds %}
+    // RDS: the node's runtime identity = this PROTOTYPE name; the streams it
+    // writes are keyed on it (two prototypes of one writer -> two streams).
+    {{ n.snake }}.set_node_name("{{ n.snake }}");
+{%- endif %}
     // Per-node logger: tagged [#{{ n.snake }}] (the PROTOTYPE name — the runtime
     // node identity, matching executor.json/--tipc/config keys + `tdb ps`),
     // sink chosen by $THEIA_LOGGER. Installed BEFORE start so init/do_* log
@@ -221,7 +226,7 @@ int main(int argc, char** argv) {
 {% if model.nodes | selectattr("reporting") | list %}
     config_mux.stop();
 {% endif %}
-{% for n in model.nodes %}
+{% for n in model.instances %}
     {{ n.snake }}.stop("signal");
 {% endfor %}
     return 0;

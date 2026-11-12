@@ -11,6 +11,9 @@
 #include "GenServer.hh"
 #include "NodeRef.hh"   // cast(self, msg, TipcAddr) — pg broadcast fan-out
 #include "PgClient.hh"  // OTP-pg broadcast fan-out (sender-port broadcast_*)
+{%- if node.requires_rds %}
+#include "ara/rds/stream.h"   // StreamWriter/Reader + owner_instance (requires_rds)
+{%- endif %}
 #include "Log.hh"      // sibling — per-FC ContextLogger + kLogTag
 #include "{{ model.fc_short }}_codecs.hh"   // FC-wide inbound RemoteCodecs (#387)
 #include "{{ model.package_subpath }}/{{ model.fc_short }}.pb.h"
@@ -81,6 +84,33 @@ using {{ op.rep_msg }} = {{ op.rep_proto }};
 class {{ n.name }} : public ::theia::runtime::GenServer<{{ n.name }}, {{ n.name }}State> {
 public:
     static constexpr const char* kNodeName = "{{ n.snake }}";
+{%- if n.requires_rds %}
+
+    // ---- RDS (requires_rds) -------------------------------------------------
+    // This node's RUNTIME identity: its PROTOTYPE name, set by main.cc
+    // (set_node_name) before start(); kNodeName until then. A stream this node
+    // WRITES is keyed on it ("/<Prototype>/<stream>"), so two prototypes of one
+    // writer node publish on two streams. Use these members, not the flat
+    // rds_streams:: functions (those are keyed at generation time).
+    void set_node_name(std::string name) { rds_node_name_ = std::move(name); }
+    const std::string& node_name() const { return rds_node_name_; }
+{%- for s in n.rds_streams %}
+    // rds stream `{{ s.name }}`: role={{ s.role }}{% if s.from %}, reads the writer {{ s.from }}{% endif %},
+    // chunk_size={{ s.chunk_size }} history={{ s.history }}.
+    ::ara::rds::StreamSpec {{ s.name }}_spec() const {
+        return ::ara::rds::resolve_instance(
+{%- if s.from %}
+            "{{ s.instance }}",
+{%- else %}
+            ::ara::rds::owner_instance(rds_node_name_, "{{ s.name }}"),
+{%- endif %}
+            {{ s.chunk_size }}u, {{ s.history }}u);
+    }
+    ::ara::rds::Stream{{ "Writer" if s.role == "writer" else "Reader" }} make_{{ s.name }}_{{ s.role }}() const {
+        return ::ara::rds::Stream{{ "Writer" if s.role == "writer" else "Reader" }}({{ s.name }}_spec());
+    }
+{%- endfor %}
+{%- endif %}
     static constexpr uint32_t kTipcType     = {{ n.tipc_type }}u;
     static constexpr uint32_t kTipcInstance = {{ n.tipc_instance }}u;
 
@@ -249,6 +279,9 @@ private:
     // watch cache, and the supervisor CALL channel. Attached via pg_attach().
     ::theia::runtime::PgClient pg_;
     std::set<uint16_t> pg_watched_;          // groups this node already pg_watch'd
+{%- if n.requires_rds %}
+    std::string rds_node_name_{kNodeName};   // runtime identity (prototype name)
+{%- endif %}
     uint32_t pg_self_type_{0};               // this node's bound addr (watcher addr)
     uint32_t pg_self_instance_{0};
 };

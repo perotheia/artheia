@@ -26,7 +26,8 @@ struct {{ node.name }}State {
 {%- for st in node.rds_streams %}
     // rds stream `{{ st.name }}` ({{ st.role }}, instance "{{ st.instance }}"):
     //   std::unique_ptr<::ara::rds::Stream{{ "Writer" if st.role == "writer" else "Reader" }}> {{ st.name }};
-    //   init(): {{ st.name }} = std::make_unique<...>(rds_streams::make_{{ st.name }}_{{ st.role }}()); {{ st.name }}->Connect();
+    //   init(): {{ st.name }} = std::make_unique<...>(make_{{ st.name }}_{{ st.role }}()); {{ st.name }}->Connect();
+    //   (a member of the node: keyed on its runtime prototype name)
 {%- endfor %}
 };
 

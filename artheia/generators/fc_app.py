@@ -393,6 +393,9 @@ class _ModelView:
     # FC-namespace alias is enum-qualified (<Enum>_<VALUE>) instead of the bare
     # label, which would be a C++ redefinition (see Codecs.hh.j2).
     enum_dups: set = field(default_factory=set)
+    # One node view per PROTOTYPE (main.cc constructs each); == nodes unless a
+    # type is prototyped more than once in one composition.
+    instances: list = field(default_factory=list)
 
 
 # ---- model harvesting ------------------------------------------------------
@@ -960,6 +963,32 @@ def _prototype_name_by_type(model, composition_name: str) -> dict[str, str]:
     return out
 
 
+def _prototype_names_by_type(model, composition_name: Optional[str]) -> dict[str, list]:
+    """node-TYPE → EVERY prototype name of that type, in declaration order, for
+    the types prototyped MORE THAN ONCE in one composition (`prototype Cam left`
+    + `prototype Cam right` → {"Cam": ["left", "right"]}). With composition=None,
+    every composition is scanned (the first with >1 wins). main.cc constructs one
+    node object per prototype from this; the lib still emits one class per type."""
+    from ..model.flatten import flatten_composition
+    out: dict[str, list] = {}
+    for el in model.elements:
+        if el.__class__.__name__ != "CompositionDecl":
+            continue
+        if composition_name is not None and el.name != composition_name:
+            continue
+        prototypes, _connects = flatten_composition(el)
+        per: dict[str, list] = {}
+        for proto in prototypes:
+            tn = getattr(getattr(proto, "type", None), "name", None)
+            pn = getattr(proto, "name", None)
+            if tn and pn:
+                per.setdefault(tn, []).append(pn)
+        for tn, names in per.items():
+            if len(names) > 1:
+                out.setdefault(tn, names)
+    return out
+
+
 def _resolved_node_by_type(model, composition_name: str) -> dict:
     """Map node-TYPE name → the RESOLVED real NodeDecl from the composition's
     prototypes.
@@ -1105,6 +1134,7 @@ def _build_model_view(art_path: Path,
                 resolved_by_type.setdefault(t, node)
 
     nodes: list[_NodeView] = []
+    _decl_by_type: dict = {}   # node class name → its NodeDecl (for per-prototype views)
     has_statem = False
     state_enum = ""
     for el in model.elements:
@@ -1145,6 +1175,7 @@ def _build_model_view(art_path: Path,
                 el = resolved_by_type[el.name]
             nv = _node_view(el, proto_name=proto_by_type.get(el.name))
             nodes.append(nv)
+            _decl_by_type[nv.name] = el
             if not daemon_class:
                 daemon_class = nv.name
                 state_enum = f"{nv.name}State"
@@ -1177,6 +1208,7 @@ def _build_model_view(art_path: Path,
             _nv.pkg_lib_include = _inc
             _nv.qual_name = "%s::%s" % (_ns, rname) if _ns else rname
         nodes.append(_nv)
+        _decl_by_type[_nv.name] = _rnode
         _have.add(rname)
         if not daemon_class:
             daemon_class = rname
@@ -1255,6 +1287,25 @@ def _build_model_view(art_path: Path,
             if el.name in _enum_typed:
                 enums.append((el.name, [v.name for v in vals]))
 
+    # One node OBJECT per PROTOTYPE for main.cc. Identical to `nodes` unless a
+    # node type is prototyped more than once in one composition; then each
+    # prototype gets its own view (its own runtime identity = prototype name, and
+    # its rds streams keyed on it). The lib keeps one class per type (`nodes`).
+    import dataclasses as _dc
+    _multi = _prototype_names_by_type(model, composition)
+    instances: list[_NodeView] = []
+    for nv in nodes:
+        names = _multi.get(nv.name)
+        if not names:
+            instances.append(nv)
+            continue
+        decl = _decl_by_type.get(nv.name)
+        for pn in names:
+            instances.append(_dc.replace(
+                nv, snake=pn,
+                rds_streams=(_rds_streams_from_ast(decl, pn) if decl is not None
+                             else nv.rds_streams)))
+
     from collections import Counter
     _label_count = Counter(v for _e, vals in enums for v in vals)
     enum_dups = {v for v, n in _label_count.items() if n > 1}
@@ -1288,6 +1339,7 @@ def _build_model_view(art_path: Path,
         messages_used=_messages_used(nodes),
         enums=enums,
         enum_dups=enum_dups,
+        instances=instances,
     )
 
 
