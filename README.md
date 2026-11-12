@@ -87,7 +87,7 @@ cluster Demo {
 ```sh
 artheia parse        system/system.art                 # resolve + validate the tree
 artheia check-addresses system/system.art              # assert TIPC addresses unique
-artheia gen-app --kind fc <component>.art --out apps    # C++ scaffold (lib/main/impl)
+artheia gen-fc       <component>.art --out apps        # C++ FC/app (lib/main/impl); gen-fc-lib for a package
 artheia gen-proto    <component>.art --out platform/proto
 artheia gen-netgraph <component>.art --out netgraph.json
 artheia gen-manifest <component>.art manifest/app.py    # deploy manifest module
