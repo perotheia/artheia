@@ -389,6 +389,10 @@ class _ModelView:
     # (system_services_ucm_ActivationState_ActivationState_ACT_NONE). Hands-off
     # generation: no manual constants in the impl. Pairs (enum_name, values).
     enums: list[tuple] = field(default_factory=list)
+    # Enum VALUE labels that appear in more than one enum of the package. Their
+    # FC-namespace alias is enum-qualified (<Enum>_<VALUE>) instead of the bare
+    # label, which would be a C++ redefinition (see Codecs.hh.j2).
+    enum_dups: set = field(default_factory=set)
 
 
 # ---- model harvesting ------------------------------------------------------
@@ -1251,6 +1255,17 @@ def _build_model_view(art_path: Path,
             if el.name in _enum_typed:
                 enums.append((el.name, [v.name for v in vals]))
 
+    from collections import Counter
+    _label_count = Counter(v for _e, vals in enums for v in vals)
+    enum_dups = {v for v, n in _label_count.items() if n > 1}
+    if enum_dups:
+        import sys as _sys
+        print(f"artheia: note — enum value label(s) {sorted(enum_dups)} appear in "
+              f"more than one enum of {art_package}; their C++ aliases are "
+              f"enum-qualified (e.g. {next(e for e, vs in enums if sorted(enum_dups)[0] in vs)}_"
+              f"{sorted(enum_dups)[0]}), unique labels keep the bare alias.",
+              file=_sys.stderr)
+
     return _ModelView(
         art_package=art_package,
         proto_package=proto_pkg,
@@ -1272,6 +1287,7 @@ def _build_model_view(art_path: Path,
         nodes=nodes,
         messages_used=_messages_used(nodes),
         enums=enums,
+        enum_dups=enum_dups,
     )
 
 

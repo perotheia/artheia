@@ -77,11 +77,16 @@ THEIA_DECLARE_REMOTE_CODEC({{ t }})
 // ({{ model.proto_package }}_<Enum>_<Enum>_<VALUE>). Emitted ONCE here (this header
 // is #pragma once + included by every node header) — NOT per-node, so two node
 // headers in one TU don't redefine them.
+{%- if model.enum_dups %}
+// A label used by TWO enums of the package ({{ model.enum_dups | sort | join(", ") }}) is aliased
+// enum-qualified, <Enum>_<VALUE>, so the aliases don't clash (proto3 scopes values
+// package-wide; the .proto prefixes them, so it's legal on the wire).
+{%- endif %}
 namespace {{ model.cxx_namespace }} {
 {%- for ename, evals in model.enums %}
 using {{ ename }} = {{ model.proto_package }}_{{ ename }};
 {%- for v in evals %}
-inline constexpr {{ ename }} {{ v }} = {{ model.proto_package }}_{{ ename }}_{{ ename }}_{{ v }};
+inline constexpr {{ ename }} {{ (ename ~ "_" ~ v) if v in model.enum_dups else v }} = {{ model.proto_package }}_{{ ename }}_{{ ename }}_{{ v }};
 {%- endfor %}
 {%- endfor %}
 }  // namespace {{ model.cxx_namespace }}

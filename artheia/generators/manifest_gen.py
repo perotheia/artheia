@@ -501,6 +501,25 @@ def _render_executor(source: str, fg_to_procs: "dict[str, list[str]]") -> str:
 # Entry point.
 # ---------------------------------------------------------------------------
 
+def _inspect_executor(text: str) -> "tuple[set[str], bool]":
+    """Read an existing executor.py sidecar: (its leaf process names, PRISTINE?).
+
+    PRISTINE means the file is byte-identical to what _render_executor emits for
+    its OWN grouping, i.e. nobody hand-edited it, so regenerating it loses
+    nothing. Raises on a file that doesn't import (the caller then keeps it)."""
+    import re
+    ns: dict = {}
+    exec(compile(text, "executor.py", "exec"), ns)
+    sups = ns["SUPERVISORS"]
+    names = {n.name for n in sups}
+    leaves = {c for n in sups for c in n.children if c not in names}
+    groups = {n.name[: -len("_sup")]: list(n.children) for n in sups
+              if n.name != "root" and n.name.endswith("_sup")}
+    m = re.search(r"Supervisor tree for (.+?) \u2014 hand-editable", text)
+    pristine = bool(m) and _render_executor(m.group(1), groups) == text
+    return leaves, pristine
+
+
 def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path:
     """Render ``manifest.py`` (a base :class:`DeploymentLayer`) from
     *art_file*'s clusters and write it to *out_file*; ALSO emit the sibling
@@ -620,6 +639,32 @@ def generate_manifest(art_file: str, out_file: str, force: bool = False) -> Path
         if 'name="' not in body or '_sup"' not in body:
             refresh = True
             print("refreshing empty executor.py (.art now declares processes)")
+        else:
+            # A composition added to (or removed from) the cluster must reach the
+            # supervisor tree, or its process is manifested but never started.
+            # A PRISTINE (never hand-edited) sidecar is regenerated; a hand-edited
+            # one is kept, with a loud diff of what's missing/stale.
+            try:
+                leaves, pristine = _inspect_executor(existing)
+            except Exception:
+                leaves, pristine = None, False
+            want = set(proc_names)
+            if leaves is not None and leaves != want:
+                added, gone = sorted(want - leaves), sorted(leaves - want)
+                delta = (f"+{added}" if added else "") + (
+                    f" -{gone}" if gone else "")
+                if pristine:
+                    refresh = True
+                    print(f"refreshing executor.py: the cluster's processes "
+                          f"changed ({delta.strip()})")
+                else:
+                    import sys as _sys
+                    print(f"artheia: WARNING — {sidecar} is HAND-EDITED and out of "
+                          f"date with the .art: missing processes {added or '[]'}, "
+                          f"stale {gone or '[]'}. A process missing here is "
+                          f"manifested but NEVER STARTED. Add it to a "
+                          f"<group>_sup's children by hand, or re-run gen-manifest "
+                          f"with --force (overwrites your edits).", file=_sys.stderr)
     if refresh:
         sidecar.write_text(_render_executor(art_file, fg_to_procs))
     else:
