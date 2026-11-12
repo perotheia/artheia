@@ -349,6 +349,12 @@ def _validate_rds(model):
     import sys as _sys
     for node in _iter(model, "NodeDecl"):
         streams = getattr(node, "rds_streams", None) or []
+        for s in streams:
+            if getattr(s, "from_node", "") and getattr(s, "role", "") == "writer":
+                raise TextXSemanticError(
+                    f"node '{node.name}' rds stream '{s.name}': `from=` names the "
+                    f"WRITER a reader opens; a writer keys its stream on itself. "
+                    f"Drop `from=` or make the stream role=reader.")
         if streams and not getattr(node, "requires_rds", False):
             names = ", ".join(getattr(s, "name", "?") for s in streams)
             print(

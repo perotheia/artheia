@@ -745,19 +745,33 @@ def _to_snake(name: str) -> str:
 
 
 def _rds_streams_from_ast(node, fc_short: str) -> list:
-    """Lower a node's `rds { stream <name> { role chunk_size history } }` block
-    to a list of dicts. Each stream's InstanceSpecifier is "/<FC>/<name>" (the
-    deployment resolver maps it to an iceoryx service/instance/event triple).
-    Empty when the node has no rds block."""
+    """Lower a node's `rds { stream <name> { role [from] chunk_size history } }`
+    block to a list of dicts. Empty when the node has no rds block.
+
+    A stream's InstanceSpecifier is keyed on its WRITER: "/<Writer>/<stream>",
+    where <Writer> is the writer node's runtime identity (prototype name),
+    capitalized (the deployment resolver splits the last two path segments into
+    the iceoryx service/instance). A writer keys on itself (`fc_short` = this
+    node's identity). A reader names its writer with `from=<prototype>[.<stream>]`
+    so its generated handle opens the SAME instance; a reader without `from`
+    keeps the old self-keyed "/<Reader>/<stream>" (which no writer publishes —
+    kept only so existing generated output doesn't move)."""
     out = []
     for s in getattr(node, "rds_streams", None) or []:
+        from_node = getattr(s, "from_node", "") or ""
+        from_stream = getattr(s, "from_stream", "") or ""
+        if from_node:
+            key, stream = from_node, (from_stream or s.name)
+        else:
+            key, stream = fc_short, s.name
         out.append({
             "name": s.name,
             "role": getattr(s, "role", "reader"),
             "chunk_size": int(getattr(s, "chunk_size", 0) or 0),
             "history": int(getattr(s, "history", 0) or 0),
-            # /<FC>/<stream> — resolver splits the last two path segments.
-            "instance": f"/{fc_short.capitalize()}/{s.name}",
+            "from": f"{from_node}.{stream}" if from_node else "",
+            # /<Writer>/<stream> — resolver splits the last two path segments.
+            "instance": f"/{key.capitalize()}/{stream}",
         })
     return out
 

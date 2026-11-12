@@ -272,9 +272,17 @@ NodeDecl:
 // triple by the deployment resolver). role = writer|reader. chunk_size = the
 // pool chunk bytes; history = chunks retained for late joiners. gen-app emits a
 // StreamWriter (writer) or StreamReader (reader) handle named `<name>`.
+//
+// A stream's instance is keyed on the node that WRITES it:
+// "/<Writer_prototype>/<stream>". A reader names that writer with `from`:
+//   stream frames { role=reader from=frame_producer chunk_size=1048576 history=4 }
+//   stream img    { role=reader from=cam_rig.cam_front_l ... }  // writer's stream name
+// `from` = the writer's PROTOTYPE name (its runtime identity), optionally
+// `.<stream>` when the writer calls the stream differently. Readers only.
 RdsStreamDecl:
     'stream' name=ID '{'
         'role' '=' role=RdsRole
+        ('from' '=' from_node=ID ('.' from_stream=ID)?)?
         ('chunk_size' '=' chunk_size=INT)?
         ('history' '=' history=INT)?
     '}'

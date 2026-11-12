@@ -9,7 +9,13 @@
 
 #pragma once
 
+{%- if node.requires_rds %}
+#include "ara/rds/stream.h"   // StreamWriter / StreamReader (requires_rds)
+{% endif %}
 #include <cstdint>
+{%- if node.requires_rds %}
+#include <memory>
+{%- endif %}
 #include <string>
 
 namespace {{ model.cxx_namespace }} {
@@ -17,6 +23,11 @@ namespace {{ model.cxx_namespace }} {
 struct {{ node.name }}State {
     // Add app fields here, e.g.:
     //   int32_t counter = 0;
+{%- for st in node.rds_streams %}
+    // rds stream `{{ st.name }}` ({{ st.role }}, instance "{{ st.instance }}"):
+    //   std::unique_ptr<::ara::rds::Stream{{ "Writer" if st.role == "writer" else "Reader" }}> {{ st.name }};
+    //   init(): {{ st.name }} = std::make_unique<...>(rds_streams::make_{{ st.name }}_{{ st.role }}()); {{ st.name }}->Connect();
+{%- endfor %}
 };
 
 }  // namespace {{ model.cxx_namespace }}

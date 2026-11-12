@@ -27,7 +27,15 @@ cc_library(
     # root is the FC out_dir (one above impl/).
     includes = [".."],
     copts = ["-std=c++17", "-fPIC"],
+{%- if model.nodes | selectattr("requires_rds") | list %}
+    deps = [
+        "{{ platform_repo }}//platform/runtime:runtime",
+        # requires_rds: the state holds the ara::rds StreamWriter/Reader handles.
+        "{{ platform_repo }}//services/rds/transport:rds",
+    ],
+{%- else %}
     deps = ["{{ platform_repo }}//platform/runtime:runtime"],
+{%- endif %}
 )
 
 cc_library(
