@@ -1962,6 +1962,11 @@ def serialize_manifest_cmd(
             # code-only FC. `theia dist` stages each to /opt/theia/share/<fc>/data/.
             "resources": [{"src": s, "dest": d}
                           for (s, d) in (getattr(p, "resources", ()) or ())],
+            # Added by a dev/test layer: install stages it, production builds refuse.
+            "test_only": bool(getattr(p, "test_only", False)),
+            # The process's own inbound ports -> config/fw.d/<name>.nft at install.
+            "ports": [{"proto": pr, "port": int(po)}
+                      for (pr, po) in (getattr(p, "ports", ()) or ())],
         }
 
     def _svc_dict(s) -> dict:

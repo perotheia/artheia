@@ -101,6 +101,16 @@ class ProcessLayer(Identifiable):
     # overrides the whole set) — and a TUPLE (not a list/dict) so the frozen
     # ProcessTarget stays HASHABLE when it lands in the processes frozenset.
     resources: ConfigField = field(default_factory=lambda: Default(()))  # tuple[(src,dest)]
+    # TEST-ONLY: a process a dev/test LAYER adds (viz's VizBridge, a probe): it is
+    # staged by `theia install` but REFUSED by every production build (`theia
+    # dist`, `release-swp`, `release-role`). Set it on the layer that adds the
+    # process, never on the base rig.
+    test_only: ConfigField = field(default_factory=lambda: Default(False))
+    # The process's OWN non-Theia ports, inbound ((proto, port) pairs, e.g.
+    # (("tcp", 8090),)): `theia install` writes config/fw.d/<process>.nft so the
+    # fw FC's default-drop input chain lets them in. A TUPLE (hashable target),
+    # right-biased replace like resources.
+    ports: ConfigField = field(default_factory=lambda: Default(()))
 
     @property
     def _resolver(self):
@@ -122,6 +132,8 @@ class ProcessTarget:
     machines: frozenset
     depends_on: frozenset
     resources: object            # list[{src,dest}] — data files baked into the FC deb
+    test_only: bool = False      # added by a dev/test layer; production builds refuse it
+    ports: object = ()           # ((proto, port), ...) inbound, -> config/fw.d/<name>.nft
 
 
 @identifiable_dataclass
@@ -391,6 +403,17 @@ class DeploymentLayer(Layer):
                             f"affinity core {core!r} absent on machine {mname!r} "
                             f"(has {sorted(cores)})",
                         ))
+
+        # 1c. A process's own ports are (tcp|udp, 1..65535).
+        for pname, p in procs.items():
+            for pp in (_value(p.ports) or ()):
+                ok = (isinstance(pp, (tuple, list)) and len(pp) == 2 and pp[0] in ("tcp", "udp")
+                      and isinstance(pp[1], int) and 0 < pp[1] < 65536)
+                if not ok:
+                    issues.append(Issue(
+                        f"{context}.execution.processes[{pname}].ports",
+                        f"port {pp!r} is not a (\"tcp\"|\"udp\", 1..65535) pair",
+                    ))
 
         # 2. Every service instance is provided by a process that exists.
         for s in _members(self.service.instances):
