@@ -38,7 +38,17 @@ from .transport import TipcDgramServer
 
 # The supervisor's SupervisorControlIf receiver (PgClient::kSupTipc*).
 SUP_TIPC_TYPE = 0x80020001
-SUP_TIPC_INSTANCE = 0
+SUP_TIPC_INSTANCE = 0          # the default stack's supervisor
+
+
+def sup_instance() -> int:
+    """The supervisor instance this process's PG joins / heartbeats target: the
+    C++ PgClient::sup_instance() rule. `theia start --instance N` exports
+    THEIA_PG_SUPERVISOR_INSTANCE=N for an isolated stack; unset/garbage = 0."""
+    try:
+        return int(os.environ.get("THEIA_PG_SUPERVISOR_INSTANCE", "") or 0)
+    except ValueError:
+        return 0
 
 _SUP_PKG = "system.supervisor"   # codec art_package for the Pg*/Heartbeat protos
 
@@ -52,8 +62,11 @@ class PgProbe:
     2026-07 dead-code sweep; the probe is a RECEIVER. git history has it.)
     """
 
-    def __init__(self, probe, node_name: str = "probe"):
+    def __init__(self, probe, node_name: str = "probe",
+                 sup_instance_: "int | None" = None):
         self._probe = probe                 # a started NodeProbe
+        # Which supervisor (stack) to join through; None = the environment's.
+        self._sup = sup_instance() if sup_instance_ is None else int(sup_instance_)
         self._node_name = node_name
         self._pid = os.getpid()
         # joined groups: group_name -> {"type", "instance", "server"}
@@ -69,7 +82,7 @@ class PgProbe:
     def _sup_join_call(self, group_name: str, join: bool) -> dict:
         """CALL PgJoinReq → PgJoinReply{status, group_type, instance}."""
         return self._probe.call_addr(
-            SUP_TIPC_TYPE, SUP_TIPC_INSTANCE, _SUP_PKG,
+            SUP_TIPC_TYPE, self._sup, _SUP_PKG,
             "system_supervisor_PgJoinReq", "system_supervisor_PgJoinReply",
             2.0,
             node_name=self._node_name, pid=self._pid,
@@ -107,7 +120,7 @@ class PgProbe:
         g["server"].stop()
         try:
             self._probe.call_addr(
-                SUP_TIPC_TYPE, SUP_TIPC_INSTANCE, _SUP_PKG,
+                SUP_TIPC_TYPE, self._sup, _SUP_PKG,
                 "system_supervisor_PgLeaveReq", "system_supervisor_ControlReply",
                 2.0,
                 node_name=self._node_name, group_name=group_name,
@@ -127,7 +140,8 @@ class PgProbe:
             fields = self._probe.ctx.codec.decode(
                 m.art_package, m.proto_type, payload)
         else:
-            fields = {"_raw": payload, "_service_id": hdr.service_id}
+            fields = {"_raw": payload, "_service_id": hdr.service_id,
+                      "_tx_ns": hdr.timestamp_ns}
         h = self._handlers.get(group_name)
         if h:
             h(fields)
@@ -146,7 +160,7 @@ class PgProbe:
                 self._seq += 1
                 try:
                     self._probe.cast_addr(
-                        SUP_TIPC_TYPE, SUP_TIPC_INSTANCE, _SUP_PKG,
+                        SUP_TIPC_TYPE, self._sup, _SUP_PKG,
                         "system_supervisor_HeartbeatReport",
                         node_name=self._node_name, pid=self._pid,
                         seq=self._seq, monotonic_ns=time.monotonic_ns())
